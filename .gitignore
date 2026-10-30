@@ -1,0 +1,57 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio
+.vs/
+*.vsidx
+*.VC.db
+*.VC.opendb
+*.futdcache.v2
+*.dtbcache.v2
+
+# WinUI / WinAppSDK / MSIX packaging artifacts
+*.assets.cache
+*.pri
+*.xbf
+*.appx
+*.appxbundle
+*.appxupload
+*.msix
+*.msixbundle
+*.msixupload
+AppPackages/
+BundleArtifacts/
+Generated Files/
+*.wapproj.user
+
+# NuGet
+packages/
+project.lock.json
+project.assets.json
+project.nuget.cache
+*.nuget.g.props
+*.nuget.g.targets
+*.nuget.dgspec.json
+
+# .NET / native build leftovers
+*.pdb
+*.ilk
+*.exp
+*.tlog
+*.lastbuildstate
+*.binlog
+
+# Local scratch: upstream source drop, Zig toolchain, throwaway ConPTY/ABI probes
+_ref/
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Keep the prebuilt libghostty-vt binaries that ship next to Gui.exe
+!Gui/Gui/native/*/ghostty-vt.dll
