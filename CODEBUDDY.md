@@ -1,4 +1,4 @@
-# CODEBUDDY.md
+﻿# CODEBUDDY.md
 
 This file provides guidance to CodeBuddy Code when working with code in this repository.
 
@@ -6,83 +6,171 @@ This file provides guidance to CodeBuddy Code when working with code in this rep
 
 ```
 Gui.slnx                          # solution (new XML .slnx format), platforms: ARM64 / x64 / x86
-Gui/Gui/                          # WinUI 3 application project (Gui.csproj)
-  App.xaml(.cs)                   # Application entry point; OnLaunched creates MainWindow
-  MainWindow.xaml(.cs)            # main window, hosts Controls/TerminalView
-  Controls/TerminalView.cs        # Win2D terminal renderer + input handling
-  Terminal/                       # ConPTY host, libghostty-vt interop, session, key encoding
+Gui/Gui/                          # WinUI 3 application project (Gui.csproj) — the only project
+  App.xaml(.cs)                   # Application entry point; resolves config/theme, creates MainWindow
+  MainWindow.xaml(.cs)            # thin shell: sizes/centers the window, attaches the Workspace
+  Diag.cs                         # startup/crash logging (%TEMP%\gui-startup.log)
+  Term/                           # the terminal application (see the table below)
+  Assets/Fonts/                   # bundled JetBrainsMono Nerd Font (4 faces)
+  Assets/Themes/light|dark/       # ~890 bundled Ghostty themes, split by background brightness
   native/<platform>/ghostty-vt.dll# prebuilt libghostty-vt (see native/build-ghostty-vt.sh)
   app.manifest                    # OS compatibility + PerMonitorV2 DPI
   Properties/PublishProfiles/     # win-x64 / win-x86 / win-arm64 .pubxml
 native/build-ghostty-vt.sh        # builds ghostty-vt.dll for Windows via Zig
-Gui/Gui (Package)/                # MSIX packaging project (.wapproj) - note the space in the path
-  Package.appxmanifest
-  Images/                         # tile / splash assets
+Gui/Gui (Package)/                # leftover MSIX packaging project — NOT in the solution any more
 ```
 
-The app project (`Gui/Gui/Gui.csproj`) is the only code project; the packaging project
-(`Gui/Gui (Package)/Gui (Package).wapproj`) contains no code — it references the app via
-`EntryPointProjectUniqueName` and `ProjectReference`, supplies the MSIX manifest and images, and
-picks the per-platform publish profile (`Properties\PublishProfiles\win-$(Platform).pubxml`).
+The app is **unpackaged** (`WindowsPackageType=None`) and **self-contained** for the Windows App
+SDK (`WindowsAppSDKSelfContained=true`), the same deployment shape as the native project this UI
+was ported from. There is no MSIX, no deploy step and no `shell:AppsFolder` activation: building
+the project and running the exe is the whole story.
 
 ## Commands
 
 Always pass an explicit `Platform` (x64 is the practical default); the solution has no AnyCPU
-configuration and the csproj `Platforms` are `x86;x64;ARM64`.
+configuration and the csproj `Platforms` are `x86;x64;ARM64`. The RuntimeIdentifier follows
+`Platform` (`win-x64` / `win-x86` / `win-arm64`), so the output lands in a RID subfolder.
 
 ```bash
-# Build the app project (works with the dotnet CLI)
+# Build
 dotnet build Gui/Gui/Gui.csproj -p:Platform=x64
 
-# Build the whole solution including the MSIX packaging project (needs VS MSBuild:
-# the .wapproj imports the DesktopBridge targets from $(MSBuildExtensionsPath)\Microsoft\DesktopBridge)
-msbuild Gui.slnx -p:Configuration=Debug -p:Platform=x64 -restore
+# Run (no packaging, no deploy)
+Gui/Gui/bin/x64/Debug/net8.0-windows10.0.19041.0/win-x64/Gui.exe
 
-# Deploy / run: open Gui.slnx in Visual Studio with the "Gui (Package)" project as startup
-# and press F5. There is no CLI run path for the packaged app.
+# ABI contract test (no WinUI, no NuGet packages)
+dotnet run --project tests/Gui.AbiTests -c Release
+
+# Unit tests (no WinUI; includes the repository encoding check)
+dotnet test tests/Gui.LogicTests -c Release
 ```
 
-There is no test project, no analyzer/lint configuration, and no CI configuration in this repo.
+`tests/Gui.AbiTests` compiles the real `Term/GhosttyNative.cs` and verifies every struct
+layout and option constant against `ghostty_type_json()` from
+`Gui/Gui/native/x64/ghostty-vt.dll`. Set `GUI_GHOSTTY_DLL` to test a different build of the
+DLL. Exit code 0 = pass, 1 = ABI mismatch.
+
+`tests/Gui.LogicTests` compiles `Term/Config.cs`, `Term/KeyMap.cs`, `Term/Theme.cs`,
+`Term/TerminalTheme.cs`, `Term/WideText.cs` and `Diag.cs` and covers the config parser,
+the key map, the theme helpers, the cell-width rules, the log level parsing and the
+UTF-8 BOM + CRLF rule for every source file in the repo.
+
+There is no analyzer/lint configuration in this repo. `.github/workflows/ci.yml` builds the
+solution and runs both test suites on Windows.
 
 The `Gui` folder names contain spaces and parentheses — quote paths in shell commands
 (`cd "Gui/Gui (Package)"`).
 
+## Diagnostics
+
+`Diag.cs` writes one record per line to `%TEMP%\gui-startup.log`:
+
+```
+2026-11-05 22:05:08.319 INFO  [tap] in 30 | 1B 5B 3F 32 35 6C ... |.[?25l...|
+--- session pid=20568 started=2026-11-05T22:08:35 level=Info ---
+```
+
+- Verbosity comes from `GUI_LOG`: `debug`, `info` (default), `warn`, `error`, `off`. An
+  unknown value keeps the default so a typo cannot silence the log.
+- The file is rotated to `gui-startup.log.1` once it passes 2 MB, and each run starts with
+  a session header so several sessions can share the file.
+- `Diag.Guard` wraps the callbacks XAML invokes; an exception there is a fail-fast
+  (0xC000027B) with no managed stack, so it is logged instead of crashing the app.
+
+Two optional debug switches, both also in the command palette:
+
+- **Debug tap** (`debug-tap = true` in the config, `GUI_TAP=1`, or the palette row)
+  records the raw byte stream in both directions as hex, which is what Windows Terminal
+  shows in its "debug tap" pane.
+- **Crash dumps** (`crash-dumps = true`, or the palette row) registers the app under
+  `HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps` with `DumpType=2`
+  (full dump), so a fail-fast leaves a dump in `%TEMP%\gui-dumps`.
+
 ## Terminal app pipeline
 
-The app is a terminal emulator: a shell runs inside a Windows pseudoconsole, the byte stream is
-parsed by libghostty-vt, and the resulting cell grid is drawn with Win2D.
+A shell runs inside a Windows pseudoconsole, the byte stream is parsed by libghostty-vt, and the
+resulting cell grid is drawn with Win2D.
 
-```
-Gui/Terminal/ConPty.cs          CreatePseudoConsole + CreateProcess, pipe reader/writer
-Gui/Terminal/GhosttyNative.cs   P/Invoke surface for ghostty-vt.dll (hand-written; mirrors the C headers)
-Gui/Terminal/TerminalSession.cs owns the native terminal + render state, feeds PTY bytes, captures the viewport
-Gui/Terminal/TerminalInput.cs   key event -> VT escape sequence mapping
-Gui/Controls/TerminalView.cs    Win2D render loop, input, resize, scroll, clipboard paste
-```
+| Path | Role |
+| --- | --- |
+| `Term/Config.cs` | Ghostty-shaped text config in `%APPDATA%\gui\config` |
+| `Term/Theme.cs` | Design tokens; two app palettes plus a separately resolved window palette |
+| `Term/TerminalTheme.cs` | Loads bundled Ghostty themes into a 256-color palette |
+| `Term/TerminalSession.cs` | libghostty-vt facade + ConPTY + shell process + reader thread |
+| `Term/ConPty.cs` | `CreatePseudoConsole` + `CreateProcess`, pipe reader/writer |
+| `Term/GhosttyNative.cs` | P/Invoke surface for `ghostty-vt.dll` |
+| `Term/KeyMap.cs` | `VirtualKey` → libghostty-vt physical key codes |
+| `Term/ShellIcon.cs` | Extracts the shell's own icon for the pane header / tab chip |
+| `Term/TerminalRenderer.cs` | Win2D renderer for a render state |
+| `Term/TerminalPane.cs` | One terminal surface: frame, header, session, selection, focus |
+| `Term/Workspace.cs` (+ `.Split`, `.Palette`, `.Window` partials) | Window chrome, tabs, split tree, command palette, IME host |
 
 Key invariants (they are easy to break and produce crashes or blank screens):
 
-- Every native terminal call is serialized on `TerminalSession._gate`. `ghostty_terminal_vt_write` and
-  `ghostty_render_state_update` must never overlap.
-- Callbacks (write-pty, bell, title-changed) fire *inside* `ghostty_terminal_vt_write`, so they must not
-  call back into the terminal. Title reads are deferred to the UI thread for this reason.
-- `ghostty_terminal_set` takes the value *as typed by the option*: callback options want the function
-  pointer itself, color options want a pointer to a `GhosttyColorRgb`, palette wants `GhosttyColorRgb[256]`.
-- The render state iterators are reusable handles created once and refilled by `ghostty_render_state_get`
-  (`GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR`, `GHOSTTY_RENDER_STATE_ROW_DATA_CELLS`). Cell iteration uses
-  `ghostty_render_state_row_cells_select` per column so wide characters (2 cells, trailing spacer) stay
-  column-aligned.
-- `ConPty.BeginRead()` must be called after subscribing to `OutputReceived`, otherwise the shell banner is
-  read and dropped before anyone listens.
+- Every native terminal call is serialized: PTY bytes are queued by the reader thread and only
+  drained on the UI thread, where `ghostty_terminal_vt_write` and `ghostty_render_state_update`
+  never overlap.
+- Callbacks (write-pty, title, pwd) fire *inside* `ghostty_terminal_vt_write`, so they must not
+  re-enter the terminal through anything but the intended read APIs.
+- `ghostty_terminal_set` takes the value *as typed by the option*: callback options want the
+  function pointer itself, color options want a pointer to an `Rgb`.
+- `GhosttyRenderState` is incremental: `updateRenderState()` consumes the dirty state, and
+  `CanvasControl` clears its surface before every `Draw`, so the renderer always paints a frame.
+- The row iterator must be bound with `GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR` before the first
+  `row_iterator_next`, or the first call faults.
+- Sized structs (`GhosttyStyle`, `GhosttyRenderStateCursor`, `GhosttySelection`, `GhosttyGridRef`,
+  …) need their `Size` field set before being passed to a get/set call.
+- `ConPty.BeginRead()` must be called after subscribing to `OutputReceived`, otherwise the shell
+  banner is read and dropped before anyone listens.
+- Shell icons are extracted with GDI (any thread) but decoded into a `BitmapImage` on the UI
+  thread; creating the image source on a worker thread makes the icon silently fall back to the
+  MDL2 glyph.
 
-The shell is `powershell.exe` when present, else `pwsh.exe`, else `%COMSPEC%`; `GUITERM_SHELL` overrides it.
-An MSIX execution alias (e.g. `pwsh.exe` from `WindowsApps`) can lose the pseudoconsole attachment, so real
-Win32 paths are preferred.
+## Window chrome and panes
+
+The window has no system title bar: `Workspace.Attach` calls
+`OverlappedPresenter.SetBorderAndTitleBar(true, false)` and draws the 44 DIP header itself. The
+header is plain client area and the window drag region — it records `GetCursorPos` in screen
+pixels and calls `AppWindow.Move` from `PointerMoved`; a double press toggles maximize.
+
+A tab owns a binary split tree; each split becomes a nested two-cell `Grid` (6 DIP spacing) so no
+empty cells are laid out. Three invariants keep the rebuild safe:
+
+- XAML keeps a removed subtree alive until it has been laid out, so `AddChild` detaches a pane
+  from its live parent *and* from the grids the previous pass built.
+- Close animations keep the outgoing pane's element and split grid alive; `Relayout` settles them
+  first and refuses to nest (`_relayouting`).
+- A pane's visual can outlive its `TerminalPane`, so `Close()` unhooks every canvas handler and
+  stops the reader thread before dropping the session.
+
+All keyboard input goes through one shared, invisible `TextBox` (the IME sink): `PreviewKeyDown`
+runs the shortcut table and the key encoder, and `TextChanged` forwards printable text. The sink
+is repositioned every 250 ms onto the focused pane's cursor and must stay hit-testable — clearing
+`IsHitTestVisible` silently stops text and IME input.
+
+## Configuration and theming
+
+`%APPDATA%\gui\config` is ghostty-shaped: one `key = value` per line, `#` starts a comment.
+Recognized keys: `command`/`shell`, `working-directory`/`cwd`, `font-family`, `font-size`,
+`unfocused-split-opacity`, `unfocused-split-fill`, `tab-position`, `theme`, `window-theme`,
+`debug-tap`, `crash-dumps`.
+
+- `theme` is `Gui Dark` (default), `Gui Light`, or any bundled Ghostty theme name; a custom
+  theme also drives the chrome through tonal steps off its background.
+- `window-theme` is `system` (default), `light`, or `dark` and constrains `theme`: only themes
+  whose background brightness matches the window are listed and usable.
+- The command palette (`Ctrl+Shift+P`) switches both live and persists the choice with
+  `Config.SaveValue`.
+- `Ctrl+Shift+,` re-reads the file and applies it live: theme, window theme, font, split
+  dimming and the tab rail (`tab-position` = `top` / `left` / `right`) all take effect without
+  a restart. `command` and `working-directory` only affect new panes and tabs.
+- Bundled fonts are registered for the process with `AddFontResourceEx(FR_PRIVATE)` so DirectWrite
+  resolves `JetBrainsMono Nerd Font` even when it is not installed.
 
 ## Native dependency: libghostty-vt
 
-`Gui/Gui/native/<platform>/ghostty-vt.dll` is built from the upstream `libghostty-vt` source drop and copied
-next to `Gui.exe` by an item in `Gui.csproj`. Rebuild it with:
+`Gui/Gui/native/<platform>/ghostty-vt.dll` is built from the upstream `libghostty-vt` source drop
+and copied next to `Gui.exe` by an item in `Gui.csproj`. Rebuild it with:
 
 ```bash
 ZIG=/path/to/zig.exe PLATFORM=x64 ./native/build-ghostty-vt.sh
@@ -95,19 +183,24 @@ Only the x64 binary is checked in; other platforms need the script with `PLATFOR
 ## Build configuration notes
 
 - Target: `net8.0-windows10.0.19041.0`, min OS `10.0.17763.0`, `Nullable` enabled, `OutputType` WinExe.
-- Windows App SDK `Microsoft.WindowsAppSDK` 2.6.4 is referenced directly by **both** the app and the
-  packaging project; keep the two versions in sync when upgrading, along with
-  `Microsoft.Windows.SDK.BuildTools`.
-- `WinUISDKReferences` is `false` in both projects (WinAppSDK supplied via PackageReference, not the
-  MSIX framework package references).
+- `Microsoft.WindowsAppSDK` is pinned to **1.8.260921001** and `Microsoft.Windows.SDK.BuildTools` to
+  **10.0.28000.2957**, matching the native project's `packages.config`; keep them in sync. Win2D is
+  `Microsoft.Graphics.Win2D` 1.4.0.
+- Do **not** drop `WindowsAppSDKSelfContained`: without it the DeploymentManager initializer tries to
+  install the runtime package and fails with `0x80070005` (ACCESS_DENIED) before `App`'s constructor
+  runs, and the process exits with no UI.
 - Publish profiles are `SelfContained=true`, `PublishSingleFile=False`; `PublishReadyToRun` and
   `PublishTrimmed` are enabled for every configuration except `Debug`.
+- `Assets\**\*` is copied to the output directory; the app loads fonts and themes from
+  `AppContext.BaseDirectory\Assets`, not from the project directory.
 
-## App / packaging specifics
+## Packaging and diagnostics
 
-- `Package.appxmanifest` declares `runFullTrust` plus the restricted `systemai:Capability Name="systemAIModels"`
-  capability (the `systemai` namespace is listed in `IgnorableNamespaces`). `DefaultLanguage` is `zh-CN`
-  and the package is unsigned (`AppxPackageSigningEnabled` false).
+- `Gui/Gui/Package.appxmanifest` is not consumed by the build (the app is unpackaged); it is kept only
+  for the `systemai:Capability Name="systemAIModels"` declaration. `Gui/Gui/app.manifest` is the
+  classic Win32 manifest.
+- A window that never appears with no log lines means the failure happened before `App`'s constructor —
+  check that the Windows App SDK runtime (self-contained copy) sits next to the exe.
 - `.gitignore` excludes `bin/`, `obj/`, `.vs/`, MSIX/NuGet artifacts and the local `_ref/` scratch tree
   (upstream source drop, Zig toolchain, ConPTY probes); the prebuilt
   `Gui/Gui/native/*/ghostty-vt.dll` is re-included and must stay tracked.

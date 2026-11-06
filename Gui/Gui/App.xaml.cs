@@ -1,50 +1,54 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Data;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Navigation;
-using Microsoft.UI.Xaml.Shapes;
-using Windows.ApplicationModel;
-using Windows.ApplicationModel.Activation;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
 
-// To learn more about WinUI, the WinUI project structure,
-// and more about our project templates, see: http://aka.ms/winui-project-info.
+namespace Gui;
 
-namespace Gui
+/// <summary>
+/// Application object. Resolves the config and theme before the first window exists,
+/// because WinUI applies the requested theme to chrome, scrollbars and flyouts at
+/// creation time.
+/// </summary>
+public partial class App : Application
 {
-    /// <summary>
-    /// Provides application-specific behavior to supplement the default Application class.
-    /// </summary>
-    public partial class App : Application
+    private Window? _window;
+
+    public App()
     {
-        private Window? _window;
+        InitializeComponent();
 
-        /// <summary>
-        /// Initializes the singleton application object.  This is the first line of authored code
-        /// executed, and as such is the logical equivalent of main() or WinMain().
-        /// </summary>
-        public App()
+        Diag.InstallHandlers();
+
+        Term.Config config = Term.Config.Load();
+        Term.Theme.Light = config.LightTheme;
+        Term.Theme.WindowLight = config.WindowLight;
+        Term.Theme.Terminal = config.TerminalTheme;
+        RequestedTheme = config.LightTheme ? ApplicationTheme.Light : ApplicationTheme.Dark;
+
+        // The debug tap records the raw byte stream; the environment variable is a shortcut
+        // for "just this once" without touching the config file.
+        Term.Tap.Enabled = config.DebugTap || Environment.GetEnvironmentVariable("GUI_TAP") is "1";
+
+        // A XAML fail-fast leaves no managed stack, so ask Windows for a full dump.
+        if (config.CrashDumps) Term.CrashDump.Enable();
+
+        UnhandledException += (_, args) =>
         {
-            InitializeComponent();
-        }
+            Diag.Error("App.UnhandledException", args.Exception?.ToString() ?? args.Message);
+        };
+    }
 
-        /// <summary>
-        /// Invoked when the application is launched.
-        /// </summary>
-        /// <param name="args">Details about the launch request and process.</param>
-        protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
+    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    {
+        try
         {
             _window = new MainWindow();
             _window.Activate();
+            Diag.Log("App.OnLaunched", "activated");
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("App.OnLaunched", error);
+            throw;
         }
     }
 }

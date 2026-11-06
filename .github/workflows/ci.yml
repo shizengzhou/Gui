@@ -1,0 +1,30 @@
+﻿name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build Gui.slnx -p:Platform=x64 -c Release
+
+      - name: ABI contract test
+        # Verifies Term/GhosttyNative.cs against the ABI manifest the native DLL exports.
+        run: dotnet run --project tests/Gui.AbiTests -c Release
+
+      - name: Unit tests
+        # Includes the repository encoding check (UTF-8 BOM + CRLF for every source file).
+        run: dotnet test tests/Gui.LogicTests -c Release
