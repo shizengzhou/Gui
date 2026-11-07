@@ -302,6 +302,12 @@ public sealed partial class Workspace
         Config fresh = Config.Load();
         _config.CopyFrom(fresh);
 
+        // The language is switchable at runtime. It is selected before the theme and the tab
+        // rail are refreshed so any chrome rebuild already uses the new strings; the pass at
+        // the end then re-labels the elements that survive.
+        bool languageChanged = _config.Language != Strings.Current;
+        if (languageChanged) Strings.Use(_config.Language);
+
         Theme.Light = fresh.LightTheme;
         Theme.WindowLight = fresh.WindowLight;
         Theme.Terminal = fresh.TerminalTheme;
@@ -314,7 +320,27 @@ public sealed partial class Workspace
         // The chrome is rebuilt here, so a failure must not take the app down with it.
         Diag.Guard("ws.placement", () => ApplyTabPlacement(PlacementFrom(fresh.TabPosition)));
 
+        if (languageChanged)
+            Diag.Guard("ws.language", ApplyLanguage);
+
         Diag.Log("config", "reloaded");
+    }
+
+    /// <summary>
+    /// Re-labels everything this app draws itself: pane tooltips, tab automation names and
+    /// the command palette. Terminal content and the running shells are untouched.
+    /// </summary>
+    private void ApplyLanguage()
+    {
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane => pane.ApplyLanguage());
+
+        UpdateHeaders();
+
+        // BuildPalette creates a fresh layer, so the old one has to leave the tree first.
+        if (_paletteLayer is not null)
+            _contentStack.Children.Remove(_paletteLayer);
+        BuildPalette();
     }
 
     /// <summary>
@@ -384,6 +410,55 @@ public sealed partial class Workspace
     }
 
     // ---------------- theme brushes ----------------
+
+    private bool _backdropApplied;
+
+    /// <summary>
+    /// "background-opacity" needs something behind the panes. Like Windows Terminal, a
+    /// translucent background with "background-blur" on gets the DWM acrylic backdrop and
+    /// the layers between it and the terminal go transparent, so the wallpaper shows
+    /// through. With blur off (or without acrylic support) the simulated mica stays as the
+    /// app background and only the card becomes transparent.
+    /// </summary>
+    private void ApplyBackgroundOpacity()
+    {
+        bool translucent = _config.BackgroundOpacity < 0.999f;
+        bool blur = translucent && _config.BackgroundBlur;
+
+        bool acrylic = false;
+        if (blur)
+        {
+            try
+            {
+                acrylic = Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController.IsSupported();
+            }
+            catch
+            {
+                acrylic = false;
+            }
+        }
+
+        bool wantBackdrop = blur && acrylic;
+        if (wantBackdrop != _backdropApplied)
+        {
+            _backdropApplied = wantBackdrop;
+            try
+            {
+                if (_window is not null)
+                {
+                    _window.SystemBackdrop = wantBackdrop ? new DesktopAcrylicBackdrop() : null;
+                }
+            }
+            catch (Exception error)
+            {
+                Diag.LogException("ws.backdrop", error);
+            }
+        }
+
+        _root.Background = wantBackdrop ? ClearBrush() : WindowMicaBrush();
+        if (_contentCard is not null)
+            _contentCard.Background = translucent ? ClearBrush() : CardFillBrush();
+    }
 
     private SolidColorBrush ThemedBrush(Func<Color> color)
     {
@@ -692,6 +767,7 @@ public sealed partial class Workspace
 
         _root.Background = WindowMicaBrush();
         _root.Children.Add(_shell);
+        ApplyBackgroundOpacity();
 
         // Shared IME host: invisible, but it must stay hit-testable to receive text.
         _imeSink = new TextBox
@@ -1389,7 +1465,7 @@ public sealed partial class Workspace
         };
         tab.ChipFocus.KeyDown += (_, args) => OnChipKeyDown(self, args);
 
-        AutomationProperties.SetName(tab.ChipClose, "关闭标签页");
+        AutomationProperties.SetName(tab.ChipClose, Strings.CloseTab);
         _chipHost.Children.Add(tab.ChipFocus);
 
         var pane = new TerminalPane(_config);

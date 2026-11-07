@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -53,7 +55,8 @@ internal sealed class ConPty : IDisposable
     /// </summary>
     public void BeginRead() => _reader.Start();
 
-    public static ConPty Start(string commandLine, short cols, short rows, string? workingDirectory = null)
+    public static ConPty Start(string commandLine, short cols, short rows, string? workingDirectory = null,
+        IReadOnlyList<(string Name, string Value)>? environment = null, string term = "")
     {
         // The console host duplicates these handles into its own process, and
         // CreatePseudoConsole expects inheritable pipes (see the ConPTY sample).
@@ -83,9 +86,11 @@ internal sealed class ConPty : IDisposable
         CloseHandle(outWrite);
 
         IntPtr attrList = IntPtr.Zero;
+        IntPtr environmentBlock = IntPtr.Zero;
         PROCESS_INFORMATION pi = default;
         try
         {
+            environmentBlock = BuildEnvironment(environment, term);
             nuint attrSize = 0;
             InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attrSize);
             attrList = Marshal.AllocHGlobal((int)attrSize);
@@ -105,7 +110,7 @@ internal sealed class ConPty : IDisposable
                 cwd = null;
 
             if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, false,
-                    EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, IntPtr.Zero, cwd,
+                    EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, environmentBlock, cwd,
                     ref si, out pi))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcess failed");
         }
@@ -123,10 +128,43 @@ internal sealed class ConPty : IDisposable
                 DeleteProcThreadAttributeList(attrList);
                 Marshal.FreeHGlobal(attrList);
             }
+            if (environmentBlock != IntPtr.Zero)
+                Marshal.FreeHGlobal(environmentBlock);
         }
 
         CloseHandle(pi.hThread);
         return new ConPty(hpc, inWrite, outRead, pi.hProcess, pi.dwProcessId);
+    }
+
+    /// <summary>
+    /// Builds a sorted UTF-16 "NAME=VALUE\0...\0" block, or IntPtr.Zero to inherit the
+    /// parent environment. CreateProcess requires the double NUL terminator.
+    /// </summary>
+    private static IntPtr BuildEnvironment(IReadOnlyList<(string Name, string Value)>? extra, string term)
+    {
+        bool hasTerm = !string.IsNullOrEmpty(term);
+        if ((extra is null || extra.Count == 0) && !hasTerm) return IntPtr.Zero;
+
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in System.Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string name)
+                variables[name] = entry.Value as string ?? string.Empty;
+        }
+
+        if (hasTerm) variables["TERM"] = term;
+        if (extra is not null)
+        {
+            foreach ((string name, string value) in extra)
+                variables[name] = value;
+        }
+
+        var block = new StringBuilder();
+        foreach (KeyValuePair<string, string> pair in variables)
+            block.Append(pair.Key).Append('=').Append(pair.Value).Append('\0');
+        block.Append('\0');
+
+        return Marshal.StringToHGlobalUni(block.ToString());
     }
 
     private unsafe void ReadLoop()

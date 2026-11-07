@@ -22,13 +22,17 @@
   <!-- Compile the shipped sources themselves, not copies: the tests must break when the
        real code breaks. None of these files pull in WinUI or Win2D. -->
   <ItemGroup>
+    <Compile Include="../../Gui/Gui/Strings.cs" Link="Strings.cs" />
     <Compile Include="../../Gui/Gui/Diag.cs" Link="Diag.cs" />
     <Compile Include="../../Gui/Gui/Term/Config.cs" Link="Config.cs" />
+    <Compile Include="../../Gui/Gui/Term/ConfigSchema.cs" Link="ConfigSchema.cs" />
+    <Compile Include="../../Gui/Gui/Term/FontStyleNames.cs" Link="FontStyleNames.cs" />
     <Compile Include="../../Gui/Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../../Gui/Gui/Term/KeyMap.cs" Link="KeyMap.cs" />
     <Compile Include="../../Gui/Gui/Term/PaletteSelection.cs" Link="PaletteSelection.cs" />
     <Compile Include="../../Gui/Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />
     <Compile Include="../../Gui/Gui/Term/Theme.cs" Link="Theme.cs" />
     <Compile Include="../../Gui/Gui/Term/WideText.cs" Link="WideText.cs" />
+    <Compile Include="../../Gui/Gui/Term/WordSelection.cs" Link="WordSelection.cs" />
   </ItemGroup>
 </Project>

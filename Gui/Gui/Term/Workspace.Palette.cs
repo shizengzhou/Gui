@@ -100,6 +100,7 @@ public sealed partial class Workspace
         }
 
         ApplyWindowTheme();
+        ApplyBackgroundOpacity();
 
         foreach (Tab tab in _tabs) ForEachPane(tab, pane => pane.ApplyTheme());
 
@@ -391,7 +392,7 @@ public sealed partial class Workspace
         Grid.SetColumn(_paletteChip, 1);
         searchGrid.Children.Add(_paletteChip);
 
-        _paletteRootPlaceholder = "搜索命令、标签页或设置…";
+        _paletteRootPlaceholder = Strings.PalettePlaceholder;
         _paletteInput = new TextBox
         {
             Background = ClearBrush(),
@@ -425,24 +426,24 @@ public sealed partial class Workspace
 
         _paletteRows = new StackPanel { Margin = new Thickness(6), Spacing = RowSpacing };
 
-        MakeRow("新建标签页", "Ctrl+Shift+T", _paletteItems, () =>
+        MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems, () =>
         {
             NewTab();
             Activate(_tabs.Count - 1);
         });
-        MakeRow("向右拆分窗格", "Alt+Shift+Plus", _paletteItems, () => SplitFocused(false));
-        MakeRow("向下拆分窗格", "Alt+Shift+-", _paletteItems, () => SplitFocused(true));
-        MakeRow("关闭当前窗格", "Ctrl+Shift+W", _paletteItems, CloseFocusedPane);
-        MakeRow("复制选中内容", "Ctrl+Shift+C", _paletteItems, () =>
+        MakeRow(Strings.SplitRight, "Alt+Shift+Plus", _paletteItems, () => SplitFocused(false));
+        MakeRow(Strings.SplitDown, "Alt+Shift+-", _paletteItems, () => SplitFocused(true));
+        MakeRow(Strings.CloseFocusedPane, "Ctrl+Shift+W", _paletteItems, CloseFocusedPane);
+        MakeRow(Strings.CopySelection, "Ctrl+Shift+C", _paletteItems, () =>
         {
             if (_tabs.Count > 0) _tabs[_active].Focused?.CopySelection();
         });
-        MakeRow("粘贴", "Ctrl+Shift+V", _paletteItems, () =>
+        MakeRow(Strings.Paste, "Ctrl+Shift+V", _paletteItems, () =>
         {
             if (_tabs.Count > 0) _tabs[_active].Focused?.PasteFromClipboard();
         });
-        MakeRow("重新加载配置", "Ctrl+Shift+,", _paletteItems, ReloadConfig);
-        MakeRow("打开配置文件", string.Empty, _paletteItems, OpenConfig);
+        MakeRow(Strings.ReloadConfig, "Ctrl+Shift+,", _paletteItems, ReloadConfig);
+        MakeRow(Strings.OpenConfig, string.Empty, _paletteItems, OpenConfig);
 
         // The debug tap mirrors the raw VT byte stream into the log; the row shows its state.
         PaletteItem? tapRow = null;
@@ -452,27 +453,27 @@ public sealed partial class Workspace
             if (tapRow is not null) tapRow.Title.Text = TapLabel();
         });
 
-        MakeRow("打开调试日志", string.Empty, _paletteItems, OpenDiagnosticsLog);
-        MakeRow("复制调试日志", string.Empty, _paletteItems, CopyDiagnosticsLog);
-        MakeRow("启用崩溃转储", string.Empty, _paletteItems, EnableCrashDumps);
+        MakeRow(Strings.OpenDiagnosticsLog, string.Empty, _paletteItems, OpenDiagnosticsLog);
+        MakeRow(Strings.CopyDiagnosticsLog, string.Empty, _paletteItems, CopyDiagnosticsLog);
+        MakeRow(Strings.EnableCrashDumps, string.Empty, _paletteItems, EnableCrashDumps);
 
         // Two-level entries: Window Theme and Theme. The parent rows live in the root list;
         // their actions open the corresponding second level.
-        AddSubmenuRow(_paletteItems, "选择窗口主题...",
-            () => EnterPaletteSubmenu("窗口主题", "选择窗口主题...", _paletteWindowItems), out TextBlock windowValue);
+        AddSubmenuRow(_paletteItems, Strings.ChooseWindowTheme,
+            () => EnterPaletteSubmenu(Strings.WindowTheme, Strings.ChooseWindowTheme, _paletteWindowItems), out TextBlock windowValue);
         _paletteWindowValue = windowValue;
-        AddSubmenuRow(_paletteItems, "选择主题...",
-            () => EnterPaletteSubmenu("主题", "选择主题...", _paletteThemeItems), out TextBlock themeValue);
+        AddSubmenuRow(_paletteItems, Strings.ChooseTheme,
+            () => EnterPaletteSubmenu(Strings.Theme, Strings.ChooseTheme, _paletteThemeItems), out TextBlock themeValue);
         _paletteThemeValue = themeValue;
 
         // Three flat commands for the tab rail.
-        MakeRow("标签栏移到顶部", string.Empty, _paletteItems, () => SetTabPlacement("top"));
-        MakeRow("标签栏移到左侧", string.Empty, _paletteItems, () => SetTabPlacement("left"));
-        MakeRow("标签栏移到右侧", string.Empty, _paletteItems, () => SetTabPlacement("right"));
+        MakeRow(Strings.TabBarTop, string.Empty, _paletteItems, () => SetTabPlacement("top"));
+        MakeRow(Strings.TabBarLeft, string.Empty, _paletteItems, () => SetTabPlacement("left"));
+        MakeRow(Strings.TabBarRight, string.Empty, _paletteItems, () => SetTabPlacement("right"));
 
         (string Label, string Value)[] windowOptions =
         {
-            ("跟随系统", "system"), ("浅色", "light"), ("深色", "dark"),
+            (Strings.FollowSystem, "system"), (Strings.Light, "light"), (Strings.Dark, "dark"),
         };
         foreach ((string label, string value) in windowOptions)
         {
@@ -502,7 +503,7 @@ public sealed partial class Workspace
             });
         }
 
-        _paletteEmpty = Label("没有匹配的命令，试试“新建”“分屏”或“配置文件”。", 12, TextFaintBrush());
+        _paletteEmpty = Label(Strings.NoMatchingCommands, 12, TextFaintBrush());
         _paletteEmpty.Margin = new Thickness(12, 22, 12, 22);
         _paletteEmpty.TextWrapping = TextWrapping.Wrap;
         _paletteEmpty.HorizontalAlignment = HorizontalAlignment.Center;
@@ -538,13 +539,13 @@ public sealed partial class Workspace
             Margin = new Thickness(14, 0, 14, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        hints.Children.Add(Label("↑↓ 选择", 10.5, TextFaintBrush()));
-        hints.Children.Add(Label("Enter 执行", 10.5, TextFaintBrush()));
-        hints.Children.Add(Label("Esc 关闭", 10.5, TextFaintBrush()));
+        hints.Children.Add(Label(Strings.HintSelect, 10.5, TextFaintBrush()));
+        hints.Children.Add(Label(Strings.HintRun, 10.5, TextFaintBrush()));
+        hints.Children.Add(Label(Strings.HintClose, 10.5, TextFaintBrush()));
 
-        // "Backspace 返回" follows "Esc 关闭" on the same hint line. It is not part of the
+        // "Backspace back" follows "Esc close" on the same hint line. It is not part of the
         // list and is only visible while a second level is open.
-        _paletteBackRow = Label("Backspace 返回", 10.5, TextFaintBrush());
+        _paletteBackRow = Label(Strings.HintBack, 10.5, TextFaintBrush());
         _paletteBackRow.Visibility = Visibility.Collapsed;
         _paletteBackRow.PointerEntered += (_, _) => _paletteBackRow.Foreground = TextBodyBrush();
         _paletteBackRow.PointerExited += (_, _) => _paletteBackRow.Foreground = TextFaintBrush();
@@ -662,9 +663,9 @@ public sealed partial class Workspace
         {
             _paletteWindowValue.Text = windowMode switch
             {
-                "light" => "浅色",
-                "dark" => "深色",
-                _ => "跟随系统",
+                "light" => Strings.Light,
+                "dark" => Strings.Dark,
+                _ => Strings.FollowSystem,
             };
         }
         if (_paletteThemeValue is not null)
@@ -967,7 +968,7 @@ public sealed partial class Workspace
         }
     }
 
-    private static string TapLabel() => Tap.Enabled ? "调试 tap：开（记录 VT 收发字节）" : "调试 tap：关（记录 VT 收发字节）";
+    private static string TapLabel() => Tap.Enabled ? Strings.TapOn : Strings.TapOff;
 
     private void OpenDiagnosticsLog()
     {

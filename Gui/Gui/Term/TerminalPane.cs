@@ -62,6 +62,8 @@ public sealed class TerminalPane
     private bool _selecting;
     private int _layoutSuspended;
     private bool _drawHooked;
+    private XamlRoot? _hookedRoot;
+    private double _appliedScale = 1.0;
     private ushort _anchorX;
     private ushort _anchorY;
     private ushort _cols = 80;
@@ -84,12 +86,13 @@ public sealed class TerminalPane
         public Border Button = null!;
         public TextBlock TipTitle = null!;
         public TextBlock TipKey = null!;
+        public Func<string> Tip = () => string.Empty;
     }
 
     public TerminalPane(Config config)
     {
         _config = config;
-        if (config.FontSize > 0) _fontSizeDip = config.FontSize;
+        if (config.FontSize > 0) _fontSizeDip = config.FontSizeDip;
 
         _session = new TerminalSession();
         _dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -97,8 +100,8 @@ public sealed class TerminalPane
         _canvas = new CanvasControl
         {
             UseSharedDevice = true,
-            ClearColor = Theme.TermSurfaceBg(),
-            Margin = new Thickness(14, 12, 14, 12),
+            ClearColor = CanvasClearColor(),
+            Margin = new Thickness(config.PaddingX, config.PaddingY, config.PaddingX, config.PaddingY),
         };
 
         _dim = new Border
@@ -166,16 +169,16 @@ public sealed class TerminalPane
             Margin = new Thickness(0, 0, 6, 0),
         };
 
-        AddAction(SplitIcon(true, faint, 12.0), "向右拆分窗格", "alt+shift+plus",
+        AddAction(SplitIcon(true, faint, 12.0), () => Strings.SplitRight, "alt+shift+plus",
             () => OnSplitRight?.Invoke(this));
-        AddAction(SplitIcon(false, faint, 12.0), "向下拆分窗格", "alt+shift+-",
+        AddAction(SplitIcon(false, faint, 12.0), () => Strings.SplitDown, "alt+shift+-",
             () => OnSplitDown?.Invoke(this));
 
         _zoomIcon = StyledIcon(faint, 12.0);
         _zoomIcon.Data = ZoomGeometry(false, 12.0);
-        _zoomButton = AddAction(_zoomIcon, "切换窗格缩放", "ctrl+shift+enter",
+        _zoomButton = AddAction(_zoomIcon, () => Strings.ToggleZoom, "ctrl+shift+enter",
             () => OnMaximize?.Invoke(this));
-        _closeButton = AddAction(CloseIcon(faint, 11.0), "关闭窗格", "ctrl+shift+w",
+        _closeButton = AddAction(CloseIcon(faint, 11.0), () => Strings.ClosePane, "ctrl+shift+w",
             () => OnClosePane?.Invoke(this));
 
         Grid.SetColumn(_actions, 1);
@@ -193,7 +196,7 @@ public sealed class TerminalPane
         _frame = new Border
         {
             CornerRadius = new CornerRadius(9),
-            Background = new SolidColorBrush(Theme.TermSurfaceBg()),
+            Background = new SolidColorBrush(SurfaceColor()),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Theme.PaneStroke()),
             Child = frameRoot,
@@ -213,17 +216,20 @@ public sealed class TerminalPane
             Content = _frame,
         };
 
-        if (!string.IsNullOrEmpty(config.FontFamily)) _renderer.SetFontFamily(config.FontFamily);
-        _renderer.SetFontSize(_fontSizeDip);
+        _renderer.ApplyConfig(config);
+        // A background image decodes asynchronously; repaint once it is ready.
+        _renderer.NeedsRedraw += Redraw;
 
         _canvas.PointerWheelChanged += OnPointerWheel;
         _canvas.PointerPressed += OnPointerPressed;
         _canvas.PointerMoved += OnPointerMoved;
         _canvas.PointerReleased += OnPointerReleased;
+        _canvas.DoubleTapped += OnCanvasDoubleTapped;
         _canvas.PointerCaptureLost += (_, _) => _selecting = false;
-        _canvas.SizeChanged += (_, _) => Diag.Guard("pane.layout", Layout);
+        _canvas.SizeChanged += (_, _) => Diag.Guard("pane.layout", () => Layout());
         _canvas.Loaded += (_, _) => Diag.Guard("pane.start", () =>
         {
+            HookXamlRoot();
             if (!_ready) Start();
         });
 
@@ -264,7 +270,7 @@ public sealed class TerminalPane
 
     // ---------------- pane header ----------------
 
-    private Border AddAction(Path icon, string tip, string shortcut, Action handler)
+    private Border AddAction(Path icon, Func<string> tip, string shortcut, Action handler)
     {
         var button = new Border
         {
@@ -280,7 +286,7 @@ public sealed class TerminalPane
         var tooltip = new StackPanel { Spacing = 2 };
         var tipTitle = new TextBlock
         {
-            Text = tip,
+            Text = tip(),
             FontSize = 12,
             Foreground = new SolidColorBrush(Theme.TextStrong()),
         };
@@ -315,8 +321,22 @@ public sealed class TerminalPane
         };
 
         _actions!.Children.Add(button);
-        _actionVisuals.Add(new ActionVisual { Icon = icon, Button = button, TipTitle = tipTitle, TipKey = tipKey });
+        _actionVisuals.Add(new ActionVisual
+        {
+            Icon = icon,
+            Button = button,
+            TipTitle = tipTitle,
+            TipKey = tipKey,
+            Tip = tip,
+        });
         return button;
+    }
+
+    /// <summary>Re-applies the localized tooltips after a config reload changed the language.</summary>
+    public void ApplyLanguage()
+    {
+        foreach (ActionVisual action in _actionVisuals)
+            action.TipTitle.Text = action.Tip();
     }
 
     private void OnFramePointerEntered(object sender, PointerRoutedEventArgs e) => SetHover(true);
@@ -338,6 +358,8 @@ public sealed class TerminalPane
         _hovered = value;
         _frame.BorderBrush = new SolidColorBrush(value ? Theme.PaneStrokeHover() : Theme.PaneStroke());
         ApplyFocusState();
+
+        if (value && _config.FocusFollowsMouse) OnFocus?.Invoke(this);
     }
 
     // ---------------- lifecycle ----------------
@@ -366,13 +388,18 @@ public sealed class TerminalPane
             Title = value;
             OnTitle?.Invoke(this);
         };
-        _session.OnExit = () => OnExit?.Invoke(this);
+        _session.OnExit = () =>
+        {
+            // wait-after-command keeps the surface (and its scrollback) open after the shell exits.
+            if (!_config.WaitAfterCommand) OnExit?.Invoke(this);
+        };
 
         _ready = true;
         HookDraw();
         Layout();
 
-        _session.Start(_config.Command, _config.WorkingDirectory, _cols, _rows, PhysicalCellMetrics());
+        _session.Start(_config.Command, _config.WorkingDirectory, _cols, _rows, PhysicalCellMetrics(),
+            _config.ExtraEnvironment, _config.TermVariable, _config.Input);
         _cwdTimer?.Start();
         UpdateShellIcon();
         UpdateLocation();
@@ -389,7 +416,15 @@ public sealed class TerminalPane
         _canvas.PointerPressed -= OnPointerPressed;
         _canvas.PointerMoved -= OnPointerMoved;
         _canvas.PointerReleased -= OnPointerReleased;
+        _canvas.DoubleTapped -= OnCanvasDoubleTapped;
         UnhookDraw();
+        _renderer.NeedsRedraw -= Redraw;
+
+        if (_hookedRoot is not null)
+        {
+            _hookedRoot.Changed -= OnXamlRootChanged;
+            _hookedRoot = null;
+        }
 
         _cwdTimer?.Stop();
         _cwdTimer = null;
@@ -421,7 +456,8 @@ public sealed class TerminalPane
     {
         if (!_ready) return;
         // A throw here escapes into XAML's draw callback, which fail-fasts the process.
-        Diag.Guard("pane.draw", () => _renderer.Render(args.DrawingSession, _session, _cursorOn, true));
+        Diag.Guard("pane.draw", () => _renderer.Render(args.DrawingSession, _session, _cursorOn, true,
+            (float)sender.ActualWidth, (float)sender.ActualHeight));
     }
 
     // ---------------- layout ----------------
@@ -452,10 +488,54 @@ public sealed class TerminalPane
         Redraw();
     }
 
-    private void Layout()
+    // ---------------- DPI changes ----------------
+
+    /// <summary>
+    /// Follows the display scale when the window moves to a monitor with a different DPI.
+    /// XAML scales the visual automatically, but the glyphs and the terminal grid have to be
+    /// re-measured for the new pixel density, exactly like Windows Terminal and WezTerm do.
+    /// </summary>
+    private void HookXamlRoot()
+    {
+        XamlRoot? root = _canvas.XamlRoot;
+        if (ReferenceEquals(root, _hookedRoot)) return;
+
+        if (_hookedRoot is not null) _hookedRoot.Changed -= OnXamlRootChanged;
+        _hookedRoot = root;
+        if (root is null) return;
+
+        _appliedScale = root.RasterizationScale;
+        root.Changed += OnXamlRootChanged;
+    }
+
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args)
+    {
+        double scale = sender.RasterizationScale;
+        if (Math.Abs(scale - _appliedScale) < 0.001) return;
+        _appliedScale = scale;
+        Diag.Guard("pane.dpi", ApplyDisplayScale);
+    }
+
+    private void ApplyDisplayScale()
+    {
+        if (!_ready) return;
+
+        // Win2D reads the DPI from the XAML tree itself (CanvasControl.Dpi is read-only),
+        // so only the glyphs and the grid need re-measuring here.
+        // The pixel-based adjust-* values change the DIP cell size, so the grid may change
+        // even though the window did not; force the resize through to the PTY.
+        Layout(force: true);
+        Redraw();
+        Diag.Log("pane.dpi", $"{_appliedScale:0.##}x, {_cols}x{_rows}");
+    }
+
+    // ---------------- layout ----------------
+
+    private void Layout(bool force = false)
     {
         if (!_ready || _layoutSuspended > 0) return;
 
+        _renderer.SetRasterizationScale(RasterizationScale);
         _renderer.SetFontSize(_fontSizeDip);
 
         double width = _canvas.ActualWidth;
@@ -467,7 +547,7 @@ public sealed class TerminalPane
 
         ushort cols = (ushort)Math.Max(2, (int)(width / metrics.Width));
         ushort rows = (ushort)Math.Max(2, (int)(height / metrics.Height));
-        if (cols == _cols && rows == _rows) return;
+        if (!force && cols == _cols && rows == _rows) return;
 
         _cols = cols;
         _rows = rows;
@@ -571,9 +651,9 @@ public sealed class TerminalPane
     /// <summary>Re-applies the configured font family and size after a config reload.</summary>
     public void ApplyFont()
     {
-        _fontSizeDip = _config.FontSize > 0 ? _config.FontSize : 13f;
-        _renderer.SetFontFamily(_config.FontFamily);
-        _renderer.SetFontSize(_fontSizeDip);
+        _fontSizeDip = _config.FontSizeDip;
+        _renderer.SetRasterizationScale(RasterizationScale);
+        _renderer.ApplyConfig(_config);
         Layout();
         Redraw();
     }
@@ -581,7 +661,7 @@ public sealed class TerminalPane
     /// <summary>Reset returns to the configured size.</summary>
     public void ResetFontSize()
     {
-        float configured = _config.FontSize > 0 ? _config.FontSize : 13f;
+        float configured = _config.FontSizeDip;
         if (configured == _fontSizeDip) return;
         _fontSizeDip = configured;
         Layout();
@@ -600,6 +680,28 @@ public sealed class TerminalPane
         return color;
     }
 
+    /// <summary>"background-opacity" as a 0..1 alpha for the pane surface.</summary>
+    private float SurfaceOpacity => Math.Clamp(_config.BackgroundOpacity, 0f, 1f);
+
+    /// <summary>
+    /// The terminal surface with "background-opacity" applied. The frame paints it, which
+    /// also covers the header and the padding around the canvas, so the whole pane keeps one
+    /// uniform translucency.
+    /// </summary>
+    private Color SurfaceColor()
+    {
+        Color color = Theme.TermSurfaceBg();
+        color.A = (byte)Math.Round(255 * SurfaceOpacity);
+        return color;
+    }
+
+    /// <summary>
+    /// The canvas clears itself to this before Draw. A translucent pane must start fully
+    /// transparent so the frame's surface is not painted twice.
+    /// </summary>
+    private Color CanvasClearColor() =>
+        SurfaceOpacity < 0.999f ? Color.FromArgb(0, 0, 0, 0) : Theme.TermSurfaceBg();
+
     // ---------------- theme ----------------
 
     /// <summary>
@@ -608,10 +710,10 @@ public sealed class TerminalPane
     /// </summary>
     public void ApplyTheme()
     {
-        _frame.Background = new SolidColorBrush(Theme.TermSurfaceBg());
+        _frame.Background = new SolidColorBrush(SurfaceColor());
         _frame.BorderBrush = new SolidColorBrush(_hovered ? Theme.PaneStrokeHover() : Theme.PaneStroke());
         _dim.Background = new SolidColorBrush(DimFillColor());
-        _canvas.ClearColor = Theme.TermSurfaceBg();
+        _canvas.ClearColor = CanvasClearColor();
 
         foreach (ActionVisual action in _actionVisuals)
         {
@@ -694,9 +796,9 @@ public sealed class TerminalPane
         if (metrics.Width == 0 || metrics.Height == 0) return false;
 
         // Cell space starts after the frame's 1 DIP outline, the 34 DIP pane head and the
-        // 14 x 12 term padding (the host is the frame's root, so those offsets count).
-        x = cellX * (double)metrics.Width + 15.0;
-        y = cellY * (double)metrics.Height + 47.0;
+        // configured term padding (the host is the frame's root, so those offsets count).
+        x = cellX * (double)metrics.Width + 1.0 + _config.PaddingX;
+        y = cellY * (double)metrics.Height + 35.0 + _config.PaddingY;
         return true;
     }
 
@@ -731,6 +833,8 @@ public sealed class TerminalPane
 
         if (KeyMap.IsTextKey(key) && !ctrl && !alt) return false;
 
+        ClearSelectionOnTyping();
+
         string text = string.Empty;
         if (ctrl && !alt && key >= KeyMap.KeyA && key <= KeyMap.KeyZ)
             text = ((char)('a' + (key - KeyMap.KeyA))).ToString();
@@ -742,7 +846,16 @@ public sealed class TerminalPane
     public void CommitText(string text)
     {
         if (!_ready || _session is null || text.Length == 0) return;
+        ClearSelectionOnTyping();
         _session.WriteInput(System.Text.Encoding.UTF8.GetBytes(text));
+    }
+
+    private void ClearSelectionOnTyping()
+    {
+        if (!_config.SelectionClearOnTyping) return;
+        if (!_session.HasSelection()) return;
+        _session.ClearSelection();
+        Redraw();
     }
 
     public void CopySelection()
@@ -750,16 +863,35 @@ public sealed class TerminalPane
         byte[] text = _session.CopySelection();
         if (text.Length == 0) return;
 
+        string value = System.Text.Encoding.UTF8.GetString(text);
+        if (_config.ClipboardCodepointMap.Count > 0) value = _config.ApplyClipboardCodepointMap(value);
+        if (_config.ClipboardTrimTrailingSpaces) value = TrimTrailingSpaces(value);
+
         try
         {
             var package = new DataPackage();
-            package.SetText(System.Text.Encoding.UTF8.GetString(text));
+            package.SetText(value);
             Clipboard.SetContent(package);
         }
         catch
         {
             // Clipboard unavailable.
         }
+
+        if (_config.SelectionClearOnCopy)
+        {
+            _session.ClearSelection();
+            Redraw();
+        }
+    }
+
+    /// <summary>Trims the whitespace that ends every line, leaving leading indentation alone.</summary>
+    private static string TrimTrailingSpaces(string value)
+    {
+        string[] lines = value.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+            lines[i] = lines[i].TrimEnd(' ', '\t', '\r');
+        return string.Join("\n", lines);
     }
 
     public void PasteFromClipboard()
@@ -811,7 +943,10 @@ public sealed class TerminalPane
         if (!_ready) return;
         int delta = args.GetCurrentPoint(_canvas).Properties.MouseWheelDelta;
         if (delta == 0) return;
-        _session.Scroll(delta > 0 ? -3 : 3);
+
+        // Three rows per notch is the app's historical step; mouse-scroll-multiplier scales it.
+        int step = Math.Max(1, (int)Math.Round(3.0 * _config.MouseScrollMultiplier));
+        _session.Scroll(delta > 0 ? -step : step);
         args.Handled = true;
     }
 
@@ -827,8 +962,23 @@ public sealed class TerminalPane
         if (point.Properties.IsRightButtonPressed)
         {
             args.Handled = true;
-            if (_session.HasSelection()) CopySelection();
-            else PasteFromClipboard();
+            switch (_config.RightClickAction)
+            {
+                case "ignore":
+                    break;
+                case "copy":
+                    CopySelection();
+                    break;
+                case "paste":
+                    PasteFromClipboard();
+                    break;
+                default:
+                    // context-menu has no menu in this app, so it keeps the familiar
+                    // copy-or-paste behavior; copy-or-paste asks for it explicitly.
+                    if (_session.HasSelection()) CopySelection();
+                    else PasteFromClipboard();
+                    break;
+            }
             return;
         }
 
@@ -860,6 +1010,39 @@ public sealed class TerminalPane
         _selecting = false;
         _canvas.ReleasePointerCapture(args.Pointer);
         args.Handled = true;
+
+        if (_config.CopyOnSelect && _session.HasSelection()) CopySelection();
+    }
+
+    /// <summary>
+    /// Double-click selects the word under the pointer. "selection-word-chars" lists the
+    /// characters that end a word; blank cells and whitespace always end one.
+    /// </summary>
+    private void OnCanvasDoubleTapped(object sender, DoubleTappedRoutedEventArgs args)
+    {
+        if (!_ready) return;
+        if (!CellAt(args.GetPosition(_canvas), out ushort x, out ushort y)) return;
+
+        // The last frame may have painted before the most recent output arrived.
+        _session.UpdateRenderState();
+        string[]? row = _session.RowCells(y);
+        if (row is null) return;
+
+        args.Handled = true;
+
+        if (!WordSelection.TryExpand(row, x, _config.SelectionWordChars, out int start, out int end))
+        {
+            _session.ClearSelection();
+            Redraw();
+            return;
+        }
+
+        _anchorX = (ushort)start;
+        _anchorY = y;
+        if (!_session.SetSelection((ushort)start, y, (ushort)end, y)) return;
+
+        Redraw();
+        if (_config.CopyOnSelect) CopySelection();
     }
 
     // ---------------- pane header icons ----------------

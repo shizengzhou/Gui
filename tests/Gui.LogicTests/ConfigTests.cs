@@ -70,7 +70,7 @@ public class ConfigTests : IDisposable
 
         Config config = Config.Load(path);
 
-        Assert.InRange(config.FontSize, 6f, 72f);
+        Assert.InRange(config.FontSize, Config.MinFontSizePoints, Config.MaxFontSizePoints);
         Assert.InRange(config.UnfocusedSplitOpacity, 0.15f, 1f);
     }
 
@@ -82,7 +82,7 @@ public class ConfigTests : IDisposable
         Config config = Config.Load(path);
 
         // An unparsable size keeps the default, a parsable one is clamped into range.
-        Assert.Equal(13f, config.FontSize);
+        Assert.Equal(10f, config.FontSize);
         Assert.Equal(0.15f, config.UnfocusedSplitOpacity);
     }
 
@@ -91,7 +91,7 @@ public class ConfigTests : IDisposable
     {
         Config config = Config.Load(Path.Combine(_dir, "does-not-exist"));
 
-        Assert.Equal(13f, config.FontSize);
+        Assert.Equal(10f, config.FontSize);
         Assert.Equal(string.Empty, config.ThemeMode);
     }
 

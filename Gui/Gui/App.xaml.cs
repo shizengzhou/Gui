@@ -19,6 +19,8 @@ public partial class App : Application
         Diag.InstallHandlers();
 
         Term.Config config = Term.Config.Load();
+        LogConfigDiagnostics(config);
+        Strings.Use(config.Language);
         Term.Theme.Light = config.LightTheme;
         Term.Theme.WindowLight = config.WindowLight;
         Term.Theme.Terminal = config.TerminalTheme;
@@ -35,6 +37,23 @@ public partial class App : Application
         {
             Diag.Error("App.UnhandledException", args.Exception?.ToString() ?? args.Message);
         };
+    }
+
+    /// <summary>
+    /// Every Ghostty option is accepted, so a config written for Ghostty loads without
+    /// errors; unknown keys, invalid values and options this build cannot honor are
+    /// recorded once at startup instead of failing silently.
+    /// </summary>
+    private static void LogConfigDiagnostics(Term.Config config)
+    {
+        foreach (Term.ConfigDiagnostic diagnostic in config.Diagnostics)
+        {
+            string where = $"config:{diagnostic.Line} {diagnostic.Key}";
+            if (diagnostic.Severity == Term.ConfigSeverity.Warning)
+                Diag.Warn(where, diagnostic.Message);
+            else
+                Diag.Debug(where, diagnostic.Message);
+        }
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

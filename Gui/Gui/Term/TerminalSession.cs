@@ -123,7 +123,8 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     /// <summary>Spawns the shell inside a ConPTY of the given character grid size.</summary>
-    public bool Start(string command, string workingDirectory, ushort cols, ushort rows, CellMetrics metrics)
+    public bool Start(string command, string workingDirectory, ushort cols, ushort rows, CellMetrics metrics,
+        IReadOnlyList<(string Name, string Value)>? environment = null, string term = "", string input = "")
     {
         if (_terminal == IntPtr.Zero || _pty is not null) return false;
 
@@ -136,7 +137,7 @@ public sealed unsafe class TerminalSession : IDisposable
 
         try
         {
-            _pty = ConPty.Start(command, (short)cols, (short)rows, workingDirectory);
+            _pty = ConPty.Start(command, (short)cols, (short)rows, workingDirectory, environment, term);
         }
         catch (Exception error)
         {
@@ -149,6 +150,9 @@ public sealed unsafe class TerminalSession : IDisposable
 
         Resize(cols, rows, metrics);
         _pty.BeginRead();
+
+        // "input" is written once the reader is pumping so the shell sees it in order.
+        if (input.Length > 0) _pty.Write(Encoding.UTF8.GetBytes(input));
         return true;
     }
 
@@ -242,6 +246,50 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     // ---------------- selection ----------------
+
+    /// <summary>
+    /// One viewport row as UTF-8 graphemes, one entry per cell (blank cells are " ").
+    /// Null when the terminal or the render state is not ready. Used by double-click
+    /// word selection.
+    /// </summary>
+    public string[]? RowCells(int viewportY)
+    {
+        IntPtr state = _renderState;
+        if (_terminal == IntPtr.Zero || state == IntPtr.Zero) return null;
+
+        IntPtr rows = IntPtr.Zero;
+        IntPtr cells = IntPtr.Zero;
+        GhosttyNative.ghostty_render_state_row_iterator_new(IntPtr.Zero, out rows);
+        GhosttyNative.ghostty_render_state_row_cells_new(IntPtr.Zero, out cells);
+        // The iterator is only usable once it is bound to a render state.
+        GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &rows);
+
+        try
+        {
+            while (rows != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(rows))
+            {
+                int y = 0;
+                if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_VIEWPORT_Y, &y) != GhosttyNative.SUCCESS)
+                    continue;
+                if (y != viewportY) continue;
+
+                if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_DATA_CELLS, &cells) != GhosttyNative.SUCCESS)
+                    return null;
+
+                var result = new List<string>();
+                while (GhosttyNative.ghostty_render_state_row_cells_next(cells))
+                    result.Add(CellText.Read(cells));
+                return result.ToArray();
+            }
+        }
+        finally
+        {
+            if (cells != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_cells_free(cells);
+            if (rows != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_iterator_free(rows);
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Selection endpoints are viewport-relative (y = 0 is the top visible row).

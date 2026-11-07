@@ -370,7 +370,8 @@ public sealed partial class Workspace
 
             // Roving tab stop: only the active chip is reachable with Tab.
             tab.ChipFocus.IsTabStop = active;
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(tab.ChipFocus, "标签页: " + tab.Title);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(tab.ChipFocus, Strings.TabName(tab.Title));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(tab.ChipClose, Strings.CloseTab);
         }
 
         if (_ensureActiveVisible && EnsureActiveVisible()) _ensureActiveVisible = false;
