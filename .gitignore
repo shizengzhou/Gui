@@ -48,6 +48,10 @@ project.nuget.cache
 # Local scratch: upstream source drop, Zig toolchain, throwaway ConPTY/ABI probes
 _ref/
 
+# Agent worktrees and scratch output
+.codebuddy/
+.screenshots/
+
 # OS junk
 Thumbs.db
 desktop.ini

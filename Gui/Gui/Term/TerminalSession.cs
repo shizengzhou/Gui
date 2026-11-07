@@ -450,6 +450,66 @@ public sealed unsafe class TerminalSession : IDisposable
         OnUpdate?.Invoke();
     }
 
+    /// <summary>
+    /// Sets the scrollback budget in bytes; the active screen counts towards it. Zero keeps
+    /// no scrollback at all and <see cref="ulong.MaxValue"/> is ghostty's "unlimited".
+    /// </summary>
+    public void SetScrollbackLimit(ulong bytes)
+    {
+        if (_terminal == IntPtr.Zero) return;
+        nuint limit = (nuint)bytes;
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_SCROLLBACK_MAX_BYTES, &limit);
+    }
+
+    /// <summary>
+    /// Sets the scrollback row cap; <see cref="ulong.MaxValue"/> is ghostty's "unlimited".
+    /// Both caps apply, and whichever is reached first trims the history.
+    /// </summary>
+    public void SetScrollbackLimitLines(ulong lines)
+    {
+        if (_terminal == IntPtr.Zero) return;
+        nuint limit = (nuint)lines;
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_SCROLLBACK_MAX_LINES, &limit);
+    }
+
+    /// <summary>
+    /// Scroll state for the scrollbar: total rows, the row at the top of the viewport and the
+    /// number of rows the viewport shows. False when the terminal reports nothing usable.
+    /// </summary>
+    public bool Scrollbar(out ulong total, out ulong offset, out ulong len)
+    {
+        total = 0;
+        offset = 0;
+        len = 0;
+        if (_terminal == IntPtr.Zero) return false;
+
+        GhosttyNative.GhosttyTerminalScrollbar state = default;
+        if (GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_SCROLLBAR, &state) != GhosttyNative.SUCCESS)
+            return false;
+
+        total = state.Total;
+        offset = state.Offset;
+        len = state.Len;
+        return total > 0;
+    }
+
+    /// <summary>
+    /// Moves the viewport so that <paramref name="row"/> is its top row. The native API only
+    /// scrolls by a delta, so the move is expressed as the difference from the current row.
+    /// </summary>
+    public void ScrollTo(ulong row)
+    {
+        if (_terminal == IntPtr.Zero) return;
+        if (!Scrollbar(out ulong total, out ulong offset, out ulong len)) return;
+
+        ulong last = total > len ? total - len : 0;
+        if (row > last) row = last;
+        if (row == offset) return;
+
+        long delta = (long)row - (long)offset;
+        Scroll((int)Math.Clamp(delta, int.MinValue, int.MaxValue));
+    }
+
     /// <summary>True when the render state changed since the last call.</summary>
     public bool UpdateRenderState()
     {

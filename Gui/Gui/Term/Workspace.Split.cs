@@ -251,9 +251,119 @@ public sealed partial class Workspace
         }
     }
 
+/// <summary>
+    /// The zoom transition runs the focused pane between the two rectangles a layout rebuild
+    /// would otherwise snap between: it is scaled from where it was to where it lands, so the
+    /// change reads as motion. Only a zoom-out brings siblings back, and they fade in under the
+    /// shrinking pane.
+    /// </summary>
+    private sealed class ZoomTransition
+    {
+        public Tab Tab = null!;
+        public FrameworkElement Element = null!;
+        public DispatcherQueueTimer? Timer;
+        public readonly List<FrameworkElement> Siblings = new();
+    }
+
+    private Rect PaneBounds(TerminalPane pane)
+    {
+        FrameworkElement element = pane.Visual;
+        if (element.ActualWidth <= 0.0 || element.ActualHeight <= 0.0) return default;
+        Point origin = element.TransformToVisual(_surfaceHost).TransformPoint(new Point(0, 0));
+        return new Rect(origin.X, origin.Y, element.ActualWidth, element.ActualHeight);
+    }
+
+    private void AnimateZoomTransition(Tab tab, TerminalPane pane, Rect before)
+    {
+        if (_dispatcher is null || before.Width <= 1.0 || before.Height <= 1.0) return;
+
+        // The rebuild has not been laid out yet, so the destination is only known after a
+        // synchronous pass.
+        _surfaceHost.UpdateLayout();
+        Rect after = PaneBounds(pane);
+        if (after.Width <= 1.0 || after.Height <= 1.0) return;
+        if (Math.Abs(after.Width - before.Width) < 0.5 && Math.Abs(after.Height - before.Height) < 0.5)
+            return;
+
+        // Freeze the grids: a scaled visual does not reflow the shell, and the one layout pass
+        // at the end settles the new size.
+        tab.SuspendPaneLayout();
+
+        FrameworkElement element = pane.Visual;
+        element.RenderTransformOrigin = new Point(0, 0);
+        var transform = new CompositeTransform();
+        element.RenderTransform = transform;
+        // A zoom-out shrinks the pane back into its cell; it has to paint over the sibling it
+        // crosses on the way in.
+        Canvas.SetZIndex(element, 1);
+
+        var transition = new ZoomTransition { Tab = tab, Element = element };
+        if (!tab.Zoomed)
+        {
+            ForEachPane(tab, other =>
+            {
+                if (ReferenceEquals(other, pane)) return;
+                other.Visual.Opacity = 0.0;
+                transition.Siblings.Add(other.Visual);
+            });
+        }
+
+        var timer = _dispatcher.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(16);
+        transition.Timer = timer;
+
+        DateTime start = DateTime.UtcNow;
+        const double duration = 180.0;
+
+        timer.Tick += (_, _) =>
+        {
+            double progress = Math.Clamp((DateTime.UtcNow - start).TotalMilliseconds / duration, 0.0, 1.0);
+            // Ease-out cubic, the same curve the pane close animation uses.
+            double eased = 1.0 - Math.Pow(1.0 - progress, 3.0);
+
+            double scaleX = (before.Width + (after.Width - before.Width) * eased) / after.Width;
+            double scaleY = (before.Height + (after.Height - before.Height) * eased) / after.Height;
+            double left = before.X + (after.X - before.X) * eased;
+            double top = before.Y + (after.Y - before.Y) * eased;
+
+            transform.ScaleX = scaleX;
+            transform.ScaleY = scaleY;
+            transform.TranslateX = left - after.X * scaleX;
+            transform.TranslateY = top - after.Y * scaleY;
+
+            foreach (FrameworkElement sibling in transition.Siblings) sibling.Opacity = eased;
+
+            if (progress < 1.0) return;
+
+            timer.Stop();
+            // Posted like the close animation's teardown: it releases the timer while the
+            // tick is still on the stack.
+            _dispatcher.TryEnqueue(() => SettleZoomTransition());
+        };
+
+        _zoomTransition = transition;
+        timer.Start();
+    }
+
+    /// <summary>Puts the pane back into its final geometry and releases the frozen grids.</summary>
+    private void SettleZoomTransition()
+    {
+        ZoomTransition? transition = _zoomTransition;
+        if (transition is null) return;
+        _zoomTransition = null;
+
+        transition.Timer?.Stop();
+        transition.Element.RenderTransform = null;
+        transition.Element.RenderTransformOrigin = new Point(0.5, 0.5);
+        Canvas.SetZIndex(transition.Element, 0);
+        foreach (FrameworkElement sibling in transition.Siblings) sibling.Opacity = 1.0;
+        transition.Tab.ResumePaneLayout();
+    }
+
     private void CloseTab(int index)
     {
         if (index < 0 || index >= _tabs.Count) return;
+        SettleZoomTransition();
 
         // The tab is about to destroy its panes: drop any close animation that still
         // refers to one of them.
@@ -265,6 +375,7 @@ public sealed partial class Workspace
         });
         StopChipSpring(closing);
 
+        int previous = _active;
         _chipHost.Children.RemoveAt(index);
         _tabs.RemoveAt(index);
 
@@ -274,7 +385,11 @@ public sealed partial class Workspace
             Activate(0);
             return;
         }
-        Activate(Math.Min(index, _tabs.Count - 1));
+
+        // Closing a tab behind the active one must leave the selection alone: taking the
+        // closed index would jump the selection forward (close the tab next to the active
+        // one and the tab after it took over).
+        Activate(TabSelection.AfterClose(previous, index, _tabs.Count));
     }
 
     // ---------------- headers ----------------
@@ -303,6 +418,88 @@ public sealed partial class Workspace
         });
     }
 
+    /// <summary>
+    /// Hands the caption buttons' width to the pane that owns the island's top-right corner:
+    /// the side layouts lift the island under them, so only that pane has to move its actions
+    /// out of the way.
+    /// </summary>
+    private void ApplyPaneInsets(Tab tab)
+    {
+        if (_placement == TabPlacement.Top)
+        {
+            ForEachPane(tab, pane =>
+            {
+                pane.SetActionsInset(0.0);
+                pane.SetInfoInset(0.0);
+            });
+            return;
+        }
+
+        // The chrome floats over the island in the side layouts, so the two corner panes have
+        // to keep clear of whatever sits on top of them: the caption buttons on the right,
+        // and the rail's own buttons when the rail is collapsed — on the left when it lives on
+        // the left, on the right when it lives on the right.
+        TerminalPane? left = TopLeftPane(tab.Root);
+        TerminalPane? right = TopRightPane(tab.Root);
+        bool collapsed = _sidebarCollapsed;
+
+        // The caption buttons only hover over the pane while the island runs to the window's
+        // right edge: always with a left rail, and with a right rail only once it is collapsed
+        // (an open right rail takes that corner for itself).
+        bool islandUnderCaptions = _placement == TabPlacement.Left
+            || (_placement == TabPlacement.Right && collapsed);
+
+        // The rail toggle floats over the pane's corner when the rail is collapsed. Its
+        // button is 30 DIP wide; only that width plus a small gap is needed, since the pane
+        // header adds its own 10 DIP of padding on top of this inset.
+        double railButtons = collapsed ? (_placement == TabPlacement.Right ? 38.0 : 32.0) : 0.0;
+
+        ForEachPane(tab, pane =>
+        {
+            bool isRight = ReferenceEquals(pane, right);
+            bool isLeft = ReferenceEquals(pane, left);
+            // 138 = the three 46px caption buttons plus the 6px gap the header keeps to the
+            // pane's right edge; the pane header's own 6px trailing margin then leaves the
+            // same 6px between the action buttons and the first caption button.
+            double actions = isRight && islandUnderCaptions ? 138.0 : 0.0;
+            if (isRight && collapsed && _placement == TabPlacement.Right) actions += railButtons;
+            pane.SetActionsInset(actions);
+            pane.SetInfoInset(isLeft && _placement == TabPlacement.Left ? railButtons : 0.0);
+        });
+    }
+
+    /// <summary>Walks to the leaf that ends up in the top-left corner of the split tree.</summary>
+    private static TerminalPane? TopLeftPane(SplitNode? node)
+    {
+        while (node is not null && node.Pane is null) node = node.First;
+        return node?.Pane;
+    }
+
+    /// <summary>Walks to the leaf that ends up in the top-right corner of the split tree.</summary>
+    private static TerminalPane? TopRightPane(SplitNode? node)
+    {
+        while (node is not null && node.Pane is null)
+            node = node.Vertical ? node.First : node.Second;
+        return node?.Pane;
+    }
+
+    /// <summary>
+    /// Active chips are semibold, and bold text is wider than regular text: without this the
+    /// chip grows when it is activated and shoves every neighbour along. Reserving the
+    /// heavier width keeps every chip the size it has while active.
+    /// </summary>
+    private static void PinChipTitleWidth(Tab tab)
+    {
+        FontWeight weight = tab.ChipText.FontWeight;
+        tab.ChipText.FontWeight = FontWeights.SemiBold;
+        tab.ChipText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double width = tab.ChipText.DesiredSize.Width;
+        tab.ChipText.FontWeight = weight;
+
+        // The chip is capped at 220 DIP; a longer title trims there instead of widening it.
+        tab.ChipText.MinWidth = Math.Min(width, 200.0);
+    }
+
     private void ApplyHeaders()
     {
         for (int index = 0; index < _tabs.Count; index++)
@@ -310,7 +507,11 @@ public sealed partial class Workspace
             Tab tab = _tabs[index];
             bool active = index == _active;
 
-            tab.ChipText.Text = tab.Title;
+            if (tab.ChipText.Text != tab.Title)
+            {
+                tab.ChipText.Text = tab.Title;
+                PinChipTitleWidth(tab);
+            }
             // Active chips merge into the content island (app theme); inactive ones sit on
             // the title strip and follow the window theme.
             tab.ChipText.Foreground = active ? TextStrongBrush()
@@ -353,7 +554,7 @@ public sealed partial class Workspace
                 }
             }
 
-            tab.Chip.Background = active ? CardFillBrush()
+            tab.Chip.Background = active ? TermBgBrush()
                 : tab.Hovered ? ChromeChipHoverBrush() : ClearBrush();
 
             // Keep the button in the layout so hovering never changes the tab width; only
@@ -363,10 +564,12 @@ public sealed partial class Workspace
             tab.ChipClose.Opacity = showClose ? 1.0 : 0.0;
             tab.ChipClose.IsHitTestVisible = showClose;
 
-            bool hasNext = index + 1 < _tabs.Count;
-            bool nextQuiet = hasNext && index + 1 != _active && !_tabs[index + 1].Hovered;
-            bool showDivider = _placement == TabPlacement.Top && hasNext && !active && !tab.Hovered && nextQuiet;
+            bool previousHovered = index > 0 && _tabs[index - 1].Hovered;
+            bool showDivider = TabSeparators.Show(index, _active, tab.Hovered, previousHovered,
+                _placement == TabPlacement.Top);
             tab.ChipDivider.Opacity = showDivider ? 1.0 : 0.0;
+
+            ApplyPaneInsets(tab);
 
             // Roving tab stop: only the active chip is reachable with Tab.
             tab.ChipFocus.IsTabStop = active;
@@ -374,7 +577,6 @@ public sealed partial class Workspace
         }
 
         if (_ensureActiveVisible && EnsureActiveVisible()) _ensureActiveVisible = false;
-        ScheduleTabArcs();
         UpdateStatus();
     }
 

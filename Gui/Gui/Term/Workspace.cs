@@ -108,6 +108,40 @@ public sealed partial class Workspace
         public bool Light;
     }
 
+    /// <summary>The rail's width before it is dragged; the config carries it afterwards.</summary>
+    private const double SidebarWidthDefault = 240;
+
+    /// <summary>How narrow the rail can be dragged when it has its top row to itself.</summary>
+    private const double SidebarWidthMin = 160;
+
+    /// <summary>Size of the rail's own buttons (new tab, palette, the merged menu).</summary>
+    private const double ToolButtonWidth = 30;
+    private const double ToolButtonHeight = 28;
+
+    /// <summary>Size of the caption buttons drawn at the window's right edge.</summary>
+    private const double CaptionButtonWidth = 46;
+    /// <summary>The top layout's title bar: 6px above the tabs plus their 32px.</summary>
+    private const double HeaderHeight = 38;
+
+    /// <summary>The band the caption buttons use in the side layouts: the pane header's 32px.</summary>
+    private const double SideHeaderHeight = 32;
+
+    /// <summary>Where that band starts: the island's 6px margin plus the pane frame's 1px border.</summary>
+    private const double SideHeaderInset = 7;
+
+    /// <summary>The pane area never shrinks below this while the rail is dragged wider.</summary>
+    private const double ContentWidthMin = 320;
+
+    /// <summary>
+    /// Width of the strip that turns the pane's own border into the rail's splitter. It
+    /// straddles the boundary, so most of it lies in the gap and only a couple of DIP reach
+    /// over the pane's edge.
+    /// </summary>
+    private const double SidebarSplitterWidth = 10;
+
+    /// <summary>How much of the splitter reaches over the pane's edge.</summary>
+    private const double SidebarSplitterOverlap = 2;
+
     private sealed class ExitAnimation
     {
         public TerminalPane? Pane;
@@ -126,29 +160,28 @@ public sealed partial class Workspace
     private Border _header = null!;
     private Grid _headerInner = null!;
     private Border? _sidebar;
+    private ResizeGrip? _sidebarSplitter;
+    private double _sidebarWidth = SidebarWidthDefault;
+    private bool _resizingSidebar;
+    private double _resizeStartWidth;
+    private double _resizeCursorX;
     private Border _contentCard = null!;
     private Grid _contentStack = null!;
     private FontIcon? _maximizeIcon;
+    private Border? _closeCaption;
+    private TextBlock? _maximizeTip;
     private Grid _surfaceHost = null!;
     private StackPanel? _topTabHost;
     private StackPanel? _tabColumn;
     private StackPanel _chipHost = null!;
     private StackPanel? _headerSideTools;
     private ScrollViewer? _tabScroller;
-    private Canvas? _arcLayer;
-    private Path? _tabArcLeft;
-    private Path? _tabArcRight;
-    private bool _arcUpdateQueued;
     private StackPanel? _stripHost;
     private TranslateTransform? _stripTransform;
     private double _stripOffset;
     // One-shot: scroll the active chip into view only after the active tab changed (or a tab
     // was added/removed), never on ordinary repaints, otherwise it fights the wheel.
     private bool _ensureActiveVisible;
-    private double _arcLeft;
-    private double _arcRight;
-    private double _arcBottom;
-    private bool _arcPlaceable;
     private bool _headersQueued;
     private IntPtr _hwnd;
 
@@ -171,6 +204,8 @@ public sealed partial class Workspace
     private readonly List<(string Name, FontIcon Check)> _paletteThemeNameChecks = new();
     private Border? _paletteChip;
     private TextBlock? _paletteChipText;
+    private PaletteItem? _densityRow;
+    private bool _paletteOpenedByPress;
     private string _paletteRootPlaceholder = string.Empty;
     private int _paletteSelected;
     private TextBlock? _paletteWindowValue;
@@ -194,6 +229,7 @@ public sealed partial class Workspace
     private bool _sidebarCollapsed;
 
     private readonly List<ExitAnimation> _exitAnimations = new();
+    private ZoomTransition? _zoomTransition;
     private readonly List<TerminalPane> _closingPanes = new();
     private Tab? _relayouting;
 
@@ -231,6 +267,7 @@ public sealed partial class Workspace
     {
         _config = config;
         _placement = PlacementFrom(config.TabPosition);
+        _sidebarWidth = Math.Max(MinSidebarWidth(), SidebarWidthFromConfig());
         _dispatcher = DispatcherQueue.GetForCurrentThread();
     }
 
@@ -289,6 +326,21 @@ public sealed partial class Workspace
         Activate(0);
     }
 
+    /// <summary>
+    /// True when <paramref name="source"/> sits inside <paramref name="ancestor"/> in the
+    /// visual tree. The walk starts at the pressed element, so a press on a palette row
+    /// counts as a press inside the palette.
+    /// </summary>
+    private static bool IsWithin(DependencyObject? source, DependencyObject ancestor)
+    {
+        while (source is not null)
+        {
+            if (ReferenceEquals(source, ancestor)) return true;
+            source = source is UIElement element ? VisualTreeHelper.GetParent(element) : null;
+        }
+        return false;
+    }
+
     // ---------------- config reload ----------------
 
     /// <summary>
@@ -309,9 +361,14 @@ public sealed partial class Workspace
         RefreshTheme();
 
         foreach (Tab tab in _tabs)
-            ForEachPane(tab, pane => pane.ApplyFont());
+            ForEachPane(tab, pane =>
+            {
+                pane.ApplyFont();
+                pane.ApplyScrollSettings();
+            });
 
         // The chrome is rebuilt here, so a failure must not take the app down with it.
+        SetSidebarWidth(SidebarWidthFromConfig());
         Diag.Guard("ws.placement", () => ApplyTabPlacement(PlacementFrom(fresh.TabPosition)));
 
         Diag.Log("config", "reloaded");
@@ -337,6 +394,42 @@ public sealed partial class Workspace
     }
 
     /// <summary>
+    /// Switches between floating islands and the edge-to-edge compact surface. The choice is
+    /// persisted like the other chrome settings, and everything that reads it (island margin,
+    /// split gaps, pane frames, tab chips, rail padding) is refreshed here.
+    /// </summary>
+    private void SetDensity(bool compact)
+    {
+        if (_config.Compact != compact)
+        {
+            _config.Compact = compact;
+            Config.SaveValue("compact", compact ? "true" : "false");
+        }
+
+        _contentCard.Margin = ContentCardMargin();
+        _contentCard.CornerRadius = new CornerRadius(CompactDensity ? 0 : 12);
+        _surfaceHost.Margin = SurfaceMargin();
+        if (_sidebar is not null) _sidebar.Padding = SidebarPadding();
+        if (_header is not null)
+            _header.Margin = HeaderMargin(_placement != TabPlacement.Top);
+
+        // The close button's corner tracks the island, which compact mode squares off.
+        UpdateCloseCorner();
+
+        foreach (Tab tab in _tabs)
+        {
+            tab.Surface.RowSpacing = SurfaceGap;
+            tab.Surface.ColumnSpacing = SurfaceGap;
+            Relayout(tab);
+            StyleChip(tab);
+        }
+
+        if (_densityRow is not null) _densityRow.Title.Text = DensityLabel();
+    }
+
+    private string DensityLabel() => CompactDensity ? "紧凑模式：开" : "紧凑模式：关";
+
+    /// <summary>
     /// Moves the tab rail to the top, the left or the right. The chrome (header, tab rail,
     /// sidebar) is rebuilt for the new placement; the tabs, their chips and the running
     /// shells are carried over to it.
@@ -345,6 +438,13 @@ public sealed partial class Workspace
     {
         if (placement == _placement) return;
         _placement = placement;
+
+        // Each side keeps its own width and its own floor: a right-hand rail shares its top
+        // row with the caption buttons. Read the new side's saved width and clamp it with the
+        // *new* placement before the chrome is rebuilt, otherwise a left rail dragged down to
+        // 160 lands on the right at 160 and its buttons collide with the caption buttons.
+        SetSidebarWidth(SidebarWidthFromConfig());
+        if (SidebarWidthFromConfig() != _sidebarWidth) SaveSidebarWidth();
 
         // The chips belong to the tabs, so they travel with them; they have to leave their
         // old host first, an element can only have one parent.
@@ -409,6 +509,9 @@ public sealed partial class Workspace
     private Brush PanelStrokeBrush() => ThemedBrush(Theme.Stroke);
     private Brush StrokeStrongBrush() => ThemedBrush(Theme.StrokeStrong);
     private Brush CardFillBrush() => ThemedBrush(Theme.ContentBg);
+
+    /// <summary>The active tab and side row: the design fills them with the terminal background.</summary>
+    private Brush TermBgBrush() => ThemedBrush(Theme.TermSurfaceBg);
     private Brush TextStrongBrush() => ThemedBrush(Theme.TextStrong);
     private Brush TextBodyBrush() => ThemedBrush(Theme.TextBody);
     private Brush TextFaintBrush() => ThemedBrush(Theme.TextFaint);
@@ -471,6 +574,56 @@ public sealed partial class Workspace
         };
     }
 
+    /// <summary>
+    /// Rounds the close button only where it covers the pane's own top-right corner, which is
+    /// the side layouts. Two cases keep a square corner: the top layout (a normal title bar)
+    /// and a right-hand rail that is open, because then the corner belongs to the rail and
+    /// the captions sit over chrome, not over the pane.
+    /// </summary>
+    /// <summary>
+    /// Hover label for a caption button: the same shape the pane's action buttons use, so the
+    /// chrome reads consistently. Returns the label so the maximize button can follow the
+    /// window state.
+    /// </summary>
+    private static TextBlock CaptionTip(Border button, string text)
+    {
+        var label = new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Theme.TextStrong()),
+        };
+        var tip = new StackPanel { Spacing = 2 };
+        tip.Children.Add(label);
+        ToolTipService.SetToolTip(button, tip);
+        return label;
+    }
+
+    /// <summary>The maximize button says "maximize" or "restore" depending on the window.</summary>
+    private void UpdateMaximizeTip()
+    {
+        if (_maximizeTip is null) return;
+        bool maximized = _window is not null &&
+                         _window.AppWindow.Presenter is OverlappedPresenter presenter &&
+                         presenter.State == OverlappedPresenterState.Maximized;
+        _maximizeTip.Text = maximized ? "还原" : "最大化";
+    }
+
+    private void UpdateCloseCorner()
+    {
+        if (_closeCaption is null) return;
+
+        // The button's corner follows the island's: 12 in the cozy layouts, and square in
+        // compact mode, where the pane runs to the window edge and nothing rounds it.
+        bool onPaneCorner = !CompactDensity
+            && _placement != TabPlacement.Top
+            && !(_placement == TabPlacement.Right && !_sidebarCollapsed);
+
+        _closeCaption.CornerRadius = onPaneCorner
+            ? new CornerRadius(0, 12, 0, 0)
+            : new CornerRadius(0);
+    }
+
     private Border CaptionButton(char code, double width, double height, Brush glyphBrush)
     {
         return new Border
@@ -489,8 +642,8 @@ public sealed partial class Workspace
     {
         return new Border
         {
-            Width = 30,
-            Height = 28,
+            Width = ToolButtonWidth,
+            Height = ToolButtonHeight,
             CornerRadius = new CornerRadius(7),
             Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
@@ -504,8 +657,8 @@ public sealed partial class Workspace
     {
         return new Border
         {
-            Width = 30,
-            Height = 28,
+            Width = ToolButtonWidth,
+            Height = ToolButtonHeight,
             CornerRadius = new CornerRadius(7),
             Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
@@ -607,50 +760,6 @@ public sealed partial class Workspace
         };
     }
 
-    /// <summary>
-    /// Mirrors the design's radial-gradient corner: an 8x8 square whose only filled part is
-    /// the concave sliver between a quarter circle and the outer corner.
-    /// </summary>
-    private Path CornerArc(bool left)
-    {
-        var path = new Path
-        {
-            Width = 8,
-            Height = 8,
-            Fill = CardFillBrush(),
-            IsHitTestVisible = false,
-        };
-
-        var figure = new PathFigure { IsClosed = true };
-        var arc = new ArcSegment
-        {
-            Size = new Size(8, 8),
-            IsLargeArc = false,
-            SweepDirection = left ? SweepDirection.Clockwise : SweepDirection.Counterclockwise,
-        };
-        LineSegment tail = new();
-
-        if (left)
-        {
-            figure.StartPoint = new Point(8, 0);
-            arc.Point = new Point(0, 8);
-            tail.Point = new Point(8, 8);
-        }
-        else
-        {
-            figure.StartPoint = new Point(0, 0);
-            arc.Point = new Point(8, 8);
-            tail.Point = new Point(0, 8);
-        }
-        figure.Segments.Add(arc);
-        figure.Segments.Add(tail);
-
-        var geometry = new PathGeometry();
-        geometry.Figures.Add(figure);
-        path.Data = geometry;
-        return path;
-    }
-
     private void BuildChrome()
     {
         _shell = new Grid { Background = ScrimBrush() };
@@ -658,8 +767,6 @@ public sealed partial class Workspace
         AddStarRow(_shell);
 
         BuildHeader();
-        Grid.SetRow(_header, 0);
-        _shell.Children.Add(_header);
 
         _body = new Grid();
         Grid.SetRow(_body, 1);
@@ -669,6 +776,10 @@ public sealed partial class Workspace
 
         if (_placement == TabPlacement.Top)
         {
+            // The top layout keeps a real title bar: the strip sits above the body and the
+            // tabs dock to the island's top edge.
+            Grid.SetRow(_header, 0);
+            _shell.Children.Add(_header);
             _body.Children.Add(_contentCard);
         }
         else
@@ -688,6 +799,15 @@ public sealed partial class Workspace
             Grid.SetColumn(_contentCard, leftSide ? 1 : 0);
             _body.Children.Add(_sidebar!);
             _body.Children.Add(_contentCard);
+
+            // The splitter goes in last so it sits above the pane it borders.
+            BuildSidebarSplitter(leftSide);
+
+            // The side layouts have no title bar at all: the island starts at the window's
+            // top edge and this strip only carries the caption buttons, laid over the band
+            // the pane header occupies so they line up with the pane's action buttons.
+            Grid.SetColumnSpan(_header, _body.ColumnDefinitions.Count);
+            _body.Children.Add(_header);
         }
 
         _root.Background = WindowMicaBrush();
@@ -706,6 +826,30 @@ public sealed partial class Workspace
             VerticalAlignment = VerticalAlignment.Top,
         };
         _root.Children.Add(_imeSink);
+
+        // The sink sits above the whole window at the cursor cell. A press on it never
+        // reaches the pane's canvas (the canvas is inside the shell, not an ancestor of the
+        // sink), so forward it to the focused pane and let selection start there. The sink
+        // keeps its hit-testability, which text and IME input depend on.
+        // TextBox consumes and handles its own pointer events, so a normal += handler would
+        // never run; handledEventsToo is required. It also keeps the pointer capture, so the
+        // whole drag (press, move, release) arrives here rather than at the pane's canvas.
+        _imeSink.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
+        {
+            if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible) return;
+            if (_tabs.Count == 0) return;
+            _tabs[_active].Focused?.BeginSelectionFromImeSink(args);
+        }), true);
+        _imeSink.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, args) =>
+        {
+            if (_tabs.Count == 0) return;
+            _tabs[_active].Focused?.MoveSelectionFromImeSink(args);
+        }), true);
+        _imeSink.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) =>
+        {
+            if (_tabs.Count == 0) return;
+            _tabs[_active].Focused?.EndSelectionFromImeSink(args);
+        }), true);
 
         EnsureInputHandlers();
 
@@ -794,6 +938,43 @@ public sealed partial class Workspace
             _imeDiscard = true;
             ShowImeComposition();
         }), true);
+
+        // A press outside the palette dismisses it. The palette layer covers the body only,
+        // so the title bar, the caption buttons and the drag strip stay reachable; a press
+        // there would otherwise leave the palette open. Presses inside the layer keep their
+        // own behaviour (the empty area closes it, the card swallows them).
+        // handledEventsToo is required because the chrome and the card mark their presses
+        // handled.
+        _root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
+        {
+            if (_paletteLayer is null || _paletteLayer.Visibility != Visibility.Visible) return;
+            if (IsInsidePalettePanel(args)) return;
+
+            // The press that opens the palette — the rail's or the header's search button —
+            // keeps bubbling to this handler after its own handler ran, and hiding here would
+            // close what it just opened.
+            if (_paletteOpenedByPress)
+            {
+                _paletteOpenedByPress = false;
+                return;
+            }
+
+            HideCommandPalette();
+        }), true);
+    }
+
+    /// <summary>
+    /// True when the press landed on the palette card. The test is geometric rather than a
+    /// walk up the visual tree: the card holds a search box, and the box's own template
+    /// elements are not children of the card in the visual tree, so a walk from the pressed
+    /// element can lose its way and report a press on the search box as an outside press.
+    /// </summary>
+    private bool IsInsidePalettePanel(PointerRoutedEventArgs args)
+    {
+        if (_palettePanel is null) return false;
+        Point position = args.GetCurrentPoint(_palettePanel).Position;
+        return position.X >= 0.0 && position.Y >= 0.0 &&
+               position.X <= _palettePanel.ActualWidth && position.Y <= _palettePanel.ActualHeight;
     }
 
     /// <summary>
@@ -835,13 +1016,29 @@ public sealed partial class Workspace
 
     private void BuildHeader()
     {
+        // The top layout draws a real title bar strip; the side layouts have none, so this
+        // element only carries the caption buttons there, floating over the pane header's
+        // band: no background (a transparent brush would still take the clicks meant for the
+        // pane underneath) and a z-index above the body so the buttons stay on top.
+        bool sideRail = _placement != TabPlacement.Top;
+
+        // 6px below the window's top edge (the island's own margin) plus the pane frame's 1px
+        // border is where the pane header's content starts; the caption buttons use that same
+        // band so their glyphs share the action buttons' centre line.
+        double headerHeight = sideRail ? SideHeaderHeight : HeaderHeight;
         _header = new Border
         {
-            Height = 44,
-            Margin = new Thickness(0),
-            Background = ChromeHeaderFillBrush(),
+            Height = headerHeight,
+            // The caption buttons stay inside the island: its 6px right margin is repeated
+            // here so the close button's hover no longer spills past the pane's edge.
+            // Compact mode has no island inset, so the strip rises with the pane header and
+            // runs flush to the window's right edge, where the close button hugs the border.
+            Margin = HeaderMargin(sideRail),
+            VerticalAlignment = sideRail ? VerticalAlignment.Top : VerticalAlignment.Stretch,
+            Background = sideRail ? null : ChromeHeaderFillBrush(),
             BorderThickness = new Thickness(0),
         };
+        Canvas.SetZIndex(_header, 1);
         _header.PointerPressed += OnHeaderPointerPressed;
         _header.PointerMoved += (_, args) =>
         {
@@ -869,15 +1066,17 @@ public sealed partial class Workspace
             _topTabHost = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Spacing = 2,
-                Margin = new Thickness(8, 0, 8, 0),
+                // The chip carries its own 2px trailing margin, which is the gutter the
+                // divider sits in; a panel spacing on top of that would double it.
+                Spacing = 0,
+                Margin = new Thickness(6, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Bottom,
             };
 
             var strip = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Height = 36,
+                Height = 32,
                 VerticalAlignment = VerticalAlignment.Bottom,
             };
             strip.Children.Add(_topTabHost);
@@ -892,8 +1091,14 @@ public sealed partial class Workspace
             var scroller = new ScrollViewer
             {
                 Content = strip,
-                Height = 36,
-                Margin = new Thickness(20, 0, 0, 0),
+                Height = 32,
+                // The design lines the first chip up with the content island (both 6px from
+                // the window edge), so the strip carries no indent of its own; the chips get
+                // their 6px from the host margin below.
+                Margin = new Thickness(0),
+                // The design docks the strip to the bottom of the 38px header: 6px above the
+                // chips and no gap below, so the active tab's bottom edge meets the content
+                // island's top edge exactly.
                 VerticalAlignment = VerticalAlignment.Bottom,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -909,31 +1114,6 @@ public sealed partial class Workspace
             _tabScroller = scroller;
             Grid.SetColumn(scroller, 0);
             _headerInner.Children.Add(scroller);
-
-            // Connectors live above the strip (and above the scroller's clip) so they can
-            // spill into the 8px gutters on either side of the active chip.
-            _arcLayer = new Canvas
-            {
-                IsHitTestVisible = false,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch,
-            };
-            Grid.SetColumn(_arcLayer, 0);
-
-            _tabArcLeft = CornerArc(true);
-            _tabArcRight = CornerArc(false);
-            _tabArcLeft.Visibility = Visibility.Collapsed;
-            _tabArcRight.Visibility = Visibility.Collapsed;
-            _arcLayer.Children.Add(_tabArcLeft);
-            _arcLayer.Children.Add(_tabArcRight);
-            // No Clip here: clipping this overlay makes WinUI fail-fast (0xC000027B) as soon
-            // as the tab strip underneath scrolls. The connectors are hidden whenever the
-            // active chip leaves the viewport, so nothing can spill over the chrome.
-            _arcLayer.SizeChanged += (_, _) => ScheduleTabArcs();
-            _headerInner.Children.Add(_arcLayer);
-
-            scroller.ViewChanged += (_, _) => ScheduleTabArcs();
-            scroller.SizeChanged += (_, _) => ScheduleTabArcs();
 
             // New-tab / search stay pinned to the right of the header, whatever the tab
             // strip's width or scroll offset.
@@ -973,17 +1153,27 @@ public sealed partial class Workspace
 
         if (_placement != TabPlacement.Top)
         {
+            // With the rail collapsed only the button that brings it back stays: the rail's
+            // other actions went away with it (Ctrl+Shift+T / Ctrl+Shift+P still work). It
+            // sits on the rail's side of the window and inside the band the pane header
+            // occupies, so the two rows read as one line.
+            bool railRight = _placement == TabPlacement.Right;
             _headerSideTools = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 2,
-                Margin = new Thickness(14, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
+                Height = 32,
+                // 12 = 6 inside the island's edge (so the button is not flush with the
+                // pane's border) plus the pane header's own inset; the strip itself already
+                // starts at the pane header's band, so no vertical inset is needed.
+                Margin = railRight ? new Thickness(0, 0, 12, 0) : new Thickness(12, 0, 0, 0),
+                HorizontalAlignment = railRight ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
                 Visibility = Visibility.Collapsed,
             };
 
             // The panel glyph shows the tab rail on the side it lives on.
-            Border sideToggle = ToolButton(PanelIcon(ChromeTextFaintBrush(), 14, _placement != TabPlacement.Right));
+            Border sideToggle = ToolButton(PanelIcon(ChromeTextFaintBrush(), 14, !railRight));
             Hoverable(sideToggle, ChromeChipHoverBrush);
             sideToggle.PointerPressed += (_, args) =>
             {
@@ -992,43 +1182,36 @@ public sealed partial class Workspace
             };
             _headerSideTools.Children.Add(sideToggle);
 
-            Border add = ToolButton('\uE710', ChromeTextFaintBrush());
-            Hoverable(add, ChromeChipHoverBrush);
-            add.PointerPressed += (_, args) =>
-            {
-                args.Handled = true;
-                RequestNewTab();
-            };
-            _headerSideTools.Children.Add(add);
-
-            Border search = ToolButton('\uE721', ChromeTextFaintBrush());
-            Hoverable(search, ChromeChipHoverBrush);
-            search.PointerPressed += (_, args) =>
-            {
-                args.Handled = true;
-                ShowCommandPalette();
-            };
-            _headerSideTools.Children.Add(search);
-
             Grid.SetColumn(_headerSideTools, 0);
             _headerInner.Children.Add(_headerSideTools);
         }
 
+        // The caption buttons fill the header edge to edge, like real window controls; their
+        // glyphs still sit in the 6..38 band so they share the centre line with the tabs, the
+        // rail's tool row and the pane header's buttons.
         var captions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 0,
-            VerticalAlignment = VerticalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0),
         };
 
-        Border minimize = CaptionButton('\uE921', 46, 44, ChromeTextBodyBrush());
-        Border maximize = CaptionButton('\uE922', 46, 44, ChromeTextBodyBrush());
-        Border close = CaptionButton('\uE8BB', 46, 44, ChromeTextBodyBrush());
+        Border minimize = CaptionButton('\uE921', CaptionButtonWidth, headerHeight, ChromeTextBodyBrush());
+        Border maximize = CaptionButton('\uE922', CaptionButtonWidth, headerHeight, ChromeTextBodyBrush());
+        Border close = CaptionButton('\uE8BB', CaptionButtonWidth, headerHeight, ChromeTextBodyBrush());
         _maximizeIcon = maximize.Child as FontIcon;
+        _closeCaption = close;
+        UpdateCloseCorner();
         CaptionHover(minimize, ChromeChipHoverBrush, ChromeTextStrongBrush);
         CaptionHover(maximize, ChromeChipHoverBrush, ChromeTextStrongBrush);
         CaptionHover(close, CloseHoverBrush, () => new SolidColorBrush(Colors.White));
+
+        // The three window buttons carry the same one-line hover label the pane actions use.
+        CaptionTip(minimize, "最小化");
+        _maximizeTip = CaptionTip(maximize, string.Empty);
+        CaptionTip(close, "关闭");
+        UpdateMaximizeTip();
 
         minimize.PointerPressed += (_, args) =>
         {
@@ -1054,20 +1237,47 @@ public sealed partial class Workspace
         _headerInner.Children.Add(captions);
     }
 
+    /// <summary>
+    /// 7 = the island's 6px inset + the pane frame's 1px border: the 32px tool row then
+    /// shares its band with the pane header and the caption buttons. Compact mode moves the
+    /// island to the window edge, so the rail's row has to follow it up.
+    /// </summary>
+    private Thickness SidebarPadding() => new Thickness(6, CompactDensity ? 0 : 7, 6, 8);
+
     private void BuildSidebar()
     {
         bool leftSide = _placement == TabPlacement.Left;
 
-        // Flat tab rail: it starts at the window's top edge (negative margin lifts it over
-        // the header row) and has no card chrome of its own.
+        // Flat tab rail: with no title bar in the side layouts it starts at the window's
+        // top edge and has no card chrome of its own.
         _sidebar = new Border
         {
-            Width = 240,
-            Margin = leftSide ? new Thickness(0, -44, 8, 8) : new Thickness(8, -44, 0, 8),
+            Width = _sidebarWidth,
+            // No horizontal margin on either side: the rail's padding is the gap to the
+            // window edge and to the island, so both sides read as 6.
+            Margin = new Thickness(0, 0, 0, 8),
             Background = ClearBrush(),
             BorderThickness = new Thickness(0),
-            Padding = leftSide ? new Thickness(14, 8, 6, 8) : new Thickness(6, 8, 14, 8),
+            Padding = SidebarPadding(),
         };
+
+        // The header strip is click-through in the side layouts (the island rises into it),
+        // so the rail's own empty area drags the window instead.
+        _sidebar.PointerPressed += OnHeaderPointerPressed;
+        _sidebar.PointerMoved += (_, args) =>
+        {
+            if (!_dragging) return;
+            args.Handled = true;
+            DragTo();
+        };
+        _sidebar.PointerReleased += (_, args) =>
+        {
+            if (!_dragging) return;
+            args.Handled = true;
+            _sidebar.ReleasePointerCapture(args.Pointer);
+            EndDrag();
+        };
+        _sidebar.PointerCaptureLost += (_, _) => EndDrag();
 
         var layout = new Grid();
         AddAutoRow(layout);
@@ -1078,10 +1288,12 @@ public sealed partial class Workspace
         {
             Orientation = Orientation.Horizontal,
             Spacing = 2,
-            Height = 34,
+            Height = 32,
             VerticalAlignment = VerticalAlignment.Center,
         };
 
+        // The sidebar toggle is always a button of its own: collapsing the rail should never
+        // require opening a menu.
         Border collapse = ToolButton(PanelIcon(TextFaintBrush(), 14, _placement != TabPlacement.Right));
         Hoverable(collapse, ChipHoverBrush);
         collapse.PointerPressed += (_, args) =>
@@ -1110,6 +1322,64 @@ public sealed partial class Workspace
         };
         tools.Children.Add(search);
 
+        // The two extra actions become an overflow button only when the rail's top row cannot
+        // hold them. A right-hand rail shares that row with the caption buttons, so it needs
+        // noticeably more width than a left-hand one.
+        var railMenu = new MenuFlyout
+        {
+            // Edge-aligned to the button: centered below it would hang the menu off the
+            // window when the rail is at its narrowest.
+            Placement = _placement == TabPlacement.Right
+                ? Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight
+                : Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft,
+        };
+
+        var newTabItem = new MenuFlyoutItem
+        {
+            Text = "新建标签页",
+            KeyboardAcceleratorTextOverride = "Ctrl+Shift+T",
+        };
+        newTabItem.Click += (_, _) =>
+        {
+            NewTab();
+            Activate(_tabs.Count - 1);
+        };
+        railMenu.Items.Add(newTabItem);
+
+        var searchItem = new MenuFlyoutItem
+        {
+            Text = "搜索命令",
+            KeyboardAcceleratorTextOverride = "Ctrl+Shift+P",
+        };
+        searchItem.Click += (_, _) => ShowCommandPalette();
+        railMenu.Items.Add(searchItem);
+
+        Border menu = ToolButton('\uE712');
+        Hoverable(menu, ChipHoverBrush);
+        // Opening on release: a flyout shown while the button is still down is dismissed by
+        // the same press.
+        menu.PointerPressed += (_, args) => args.Handled = true;
+        menu.PointerReleased += (_, args) =>
+        {
+            args.Handled = true;
+            railMenu.ShowAt(menu);
+        };
+        tools.Children.Add(menu);
+
+        void UpdateRailTools()
+        {
+            double leading = leftSide ? 14 : 6;
+            double captions = leftSide ? 0 : 3 * CaptionButtonWidth;
+            double needed = 3 * ToolButtonWidth + 2 * tools.Spacing + leading + captions;
+            bool fits = (_sidebar?.ActualWidth ?? 0.0) >= needed;
+
+            add.Visibility = fits ? Visibility.Visible : Visibility.Collapsed;
+            search.Visibility = fits ? Visibility.Visible : Visibility.Collapsed;
+            menu.Visibility = fits ? Visibility.Collapsed : Visibility.Visible;
+        }
+        _sidebar.SizeChanged += (_, _) => UpdateRailTools();
+        UpdateRailTools();
+
         Grid.SetRow(tools, 0);
         layout.Children.Add(tools);
 
@@ -1125,26 +1395,195 @@ public sealed partial class Workspace
             VerticalScrollMode = ScrollMode.Enabled,
         };
         _tabScroller = scroller;
+        // The rail is laid out after the tabs exist, so a pending "scroll to the active tab"
+        // (a new tab, or a switch into the side layout) has to run again once it has a size.
+        scroller.SizeChanged += (_, _) =>
+        {
+            if (_ensureActiveVisible && EnsureActiveVisible()) _ensureActiveVisible = false;
+        };
         Grid.SetRow(scroller, 1);
         layout.Children.Add(scroller);
 
         WireTabDrag();
     }
 
+    /// <summary>
+    /// Turns the pane's own left (or right) border into the rail's splitter. The strip lies
+    /// mostly in the gap between the rail and the pane and reaches a couple of DIP over the
+    /// pane's edge, which is the visible border the pointer grabs; the accent line it paints
+    /// while dragging lands on that border.
+    /// </summary>
+    private void BuildSidebarSplitter(bool leftSide)
+    {
+        _sidebarSplitter = new ResizeGrip
+        {
+            Width = SidebarSplitterWidth,
+            HorizontalAlignment = leftSide ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Margin = leftSide
+                ? new Thickness(0, 0, -SidebarSplitterOverlap, 0)
+                : new Thickness(-SidebarSplitterOverlap, 0, 0, 0),
+        };
+
+        // A UserControl's own Background is not painted by its template, so the hit-testable
+        // surface is this child. The splitter paints nothing: the border it covers is already
+        // there, and the resize cursor is the only cue.
+        _sidebarSplitter.Content = new Grid { Background = ClearBrush() };
+
+        _sidebarSplitter.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            if (_sidebar is null) return;
+            _resizingSidebar = true;
+            _resizeStartWidth = _sidebar.Width;
+            // The cursor is tracked in screen pixels, like the window drag: the border moves
+            // under the pointer, so a relative position would feed the resize back into its
+            // own delta.
+            GetCursorPos(out POINT cursor);
+            _resizeCursorX = cursor.X;
+            _sidebarSplitter.CapturePointer(args.Pointer);
+        };
+        _sidebarSplitter.PointerMoved += (_, args) =>
+        {
+            if (!_resizingSidebar) return;
+            args.Handled = true;
+            ResizeSidebarTo();
+        };
+        _sidebarSplitter.PointerReleased += (_, args) =>
+        {
+            if (!_resizingSidebar) return;
+            args.Handled = true;
+            _sidebarSplitter.ReleasePointerCapture(args.Pointer);
+            EndSidebarResize();
+        };
+        _sidebarSplitter.PointerCaptureLost += (_, _) => EndSidebarResize();
+
+        Grid.SetColumn(_sidebarSplitter, leftSide ? 0 : 1);
+        _body.Children.Add(_sidebarSplitter);
+    }
+
+    /// <summary>
+    /// Follows the pointer while the rail's edge is dragged. A right-hand rail grows
+    /// leftwards, and the screen-pixel delta is converted to DIPs with the window's scale.
+    /// </summary>
+    private void ResizeSidebarTo()
+    {
+        if (_sidebar is null) return;
+
+        GetCursorPos(out POINT cursor);
+        double scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        if (scale <= 0.0) scale = 1.0;
+
+        double delta = (cursor.X - _resizeCursorX) / scale;
+        if (_placement == TabPlacement.Right) delta = -delta;
+
+        double floor = MinSidebarWidth();
+        double max = Math.Max(floor, _body.ActualWidth - ContentWidthMin);
+        double width = Math.Clamp(_resizeStartWidth + delta, floor, max);
+        if (Math.Abs(width - _sidebar.Width) < 0.5) return;
+
+        _sidebarWidth = width;
+        _sidebar.Width = width;
+    }
+
+    private void EndSidebarResize()
+    {
+        if (!_resizingSidebar) return;
+        _resizingSidebar = false;
+        SaveSidebarWidth();
+    }
+
+    /// <summary>The saved width for the side the rail is currently on.</summary>
+    private double SidebarWidthFromConfig() =>
+        _placement == TabPlacement.Right ? _config.SidebarWidthRight : _config.SidebarWidthLeft;
+
+    /// <summary>
+    /// Persists the current width under the current side's key. Left and right rails are
+    /// dragged independently, so switching sides never carries one side's width over.
+    /// </summary>
+    private void SaveSidebarWidth()
+    {
+        int value = (int)Math.Round(_sidebarWidth);
+        if (_placement == TabPlacement.Right)
+        {
+            _config.SidebarWidthRight = value;
+            Config.SaveValue("sidebar-width-right", value.ToString());
+        }
+        else
+        {
+            _config.SidebarWidthLeft = value;
+            Config.SaveValue("sidebar-width-left", value.ToString());
+        }
+    }
+
+    private void SetSidebarWidth(double width)
+    {
+        _sidebarWidth = Math.Max(MinSidebarWidth(), width);
+        if (_sidebar is not null) _sidebar.Width = _sidebarWidth;
+    }
+
+    /// <summary>
+    /// Narrowest the rail may be dragged. A right-hand rail shares its top row with the three
+    /// caption buttons, so it has to keep the room of two of its own buttons in front of them;
+    /// a left-hand rail has that row to itself.
+    /// </summary>
+    private double MinSidebarWidth() => _placement == TabPlacement.Right
+        ? 2 * ToolButtonWidth + 3 * CaptionButtonWidth
+        : SidebarWidthMin;
+
+    /// <summary>
+    /// The header strip's own inset. The side layouts float it over the island, so it repeats
+    /// the island's 6 DIP inset; compact mode removes that inset from both.
+    /// </summary>
+    private Thickness HeaderMargin(bool sideRail) => sideRail
+        ? new Thickness(0, CompactDensity ? 0 : SideHeaderInset, CompactDensity ? 0 : 6, 0)
+        : new Thickness(0);
+
+    /// <summary>
+    /// Compact chrome: the panes stop being islands and fill the content area, separated
+    /// only by 1 DIP dividers.
+    /// </summary>
+    private bool CompactDensity => _config.Compact;
+
+    /// <summary>Gap between two split cells; compact mode makes them share an edge.</summary>
+    private double SurfaceGap => CompactDensity ? 0.0 : 6.0;
+
+    /// <summary>The gap under the top tab strip; compact mode drops it.</summary>
+    private Thickness SurfaceMargin() =>
+        _placement == TabPlacement.Top && !CompactDensity ? new Thickness(0, 6, 0, 0) : new Thickness(0);
+
+    /// <summary>
+    /// The island's outer margin. It is 6px on every visible edge: the top layout puts the
+    /// island under the 38px title bar, the side layouts have no title bar at all and start
+    /// the island at the window's own 6px inset.
+    /// </summary>
+    private Thickness ContentCardMargin()
+    {
+        // Compact mode merges the panes into one continuous surface: the island inset goes
+        // away on every edge.
+        if (CompactDensity) return new Thickness(0);
+
+        if (_placement == TabPlacement.Top) return new Thickness(6, 0, 6, 6);
+
+        if (_sidebarCollapsed) return new Thickness(6, 6, 6, 6);
+        return _placement == TabPlacement.Left ? new Thickness(0, 6, 6, 6)
+            : new Thickness(6, 6, 0, 6);
+    }
+
     private void BuildSurface()
     {
         _contentCard = new Border
         {
-            Margin = _placement == TabPlacement.Left ? new Thickness(0, 0, 8, 8)
-                : _placement == TabPlacement.Right ? new Thickness(8, 0, 0, 8)
-                : new Thickness(8, 0, 8, 8),
-            CornerRadius = new CornerRadius(12),
+            Margin = ContentCardMargin(),
+            CornerRadius = new CornerRadius(CompactDensity ? 0 : 12),
             Background = CardFillBrush(),
-            BorderBrush = PanelStrokeBrush(),
-            BorderThickness = _placement == TabPlacement.Top ? new Thickness(1, 0, 1, 1) : new Thickness(1),
         };
 
-        _surfaceHost = new Grid { Margin = new Thickness(6) };
+        // The design's content island carries no outline and lets the panes run to its edges.
+        // The top layout keeps a 6px gap under the tab strip; the side layouts pull the
+        // island up into the header row instead, so the pane shares the window's top edge
+        // with the caption buttons and needs no gap there.
+        _surfaceHost = new Grid { Margin = SurfaceMargin() };
 
         _contentStack = new Grid();
         _contentStack.Children.Add(_surfaceHost);
@@ -1210,15 +1649,21 @@ public sealed partial class Workspace
     }
 
     /// <summary>
-    /// The chip's shape depends on the rail it sits in: the top variant is taller and docks
-    /// into the content card with square bottom corners. Moving the rail restyles it.
+    /// The chip's shape depends on the rail it sits in: both variants fill the header's
+    /// 8px top gap exactly, and moving the rail restyles the chip.
     /// </summary>
     private void StyleChip(Tab tab)
     {
         bool top = _placement == TabPlacement.Top;
-        tab.Chip.Height = top ? 36 : 34;
-        tab.Chip.CornerRadius = top ? new CornerRadius(8, 8, 0, 0) : new CornerRadius(8);
-        tab.Chip.Padding = top ? new Thickness(12, 0, 0, 0) : new Thickness(8, 0, 8, 0);
+        tab.Chip.Height = 32;
+        // Rounded on all four corners: the tab floats on the strip instead of docking into
+        // the content island, so there is no square bottom edge and no connector. Compact
+        // mode squares the bottom edge of a top-strip chip, where it meets the edge-to-edge
+        // surface; a rail row keeps its four corners, it sits beside the surface, not above it.
+        tab.Chip.CornerRadius = CompactDensity && top
+            ? new CornerRadius(8, 8, 0, 0)
+            : new CornerRadius(8);
+        tab.Chip.Padding = top ? new Thickness(11, 0, 10, 0) : new Thickness(8, 0, 8, 0);
         tab.Chip.Margin = top ? new Thickness(0, 0, 2, 0) : new Thickness(0);
         tab.Chip.MaxWidth = top ? 220 : double.PositiveInfinity;
         if (tab.ChipClose is not null)
@@ -1230,7 +1675,7 @@ public sealed partial class Workspace
         Diag.Debug("tab", $"create start #{_tabs.Count + 1}");
         var tab = new Tab { Title = ShellDisplayName(_config.Command) };
 
-        tab.Surface = new Grid { RowSpacing = 6, ColumnSpacing = 6 };
+        tab.Surface = new Grid { RowSpacing = SurfaceGap, ColumnSpacing = SurfaceGap };
 
         bool top = _placement == TabPlacement.Top;
 
@@ -1345,18 +1790,20 @@ public sealed partial class Workspace
         Grid.SetColumn(tab.ChipClose, 2);
         chipGrid.Children.Add(tab.ChipClose);
 
-        // A thin separator between inactive tabs, as in Windows Terminal. It stays in the
-        // layout so showing it never changes the tab width.
+        // A thin separator between two inactive tabs. It lives in the 2px gutter *before*
+        // the chip (the design's .tab + .tab::before with left:-1px), so it reads as a
+        // separator between tabs instead of as part of the chip's own box.
         tab.ChipDivider = new Border
         {
             Width = 1,
-            Height = 16,
+            Height = 20,
             Background = ChromeStrokeBrush(),
+            HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(-1, 0, 0, 0),
+            IsHitTestVisible = false,
             Opacity = 0.0,
         };
-        Grid.SetColumn(tab.ChipDivider, 3);
-        chipGrid.Children.Add(tab.ChipDivider);
 
         tab.Chip.Child = chipGrid;
         StyleChip(tab);
@@ -1364,7 +1811,6 @@ public sealed partial class Workspace
         // once it does.
         tab.Chip.SizeChanged += (_, _) =>
         {
-            ScheduleTabArcs();
             if (_ensureActiveVisible && EnsureActiveVisible()) _ensureActiveVisible = false;
         };
 
@@ -1379,9 +1825,13 @@ public sealed partial class Workspace
 
         // A Border cannot take focus, so the chip sits inside a focusable ContentControl;
         // only the active chip joins the tab order (roving index).
+        var chipShell = new Grid();
+        chipShell.Children.Add(tab.Chip);
+        chipShell.Children.Add(tab.ChipDivider);
+
         tab.ChipFocus = new ContentControl
         {
-            Content = tab.Chip,
+            Content = chipShell,
             IsTabStop = false,
             UseSystemFocusVisuals = true,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
@@ -1550,8 +2000,6 @@ public sealed partial class Workspace
         double baseX = horizontal ? origins[current] : _dragFollowX;
         double baseY = horizontal ? _dragFollowY : origins[current];
         ShiftTabNow(_dragTab, _dragFollowX - baseX, _dragFollowY - baseY);
-        // The active-tab connectors follow the chip while it is lifted.
-        ScheduleTabArcs();
 
         // The same midpoint rule browsers use.
         double draggedCentre = (horizontal ? _dragFollowX : _dragFollowY) + TabStripExtent(_dragTab, horizontal) / 2.0;
@@ -1861,7 +2309,6 @@ public sealed partial class Workspace
         tab.ShiftX = x;
         tab.ShiftY = y;
         tab.ChipFocus.Translation = new System.Numerics.Vector3((float)x, (float)y, 0);
-        if (_tabs.Count > 0 && ReferenceEquals(_tabs[_active], tab)) PlaceArcs(x, y);
     }
 
     private void StopChipSpring(Tab tab)
@@ -1940,7 +2387,6 @@ public sealed partial class Workspace
 
         _stripOffset = next;
         _stripTransform.X = -next;
-        ScheduleTabArcs();
     }
 
     /// <summary>Content extent of the strip, measured from the chips themselves.</summary>
@@ -1961,12 +2407,32 @@ public sealed partial class Workspace
     /// </summary>
     private bool EnsureActiveVisible()
     {
-        if (_stripTransform is null || _tabScroller is null || _tabs.Count == 0) return false;
+        if (_tabScroller is null || _tabs.Count == 0) return false;
+
+        int index = Math.Clamp(_active, 0, _tabs.Count - 1);
+
+        // The side rails are ordinary vertical scroll areas (the chips stack downwards), so
+        // the ScrollViewer can bring the chip into view itself; the horizontal strip below is
+        // scrolled by hand because XAML's own horizontal scrolling of it fail-fasts.
+        if (_stripTransform is null)
+        {
+            ContentControl chip = _tabs[index].ChipFocus;
+            double height = chip.ActualHeight;
+            double railViewport = _tabScroller.ViewportHeight;
+            // Nothing to measure against yet (a fresh rail has not been laid out): keep the
+            // request pending, the size-changed hook below runs it again.
+            if (height <= 0.0 || railViewport <= 0.0 || _tabColumn is null) return false;
+
+            double top = chip.TransformToVisual(_tabColumn).TransformPoint(new Point(0, 0)).Y;
+            double offset = _tabScroller.VerticalOffset;
+            if (top < offset) _tabScroller.ChangeView(null, top, null, true);
+            else if (top + height > offset + railViewport)
+                _tabScroller.ChangeView(null, top + height - railViewport, null, true);
+            return true;
+        }
 
         double viewport = _tabScroller.ActualWidth;
         if (viewport <= 0.0) return false;
-
-        int index = Math.Clamp(_active, 0, _tabs.Count - 1);
         double extent = TabStripExtent(_tabs[index], true);
         if (extent <= 0.0) return false;
 
@@ -1982,102 +2448,8 @@ public sealed partial class Workspace
         {
             _stripOffset = target;
             _stripTransform.X = -target;
-            ScheduleTabArcs();
         }
         return true;
-    }
-
-    private void ScheduleTabArcs()
-    {
-        if (_arcLayer is null || _arcUpdateQueued) return;
-        if (_dispatcher is null)
-        {
-            UpdateTabArcs();
-            return;
-        }
-        _arcUpdateQueued = true;
-        _dispatcher.TryEnqueue(() =>
-        {
-            _arcUpdateQueued = false;
-            Diag.Guard("ws.arcs", UpdateTabArcs);
-        });
-    }
-
-    private void UpdateTabArcs()
-    {
-        if (_arcLayer is null || _tabArcLeft is null || _tabArcRight is null) return;
-
-        void Hide()
-        {
-            _arcPlaceable = false;
-            _tabArcLeft.Visibility = Visibility.Collapsed;
-            _tabArcRight.Visibility = Visibility.Collapsed;
-        }
-
-        if (_placement != TabPlacement.Top || _tabs.Count == 0 || _tabScroller is null || _chipHost is null)
-        {
-            Hide();
-            return;
-        }
-
-        Border chip = _tabs[_active].Chip;
-        double width = chip.ActualWidth;
-        double height = chip.ActualHeight;
-        if (width <= 0.0 || height <= 0.0)
-        {
-            Hide();
-            return;
-        }
-
-        // Measure from the strip host (never render-translated) so the chip's own
-        // displacement can be added on top.
-        List<double> origins = TabSlotOrigins(true);
-        if (_active >= origins.Count)
-        {
-            Hide();
-            return;
-        }
-
-        Point hostOrigin = _chipHost.TransformToVisual(_arcLayer).TransformPoint(new Point(0, 0));
-        Tab activeTab = _tabs[_active];
-        double left = hostOrigin.X + origins[_active];
-        double right = left + width;
-        double bottom = hostOrigin.Y + height;
-
-        Point view = _tabScroller.TransformToVisual(_arcLayer).TransformPoint(new Point(0, 0));
-        double viewLeft = view.X;
-        double viewRight = view.X + _tabScroller.ActualWidth;
-
-        // Hide while the chip is scrolled out of view; the connectors are not inside the
-        // scroller's clip and would otherwise float over the chrome.
-        if (left + activeTab.ShiftX < viewLeft - 0.5 || right + activeTab.ShiftX > viewRight + 0.5)
-        {
-            Hide();
-            return;
-        }
-
-        _arcLeft = left - 8.0;
-        _arcRight = right;
-        _arcBottom = bottom - 8.0;
-        _arcPlaceable = true;
-        PlaceArcs(activeTab.ShiftX, activeTab.ShiftY);
-        _tabArcLeft.Visibility = Visibility.Visible;
-        _tabArcRight.Visibility = Visibility.Visible;
-    }
-
-    /// <summary>
-    /// Places the active-tab connectors, folding the chip's displacement into the Canvas
-    /// coordinates. UIElement.Translation must not be used here: a translated child inside
-    /// this clipped overlay fail-fasts XAML (0xC000027B) while the strip scrolls.
-    /// </summary>
-    private void PlaceArcs(double shiftX, double shiftY)
-    {
-        if (!_arcPlaceable || _tabArcLeft is null || _tabArcRight is null) return;
-
-        Canvas.SetLeft(_tabArcLeft, _arcLeft + shiftX);
-        Canvas.SetTop(_tabArcLeft, _arcBottom + shiftY);
-        Canvas.SetLeft(_tabArcRight, _arcRight + shiftX);
-        Canvas.SetTop(_tabArcRight, _arcBottom + shiftY);
     }
 
     // ---------------- split tree ----------------
@@ -2110,6 +2482,9 @@ public sealed partial class Workspace
 
     private void Relayout(Tab tab)
     {
+        // A running zoom transition holds a RenderTransform on a pane this pass may detach.
+        SettleZoomTransition();
+
         // Settling a pending close runs FinishPaneRemoval, which relayouts the same tab.
         // That nested pass would drop the grids this one still detaches the panes from.
         if (ReferenceEquals(_relayouting, tab)) return;
@@ -2137,6 +2512,7 @@ public sealed partial class Workspace
         // The last pane cannot be zoomed or closed; the buttons stay visible but disabled.
         bool singlePane = tab.Root is not null && tab.Root.Pane is not null;
         ForEachPane(tab, pane => pane.SetSinglePane(singlePane));
+        ForEachPane(tab, pane => pane.SetCompact(CompactDensity));
 
         if (tab.Zoomed && tab.Focused is not null)
         {
@@ -2179,16 +2555,22 @@ public sealed partial class Workspace
     {
         if (node.Pane is not null) return node.Pane.Visual;
 
-        var grid = new Grid { RowSpacing = 6, ColumnSpacing = 6 };
+        // Cozy keeps a 6 DIP gap between cells. Compact removes the gap and puts a 1 DIP
+        // divider in its place, so the split line is the same weight the pane border used to
+        // draw.
+        bool compact = CompactDensity;
+        var grid = new Grid { RowSpacing = SurfaceGap, ColumnSpacing = SurfaceGap };
         grids.Add(grid);
         if (node.Vertical)
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            if (compact) grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1) });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         }
         else
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            if (compact) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         }
 
@@ -2197,14 +2579,20 @@ public sealed partial class Workspace
         if (node.Vertical)
         {
             Grid.SetRow(first, 0);
-            Grid.SetRow(second, 1);
+            Grid.SetRow(second, compact ? 2 : 1);
         }
         else
         {
             Grid.SetColumn(first, 0);
-            Grid.SetColumn(second, 1);
+            Grid.SetColumn(second, compact ? 2 : 1);
         }
         AddChild(grid, first, previous);
+        if (compact)
+        {
+            var divider = new Border { Background = new SolidColorBrush(Theme.PaneStroke()) };
+            if (node.Vertical) Grid.SetRow(divider, 1); else Grid.SetColumn(divider, 1);
+            grid.Children.Add(divider);
+        }
         AddChild(grid, second, previous);
         return grid;
     }
@@ -2374,14 +2762,22 @@ public sealed partial class Workspace
         if (_tabs.Count == 0) return;
         Tab tab = _tabs[_active];
         if (tab.Root is null || tab.Root.Pane is not null || tab.Focused is null) return;
+
+        // The transition needs the pane's current rectangle before the rebuild moves it.
+        TerminalPane focused = tab.Focused;
+        SettleZoomTransition();
+        Rect before = PaneBounds(focused);
+
         tab.Zoomed = !tab.Zoomed;
         Relayout(tab);
-        FocusPane(tab, tab.Focused);
+        FocusPane(tab, focused);
+        AnimateZoomTransition(tab, focused, before);
     }
 
     private void Activate(int index)
     {
         if (index < 0 || index >= _tabs.Count) return;
+        SettleZoomTransition();
 
         Diag.Debug("tab", $"activate {index}");
         _active = index;

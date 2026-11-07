@@ -10,6 +10,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -38,6 +39,7 @@ public sealed class TerminalPane
     private readonly Border _frame;
     private readonly CanvasControl _canvas;
     private readonly Border _dim;
+    private readonly ScrollBar _scrollBar;
     private readonly TextBlock _pathText;
     private readonly FontIcon _iconFallback;
     private readonly Image _shellIcon;
@@ -45,6 +47,9 @@ public sealed class TerminalPane
     private Border? _zoomButton;
     private Border? _closeButton;
     private StackPanel? _actions;
+    private double _actionsInset = -1;
+    private Grid? _info;
+    private double _infoInset = -1;
     private readonly List<ActionVisual> _actionVisuals = new();
 
     private readonly DispatcherQueue? _dispatcher;
@@ -60,6 +65,7 @@ public sealed class TerminalPane
     private bool _focused;
     private bool _hovered;
     private bool _selecting;
+    private bool _updatingScrollbar;
     private int _layoutSuspended;
     private bool _drawHooked;
     private ushort _anchorX;
@@ -92,6 +98,8 @@ public sealed class TerminalPane
         if (config.FontSize > 0) _fontSizeDip = config.FontSize;
 
         _session = new TerminalSession();
+        _session.SetScrollbackLimit(config.ScrollbackLimit);
+        _session.SetScrollbackLimitLines(config.ScrollbackLimitLines);
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         _canvas = new CanvasControl
@@ -109,16 +117,45 @@ public sealed class TerminalPane
             Opacity = 0.0,
         };
 
+        // Scrollbar: the stock WinUI control, over the terminal's right edge in the 14 DIP
+        // the canvas leaves free. It owns the thumb sizing, the drag, the page clicks and the
+        // hover treatment; this class only maps its Value to a scrollback row.
+        _scrollBar = new ScrollBar
+        {
+            Orientation = Orientation.Vertical,
+            IndicatorMode = ScrollingIndicatorMode.MouseIndicator,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            // Same 12 DIP band the canvas keeps above and below its rows.
+            Margin = new Thickness(0, 12, 2, 12),
+            // The terminal owns the keyboard; a focusable bar would take Tab away from it.
+            IsTabStop = false,
+            Visibility = Visibility.Collapsed,
+        };
+        _scrollBar.ValueChanged += (_, _) =>
+        {
+            // UpdateScrollbar writes the value back from the terminal's state; that write is
+            // not a user scroll and must not be echoed into the terminal.
+            if (_updatingScrollbar || !_ready) return;
+            _session.ScrollTo((ulong)Math.Round(_scrollBar.Value));
+        };
+        // The control does not take the wheel itself, so scrolling over the bar has to reach
+        // the terminal the same way it does over the surface.
+        _scrollBar.PointerWheelChanged += OnPointerWheel;
+        _scrollBar.SizeChanged += (_, _) => UpdateScrollbar();
+
         var faint = new SolidColorBrush(Theme.TextFaint());
         var strong = new SolidColorBrush(Theme.TextStrong());
 
         // Header row: cwd on the left, pane actions on the right. It lives inside the same
         // frame as the surface so focus and rounded corners stay unified.
-        var header = new Grid { Height = 34 };
+        var header = new Grid { Height = 32 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var info = new Grid { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        _info = info;
+        _infoInset = 0.0;
         info.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         info.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
@@ -165,6 +202,7 @@ public sealed class TerminalPane
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 6, 0),
         };
+        _actionsInset = 0.0;
 
         AddAction(SplitIcon(true, faint, 12.0), "向右拆分窗格", "alt+shift+plus",
             () => OnSplitRight?.Invoke(this));
@@ -187,12 +225,16 @@ public sealed class TerminalPane
         frameRoot.Children.Add(header);
         Grid.SetRow(_canvas, 1);
         frameRoot.Children.Add(_canvas);
+        Grid.SetRow(_scrollBar, 1);
+        frameRoot.Children.Add(_scrollBar);
         Grid.SetRow(_dim, 1);
         frameRoot.Children.Add(_dim);
 
         _frame = new Border
         {
-            CornerRadius = new CornerRadius(9),
+            // Matches the content island's radius: the pane runs to the island's edges, and a
+            // tighter radius would leave a crescent of island colour at every shared corner.
+            CornerRadius = new CornerRadius(12),
             Background = new SolidColorBrush(Theme.TermSurfaceBg()),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Theme.PaneStroke()),
@@ -495,7 +537,33 @@ public sealed class TerminalPane
     public void Redraw()
     {
         if (!_ready) return;
+        // Output, scrolling and resizes all end here, so this is where the thumb follows the
+        // viewport.
+        UpdateScrollbar();
         _canvas.Invalidate();
+    }
+
+    /// <summary>
+    /// Keeps the header actions clear of something the window draws over the pane's top-right
+    /// corner. The side layouts lift the island under the caption buttons, so the pane that
+    /// owns that corner asks for the width they need.
+    /// </summary>
+    public void SetActionsInset(double inset)
+    {
+        if (_actions is null || Math.Abs(inset - _actionsInset) < 0.01) return;
+        _actionsInset = inset;
+        _actions.Margin = new Thickness(0, 0, 6 + inset, 0);
+    }
+
+    /// <summary>
+    /// Same idea on the left: the side layouts can float the rail's own buttons over the
+    /// pane's top-left corner, and the path must not run underneath them.
+    /// </summary>
+    public void SetInfoInset(double inset)
+    {
+        if (_info is null || Math.Abs(inset - _infoInset) < 0.01) return;
+        _infoInset = inset;
+        _info.Margin = new Thickness(10 + inset, 0, 0, 0);
     }
 
     // ---------------- focus ----------------
@@ -578,6 +646,27 @@ public sealed class TerminalPane
         Redraw();
     }
 
+    /// <summary>
+    /// Re-applies the scroll settings after a config reload: the scrollback budget goes to the
+    /// terminal, the visibility policy is read by UpdateScrollbar.
+    /// </summary>
+    public void ApplyScrollSettings()
+    {
+        _session.SetScrollbackLimit(_config.ScrollbackLimit);
+        _session.SetScrollbackLimitLines(_config.ScrollbackLimitLines);
+        UpdateScrollbar();
+    }
+
+    /// <summary>
+    /// Compact mode drops the pane's own island chrome: no rounded corners and no outline,
+    /// because the split dividers are the only lines left between panes.
+    /// </summary>
+    public void SetCompact(bool compact)
+    {
+        _frame.CornerRadius = new CornerRadius(compact ? 0 : 12);
+        _frame.BorderThickness = new Thickness(compact ? 0 : 1);
+    }
+
     /// <summary>Reset returns to the configured size.</summary>
     public void ResetFontSize()
     {
@@ -624,9 +713,7 @@ public sealed class TerminalPane
         ApplyFocusState();
 
         _session.ApplyTheme(Theme.Terminal);
-        // The shell icon has a light and a dark variant, so force a reload.
-        _shellIconPath = string.Empty;
-        UpdateShellIcon();
+        // The shell icon is theme-independent, so a theme change leaves it untouched.
         Redraw();
     }
 
@@ -641,8 +728,8 @@ public sealed class TerminalPane
 
     private async Task LoadShellIconAsync(string executable)
     {
-        ImageSource? source = await ShellIcon.GetAsync(executable, Theme.Light);
-        // A theme switch forces a reload; a late result for the previous variant is dropped.
+        ImageSource? source = await ShellIcon.GetAsync(executable);
+        // Drop a late result for a shell that has since changed.
         if (!_ready || source is null || _session.ShellExecutable() != executable) return;
 
         _shellIconSource = source;
@@ -815,6 +902,22 @@ public sealed class TerminalPane
         args.Handled = true;
     }
 
+    /// <summary>
+    /// Starts a selection for a press that landed on the IME sink. The sink is a sibling of
+    /// the shell in the window's visual tree, so its press never bubbles to this canvas.
+    /// Capturing here makes the normal move/release handlers take over the drag.
+    /// </summary>
+    public void BeginSelectionFromImeSink(PointerRoutedEventArgs args) => OnPointerPressed(_canvas, args);
+
+    /// <summary>
+    /// The IME sink keeps the pointer capture (a canvas that never received the press cannot
+    /// take it), so move and release keep arriving at the sink and have to be forwarded too.
+    /// The handlers below are no-ops unless a selection is in progress.
+    /// </summary>
+    public void MoveSelectionFromImeSink(PointerRoutedEventArgs args) => OnPointerMoved(_canvas, args);
+
+    public void EndSelectionFromImeSink(PointerRoutedEventArgs args) => OnPointerReleased(_canvas, args);
+
     private void OnPointerPressed(object sender, PointerRoutedEventArgs args)
     {
         if (!_ready) return;
@@ -862,6 +965,46 @@ public sealed class TerminalPane
         args.Handled = true;
     }
 
+    // ---------------- scrollbar ----------------
+
+    /// <summary>
+    /// Feeds the terminal's scroll state into the bar. The control already sizes the thumb
+    /// from ViewportSize, so the terminal's rows map one to one: the value range is the rows
+    /// the viewport can still move through, and the page step is one viewport.
+    /// </summary>
+    private void UpdateScrollbar()
+    {
+        ulong total = 0, offset = 0, len = 0;
+        bool show = false;
+
+        if (_ready && _session.Scrollbar(out total, out offset, out len) && len > 0)
+        {
+            // "never" hides the bar outright; the default shows it exactly while the
+            // scrollback does not fit the viewport.
+            if (_config.Scrollbar != "never" && total > len)
+            {
+                ulong last = total - len;
+                _updatingScrollbar = true;
+                try
+                {
+                    _scrollBar.Minimum = 0;
+                    _scrollBar.Maximum = last;
+                    _scrollBar.ViewportSize = len;
+                    _scrollBar.SmallChange = 1;
+                    _scrollBar.LargeChange = len;
+                    _scrollBar.Value = Math.Min(offset, last);
+                }
+                finally
+                {
+                    _updatingScrollbar = false;
+                }
+                show = true;
+            }
+        }
+
+        _scrollBar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     // ---------------- pane header icons ----------------
 
     private static SolidColorBrush TransparentBrush() => new(Color.FromArgb(0, 0, 0, 0));
@@ -906,7 +1049,6 @@ public sealed class TerminalPane
     {
         double scale = size / 16.0;
         var geometry = new PathGeometry();
-
         var rect = new PathFigure { IsClosed = true, StartPoint = IconPoint(4, 3, scale) };
         void Line(float x, float y) => rect.Segments.Add(new LineSegment { Point = IconPoint(x, y, scale) });
         void Arc(float x, float y)
@@ -944,7 +1086,6 @@ public sealed class TerminalPane
         return geometry;
     }
 
-    /// <summary>Expanded: corner brackets opening outwards. Zoomed: arrows pulled in.</summary>
     private static PathGeometry ZoomGeometry(bool zoomed, double size)
     {
         float[][,] figures = zoomed
@@ -987,4 +1128,5 @@ public sealed class TerminalPane
         path.Data = CloseGeometry(size);
         return path;
     }
+
 }

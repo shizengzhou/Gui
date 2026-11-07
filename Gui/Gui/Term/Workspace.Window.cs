@@ -29,7 +29,9 @@ public sealed partial class Workspace
             return;
         }
         _lastHeaderPress = now;
-        _header.CapturePointer(args.Pointer);
+        // The side layouts lift the island over the header strip, which stays click-through
+        // there; the drag then starts on the sidebar instead.
+        (sender as UIElement)?.CapturePointer(args.Pointer);
         BeginDrag();
     }
 
@@ -91,6 +93,7 @@ public sealed partial class Workspace
         bool maximized = _window.AppWindow.Presenter is OverlappedPresenter presenter &&
                          presenter.State == OverlappedPresenterState.Maximized;
         _maximizeIcon.Glyph = ((char)(maximized ? 0xE923 : 0xE922)).ToString();
+        UpdateMaximizeTip();
     }
 
     /// <summary>
@@ -274,6 +277,9 @@ public sealed partial class Workspace
                     return true;
                 case VirtualKey.V:
                     if (_tabs.Count > 0) _tabs[_active].Focused?.PasteFromClipboard();
+                    return true;
+                case VirtualKey.B:
+                    ToggleSidebar();
                     return true;
             }
         }

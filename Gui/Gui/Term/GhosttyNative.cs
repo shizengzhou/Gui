@@ -25,11 +25,14 @@ internal static unsafe class GhosttyNative
     internal const int OPT_COLOR_PALETTE = 14;
     internal const int OPT_SELECTION = 21;
     internal const int OPT_PWD_CHANGED = 25;
+    internal const int OPT_SCROLLBACK_MAX_BYTES = 27;
+    internal const int OPT_SCROLLBACK_MAX_LINES = 28;
     internal const int OPT_RESIZE_WINDOW = 47;
 
     // ---- GhosttyTerminalData ----
     internal const int TDATA_COLS = 1;
     internal const int TDATA_ROWS = 2;
+    internal const int TDATA_SCROLLBAR = 9;
     internal const int TDATA_TITLE = 12;
     internal const int TDATA_PWD = 13;
     internal const int TDATA_SELECTION = 31;
@@ -152,6 +155,18 @@ internal static unsafe class GhosttyNative
     {
         [FieldOffset(0)] public int Tag;
         [FieldOffset(8)] public IntPtr Delta;
+    }
+
+    /// <summary>
+    /// Scrollbar state: total rows in the terminal (scrollback included), the row at the top
+    /// of the viewport, and how many rows the viewport shows.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyTerminalScrollbar
+    {
+        public ulong Total;
+        public ulong Offset;
+        public ulong Len;
     }
 
     /// <summary>Sized struct: Size must be set to sizeof(GhosttyGridRef).</summary>

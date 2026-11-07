@@ -103,8 +103,9 @@
 - [ ] `input` — 启动时向子进程写入的输入数据
 - [ ] `wait-after-command` — 命令退出后保持终端不关闭
 - [ ] `abnormal-command-exit-runtime` — 判定异常退出所需的最短运行毫秒数
-- [ ] `scrollback-limit` — 回滚缓冲区字节上限（含活动屏）
-- [ ] `scrollbar` — 滚动条显示策略（system/never/always）
+- [x] `scrollback-limit` — 回滚缓冲区字节上限（含活动屏）；`Term/Config.cs`，`Term/TerminalSession.cs` 经 `OPT_SCROLLBACK_MAX_BYTES` 下发，构造与 `Ctrl+Shift+,` 重载时各应用一次。按 Ghostty 1.4 对齐：默认 `50000000`（50 MB），取值只接受整数（base 0，`0x` 可用）或 `unlimited`（内部存 `ulong.MaxValue`），不接受 `10MB` 这类后缀；`0` 关闭回滚。1.4 把键名改成了 `scrollback-limit-bytes`，旧名仍是兼容别名，这里沿用旧名
+- [x] `scrollback-limit-lines` — 回滚行数上限（1.4 新增）；`Term/Config.cs` + `Term/TerminalSession.cs` 经 `OPT_SCROLLBACK_MAX_LINES` 下发。语法同 `scrollback-limit`：整数（base 0）或 `unlimited`，默认 `unlimited`；字节上限与行数上限同时生效，谁先到谁裁
+- [x] `scrollbar` — 滚动条显示策略；`Term/Config.cs` 归一化取值，`Term/TerminalPane.cs` 的 `UpdateScrollbar()` 决定可见性。**只实现 system / never**：`system` = 有回滚内容才显示，没有 macOS overlay 滚动条的闲置淡出（WinUI 的 `ScrollBar` 不提供该行为 —— `IndicatorMode` 只控制鼠标/触摸下的滑轨样式，`ScrollViewer` 的 `Auto` 也只在内容不足时整条隐藏）；Ghostty 的 `always` 未实现，写进配置会回落到 `system`
 
 ## 7. 链接、鼠标与选择（11）
 

@@ -53,6 +53,28 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void LoadKeepsLeftAndRightRailWidthsIndependent()
+    {
+        Config config = Config.Load(Write("sidebar-width-left = 300\nsidebar-width-right = 420\n"));
+
+        Assert.Equal(300.0, config.SidebarWidthLeft);
+        Assert.Equal(420.0, config.SidebarWidthRight);
+    }
+
+    [Fact]
+    public void LoadFallsBackToTheDefaultRailWidth()
+    {
+        // A hand-edited value outside the usable range keeps the default.
+        Assert.Equal(240.0, Config.Load(Write("sidebar-width-left = 5000\n")).SidebarWidthLeft);
+        Assert.Equal(240.0, Config.Load(Write("sidebar-width-right = 5000\n")).SidebarWidthRight);
+
+        // The two sides are independent, and a missing key keeps the default.
+        Config config = Config.Load(Write("sidebar-width-right = 420\n"));
+        Assert.Equal(240.0, config.SidebarWidthLeft);
+        Assert.Equal(420.0, config.SidebarWidthRight);
+    }
+
+    [Fact]
     public void LoadAcceptsAliasesAndQuotedValues()
     {
         string path = Write("shell = \"C:\\Windows\\System32\\cmd.exe\"\nfont-family = \"Consolas\"\n");
@@ -84,6 +106,60 @@ public class ConfigTests : IDisposable
         // An unparsable size keeps the default, a parsable one is clamped into range.
         Assert.Equal(13f, config.FontSize);
         Assert.Equal(0.15f, config.UnfocusedSplitOpacity);
+    }
+
+    [Fact]
+    public void LoadParsesTheScrollbackBudget()
+    {
+        // Ghostty 1.4's default, and its grammar: a bare integer (base 0, so 0x works) or
+        // "unlimited", which the config stores as the largest value of the type.
+        Assert.Equal(50_000_000UL, Config.Load(Write(string.Empty)).ScrollbackLimit);
+        Assert.Equal(2_000_000UL, Config.Load(Write("scrollback-limit = 2000000\n")).ScrollbackLimit);
+        Assert.Equal(20_000_000UL, Config.Load(Write("scrollback-limit = 0x1312D00\n")).ScrollbackLimit);
+        Assert.Equal(0UL, Config.Load(Write("scrollback-limit = 0\n")).ScrollbackLimit);
+        Assert.Equal(ulong.MaxValue, Config.Load(Write("scrollback-limit = unlimited\n")).ScrollbackLimit);
+
+        // A unit suffix is not part of ghostty's grammar, so the value keeps the default.
+        Assert.Equal(50_000_000UL, Config.Load(Write("scrollback-limit = 2MB\n")).ScrollbackLimit);
+        Assert.Equal(50_000_000UL, Config.Load(Write("scrollback-limit = lots\n")).ScrollbackLimit);
+    }
+
+    [Fact]
+    public void LoadParsesTheScrollbackRowCap()
+    {
+        // Ghostty 1.4 keeps no row cap unless one is asked for, and the grammar matches the
+        // byte cap: a bare integer or "unlimited".
+        Assert.Equal(ulong.MaxValue, Config.Load(Write(string.Empty)).ScrollbackLimitLines);
+        Assert.Equal(1_000UL, Config.Load(Write("scrollback-limit-lines = 1000\n")).ScrollbackLimitLines);
+        Assert.Equal(ulong.MaxValue,
+            Config.Load(Write("scrollback-limit-lines = unlimited\n")).ScrollbackLimitLines);
+        Assert.Equal(ulong.MaxValue,
+            Config.Load(Write("scrollback-limit-lines = 1000 lines\n")).ScrollbackLimitLines);
+    }
+
+    [Fact]
+    public void LoadReadsTheCompactSwitch()
+    {
+        // Off unless the file asks for it; the usual boolean spellings are accepted.
+        Assert.False(Config.Load(Write(string.Empty)).Compact);
+        Assert.True(Config.Load(Write("compact = true\n")).Compact);
+        Assert.True(Config.Load(Write("compact = 1\n")).Compact);
+        Assert.True(Config.Load(Write("compact = on\n")).Compact);
+        Assert.False(Config.Load(Write("compact = false\n")).Compact);
+        Assert.False(Config.Load(Write("compact = tight\n")).Compact);
+    }
+
+    [Fact]
+    public void LoadKeepsOnlyTheImplementedScrollbarModes()
+    {
+        Assert.Equal("system", Config.Load(Write(string.Empty)).Scrollbar);
+        Assert.Equal("never", Config.Load(Write("scrollbar = never\n")).Scrollbar);
+        Assert.Equal("never", Config.Load(Write("scrollbar = NEVER\n")).Scrollbar);
+
+        // Ghostty's "always" has no counterpart here: only system and never exist, so
+        // anything else falls back to the default.
+        Assert.Equal("system", Config.Load(Write("scrollbar = always\n")).Scrollbar);
+        Assert.Equal("system", Config.Load(Write("scrollbar = sometimes\n")).Scrollbar);
     }
 
     [Fact]
@@ -165,6 +241,8 @@ public class ConfigTests : IDisposable
             HasUnfocusedSplitFill = true,
             UnfocusedSplitFill = new Rgb(1, 2, 3),
             TabPosition = "left",
+            SidebarWidthLeft = 320.0,
+            SidebarWidthRight = 410.0,
             ThemeMode = "light",
             WindowThemeMode = "dark",
             LightTheme = true,
@@ -174,6 +252,8 @@ public class ConfigTests : IDisposable
         Config target = new();
         target.CopyFrom(source);
 
+        Assert.Equal(source.SidebarWidthLeft, target.SidebarWidthLeft);
+        Assert.Equal(source.SidebarWidthRight, target.SidebarWidthRight);
         Assert.Equal(source.Command, target.Command);
         Assert.Equal(source.WorkingDirectory, target.WorkingDirectory);
         Assert.Equal(source.FontFamily, target.FontFamily);

@@ -27,6 +27,8 @@
     <Compile Include="../../Gui/Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../../Gui/Gui/Term/KeyMap.cs" Link="KeyMap.cs" />
     <Compile Include="../../Gui/Gui/Term/PaletteSelection.cs" Link="PaletteSelection.cs" />
+    <Compile Include="../../Gui/Gui/Term/TabSelection.cs" Link="TabSelection.cs" />
+    <Compile Include="../../Gui/Gui/Term/TabSeparators.cs" Link="TabSeparators.cs" />
     <Compile Include="../../Gui/Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />
     <Compile Include="../../Gui/Gui/Term/Theme.cs" Link="Theme.cs" />
     <Compile Include="../../Gui/Gui/Term/WideText.cs" Link="WideText.cs" />

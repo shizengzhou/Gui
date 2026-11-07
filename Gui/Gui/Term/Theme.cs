@@ -49,6 +49,21 @@ public static class Theme
 
     public static Color Tint(byte alpha, Rgb color) => Rgba(alpha, color.R, color.G, color.B);
 
+    /// <summary>
+    /// Source-over compositing of a translucent colour on an opaque one: what the window
+    /// paints where the scrim sits on the mica, and the only way a custom theme can derive
+    /// the island colour the design hard-codes.
+    /// </summary>
+    public static Color Over(Color top, Color bottom)
+    {
+        double alpha = top.A / 255.0;
+
+        static byte Blend(byte over, byte under, double a) => (byte)(under + (over - under) * a + 0.5);
+
+        return Rgba(255, Blend(top.R, bottom.R, alpha), Blend(top.G, bottom.G, alpha),
+            Blend(top.B, bottom.B, alpha));
+    }
+
     // --- window backdrop ---------------------------------------------------
     public static Color WindowMica() =>
         CustomTheme ? Tint(255, Tone(Light ? 0.06 : 0.18))
@@ -65,9 +80,15 @@ public static class Theme
     }
 
     // --- content island and pane surfaces ----------------------------------
+    /// <summary>
+    /// Content island. The design's --window-bg is exactly the mica with the scrim on top, so
+    /// the island reads as the same surface as the chrome and only the panes stand out. A
+    /// custom theme derives that same composite instead of its own tonal step, which used to
+    /// leave the island a shade off the backdrop and visible as a card.
+    /// </summary>
     public static Color ContentBg() =>
-        CustomTheme ? Tint(255, Tone(0.08))
-                    : Light ? Rgba(255, 230, 234, 243) : Rgba(255, 25, 28, 37);
+        CustomTheme ? Over(Scrim(), WindowMica())
+                    : Light ? Rgba(255, 245, 247, 252) : Rgba(255, 37, 42, 56);
 
     public static Color TermBg() => Light ? Rgba(255, 255, 255, 255) : Rgba(255, 7, 9, 14);
 

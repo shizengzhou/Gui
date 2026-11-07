@@ -23,9 +23,15 @@ public sealed class Config
     public string FontFamily = string.Empty;       // empty: JetBrainsMono Nerd Font
     public float FontSize = 13.0f;                 // DIPs
     public float UnfocusedSplitOpacity = 0.7f;     // 0.15..1, Ghostty's default
+    public ulong ScrollbackLimit = 50_000_000;     // bytes, Ghostty 1.4's default
+    public ulong ScrollbackLimitLines = ulong.MaxValue; // rows; unlimited, Ghostty 1.4's default
+    public string Scrollbar = "system";            // "system" (default) or "never"
     public bool HasUnfocusedSplitFill;
     public Rgb UnfocusedSplitFill;                 // empty: terminal background
     public string TabPosition = string.Empty;      // "top" (default), "left", "right"
+    public bool Compact;                           // true: panes run edge to edge
+    public double SidebarWidthLeft = 240.0;        // DIPs; restored width of a left rail
+    public double SidebarWidthRight = 240.0;       // DIPs; restored width of a right rail
     public string ThemeMode = string.Empty;        // empty, Gui Light, Gui Dark, or a bundled theme name
     public string WindowThemeMode = string.Empty;  // "system" (default), "light", "dark"
     public bool DebugTap;                         // record the raw VT byte stream
@@ -63,9 +69,15 @@ public sealed class Config
         FontFamily = other.FontFamily;
         FontSize = other.FontSize;
         UnfocusedSplitOpacity = other.UnfocusedSplitOpacity;
+        ScrollbackLimit = other.ScrollbackLimit;
+        ScrollbackLimitLines = other.ScrollbackLimitLines;
+        Scrollbar = other.Scrollbar;
         HasUnfocusedSplitFill = other.HasUnfocusedSplitFill;
         UnfocusedSplitFill = other.UnfocusedSplitFill;
         TabPosition = other.TabPosition;
+        Compact = other.Compact;
+        SidebarWidthLeft = other.SidebarWidthLeft;
+        SidebarWidthRight = other.SidebarWidthRight;
         ThemeMode = other.ThemeMode;
         WindowThemeMode = other.WindowThemeMode;
         DebugTap = other.DebugTap;
@@ -119,6 +131,20 @@ public sealed class Config
                 case "tab-position":
                     config.TabPosition = value.ToLowerInvariant();
                     break;
+                // Two states only: the panes either float as islands or run edge to edge.
+                case "compact":
+                    config.Compact = value is "true" or "1" or "yes" or "on";
+                    break;
+                // Written by the app when the rail's edge is dragged; the range keeps a
+                // hand-edited file from making the rail unusable.
+                case "sidebar-width-left":
+                    if (double.TryParse(value, out double leftWidth) && leftWidth >= 120.0 && leftWidth <= 800.0)
+                        config.SidebarWidthLeft = leftWidth;
+                    break;
+                case "sidebar-width-right":
+                    if (double.TryParse(value, out double rightWidth) && rightWidth >= 120.0 && rightWidth <= 800.0)
+                        config.SidebarWidthRight = rightWidth;
+                    break;
                 case "theme":
                     config.ThemeMode = value;
                     break;
@@ -139,6 +165,23 @@ public sealed class Config
                         config.HasUnfocusedSplitFill = true;
                         config.UnfocusedSplitFill = color;
                     }
+                    break;
+                // Ghostty's Limit.parseCLI: a bare integer, or the literal "unlimited",
+                // which it stores as the type's maximum.
+                case "scrollback-limit":
+                    if (value.Trim() == "unlimited") config.ScrollbackLimit = ulong.MaxValue;
+                    else if (TryParseCount(value, out ulong limit)) config.ScrollbackLimit = limit;
+                    break;
+                // The row cap that shares the job with the byte cap: whichever is reached
+                // first trims the history, and the default keeps no row cap at all.
+                case "scrollback-limit-lines":
+                    if (value.Trim() == "unlimited") config.ScrollbackLimitLines = ulong.MaxValue;
+                    else if (TryParseCount(value, out ulong rows)) config.ScrollbackLimitLines = rows;
+                    break;
+                // Only the two states this app implements. Ghostty's "always" (a bar with
+                // nothing to scroll) has no counterpart here, so it falls back to system.
+                case "scrollbar":
+                    config.Scrollbar = value.ToLowerInvariant() == "never" ? "never" : "system";
                     break;
                 case "debug-tap":
                     config.DebugTap = value is "true" or "1" or "yes" or "on";
@@ -279,7 +322,16 @@ public sealed class Config
             "# font-size          font size in DIPs; default 13\n" +
             "# unfocused-split-opacity  default 0.7; 0.15 (very dim) to 1 (off)\n" +
             "# unfocused-split-fill     empty (default; terminal background) or #RRGGBB\n" +
+            "# scrollback-limit   scrollback budget in bytes, or 'unlimited'; default\n" +
+            "#                    50000000 (50 MB), 0 disables scrollback\n" +
+            "# scrollback-limit-lines  row cap, or 'unlimited' (default); the byte cap and\n" +
+            "#                    this one both apply, whichever is reached first trims\n" +
+            "# scrollbar          system (default; only while there is scrollback) or never\n" +
             "# tab-position       top (default), left or right\n" +
+            "# compact            false (default; panes float as islands) or true (panes run\n" +
+            "#                    edge to edge with 1px split dividers)\n" +
+            "# sidebar-width-left   left rail width in DIPs; default 240\n" +
+            "# sidebar-width-right  right rail width in DIPs; default 240\n" +
             "# theme              empty (default), Gui Dark, Gui Light, or a built-in theme\n" +
             "#                    name such as Dracula or Catppuccin Mocha\n" +
             "# window-theme       system (default), light or dark; window decorations\n" +
@@ -293,6 +345,12 @@ public sealed class Config
             "# font-size = 13\n" +
             "# unfocused-split-opacity = 0.7\n" +
             "# unfocused-split-fill = #21252B\n" +
+            "# scrollback-limit = 50000000\n" +
+            "# scrollback-limit-lines = unlimited\n" +
+            "# scrollbar = system\n" +
+            "# compact = false\n" +
+            "# sidebar-width-left = 240\n" +
+            "# sidebar-width-right = 240\n" +
             "# theme = Gui Dark\n" +
             "# window-theme = system\n" +
             "# debug-tap = false\n" +
@@ -329,5 +387,46 @@ public sealed class Config
         if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
             return value[1..^1];
         return value;
+    }
+
+    /// <summary>
+    /// Parses a count the way ghostty's config reader does: a bare integer with an optional
+    /// `0x` / `0o` / `0b` prefix (ghostty parses with base 0). Unit suffixes such as `10MB`
+    /// are not part of that grammar and are rejected.
+    /// </summary>
+    internal static bool TryParseCount(string value, out ulong count)
+    {
+        count = 0;
+        string text = value.Trim();
+        if (text.Length == 0) return false;
+
+        int radix = 10;
+        if (text.Length > 2 && text[0] == '0')
+        {
+            radix = char.ToLowerInvariant(text[1]) switch
+            {
+                'x' => 16,
+                'o' => 8,
+                'b' => 2,
+                _ => 10,
+            };
+            if (radix != 10) text = text[2..];
+        }
+
+        if (text.Length == 0) return false;
+        foreach (char c in text)
+        {
+            int digit = c switch
+            {
+                >= '0' and <= '9' => c - '0',
+                >= 'a' and <= 'f' => c - 'a' + 10,
+                >= 'A' and <= 'F' => c - 'A' + 10,
+                _ => -1,
+            };
+            if (digit < 0 || digit >= radix) return false;
+            if (count > (ulong.MaxValue - (ulong)digit) / (ulong)radix) return false;
+            count = count * (ulong)radix + (ulong)digit;
+        }
+        return true;
     }
 }
