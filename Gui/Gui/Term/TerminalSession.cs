@@ -256,36 +256,29 @@ public sealed unsafe class TerminalSession : IDisposable
     {
         IntPtr state = _renderState;
         if (_terminal == IntPtr.Zero || state == IntPtr.Zero) return null;
+        if (_rowIterator == IntPtr.Zero || _cells == IntPtr.Zero) return null;
 
-        IntPtr rows = IntPtr.Zero;
-        IntPtr cells = IntPtr.Zero;
-        GhosttyNative.ghostty_render_state_row_iterator_new(IntPtr.Zero, out rows);
-        GhosttyNative.ghostty_render_state_row_cells_new(IntPtr.Zero, out cells);
+        // The session owns both objects and frees them in Dispose, so this walk borrows them
+        // instead of allocating a pair per call (it runs on every double-click).
+        IntPtr rows = _rowIterator;
         // The iterator is only usable once it is bound to a render state.
         GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &rows);
 
-        try
+        while (rows != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(rows))
         {
-            while (rows != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(rows))
-            {
-                int y = 0;
-                if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_VIEWPORT_Y, &y) != GhosttyNative.SUCCESS)
-                    continue;
-                if (y != viewportY) continue;
+            int y = 0;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_VIEWPORT_Y, &y) != GhosttyNative.SUCCESS)
+                continue;
+            if (y != viewportY) continue;
 
-                if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_DATA_CELLS, &cells) != GhosttyNative.SUCCESS)
-                    return null;
+            IntPtr cells = _cells;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_DATA_CELLS, &cells) != GhosttyNative.SUCCESS)
+                return null;
 
-                var result = new List<string>();
-                while (GhosttyNative.ghostty_render_state_row_cells_next(cells))
-                    result.Add(CellText.Read(cells));
-                return result.ToArray();
-            }
-        }
-        finally
-        {
-            if (cells != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_cells_free(cells);
-            if (rows != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_iterator_free(rows);
+            var result = new List<string>();
+            while (GhosttyNative.ghostty_render_state_row_cells_next(cells))
+                result.Add(CellText.Read(cells));
+            return result.ToArray();
         }
 
         return null;

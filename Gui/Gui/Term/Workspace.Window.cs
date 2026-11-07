@@ -93,7 +93,7 @@ public sealed partial class Workspace
         bool maximized = _window.AppWindow.Presenter is OverlappedPresenter presenter &&
                          presenter.State == OverlappedPresenterState.Maximized;
         _maximizeIcon.Glyph = ((char)(maximized ? 0xE923 : 0xE922)).ToString();
-        UpdateMaximizeTip();
+        UpdateCaptionTips();
     }
 
     /// <summary>

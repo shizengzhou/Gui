@@ -129,8 +129,9 @@ public sealed class TerminalPane
             IndicatorMode = ScrollingIndicatorMode.MouseIndicator,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Stretch,
-            // Same 12 DIP band the canvas keeps above and below its rows.
-            Margin = new Thickness(0, 12, 2, 12),
+            // The bar spans the band the canvas draws its rows in, so it follows the
+            // configured padding instead of assuming the default 12 DIP.
+            Margin = new Thickness(0, config.PaddingY, 2, config.PaddingY),
             // The terminal owns the keyboard; a focusable bar would take Tab away from it.
             IsTabStop = false,
             Visibility = Visibility.Collapsed,

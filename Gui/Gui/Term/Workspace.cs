@@ -169,7 +169,9 @@ public sealed partial class Workspace
     private Grid _contentStack = null!;
     private FontIcon? _maximizeIcon;
     private Border? _closeCaption;
+    private TextBlock? _minimizeTip;
     private TextBlock? _maximizeTip;
+    private TextBlock? _closeTip;
     private Grid _surfaceHost = null!;
     private StackPanel? _topTabHost;
     private StackPanel? _tabColumn;
@@ -377,6 +379,10 @@ public sealed partial class Workspace
         SetSidebarWidth(SidebarWidthFromConfig());
         Diag.Guard("ws.placement", () => ApplyTabPlacement(PlacementFrom(fresh.TabPosition)));
 
+        // The density is a live setting like the others: an edit to `compact` has to reach the
+        // island margin, the split gaps, the pane frames and the tab chips without a restart.
+        Diag.Guard("ws.density", () => SetDensity(_config.Compact));
+
         if (languageChanged)
             Diag.Guard("ws.language", ApplyLanguage);
 
@@ -453,7 +459,7 @@ public sealed partial class Workspace
         if (_densityRow is not null) _densityRow.Title.Text = DensityLabel();
     }
 
-    private string DensityLabel() => CompactDensity ? "紧凑模式：开" : "紧凑模式：关";
+    private string DensityLabel() => CompactDensity ? Strings.CompactOn : Strings.CompactOff;
 
     /// <summary>
     /// Moves the tab rail to the top, the left or the right. The chrome (header, tab rail,
@@ -674,14 +680,20 @@ public sealed partial class Workspace
         return label;
     }
 
-    /// <summary>The maximize button says "maximize" or "restore" depending on the window.</summary>
-    private void UpdateMaximizeTip()
+    /// <summary>
+    /// Labels the three window buttons; the middle one says "maximize" or "restore"
+    /// depending on the window. Re-run when the window state or the UI language changes.
+    /// </summary>
+    private void UpdateCaptionTips()
     {
+        if (_minimizeTip is not null) _minimizeTip.Text = Strings.Minimize;
+        if (_closeTip is not null) _closeTip.Text = Strings.CloseWindow;
         if (_maximizeTip is null) return;
+
         bool maximized = _window is not null &&
                          _window.AppWindow.Presenter is OverlappedPresenter presenter &&
                          presenter.State == OverlappedPresenterState.Maximized;
-        _maximizeTip.Text = maximized ? "还原" : "最大化";
+        _maximizeTip.Text = maximized ? Strings.Restore : Strings.Maximize;
     }
 
     private void UpdateCloseCorner()
@@ -1284,10 +1296,10 @@ public sealed partial class Workspace
         CaptionHover(close, CloseHoverBrush, () => new SolidColorBrush(Colors.White));
 
         // The three window buttons carry the same one-line hover label the pane actions use.
-        CaptionTip(minimize, "最小化");
+        _minimizeTip = CaptionTip(minimize, Strings.Minimize);
         _maximizeTip = CaptionTip(maximize, string.Empty);
-        CaptionTip(close, "关闭");
-        UpdateMaximizeTip();
+        _closeTip = CaptionTip(close, Strings.CloseWindow);
+        UpdateCaptionTips();
 
         minimize.PointerPressed += (_, args) =>
         {

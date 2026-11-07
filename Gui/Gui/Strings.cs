@@ -78,6 +78,17 @@ public static class Strings
     public static string TapOff =>
         Pick("Debug tap: off (records VT bytes)", "调试 tap：关（记录 VT 收发字节）");
 
+    // ---- window buttons ----------------------------------------------------
+
+    public static string Minimize => Pick("Minimize", "最小化");
+    public static string Maximize => Pick("Maximize", "最大化");
+    public static string Restore => Pick("Restore", "还原");
+    public static string CloseWindow => Pick("Close", "关闭");
+
+    /// <summary>The palette row that switches the pane layout.</summary>
+    public static string CompactOn => Pick("Compact mode: on", "紧凑模式：开");
+    public static string CompactOff => Pick("Compact mode: off", "紧凑模式：关");
+
     // ---- automation names -------------------------------------------------
 
     public static string CloseTab => Pick("Close tab", "关闭标签页");
