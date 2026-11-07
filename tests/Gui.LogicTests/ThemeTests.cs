@@ -56,4 +56,48 @@ public class ThemeTests
         Assert.Equal(0x20, color.G);
         Assert.Equal(0x30, color.B);
     }
+
+    [Fact]
+    public void OverCompositesATranslucentColourOnAnOpaqueOne()
+    {
+        Windows.UI.Color opaque = Theme.Over(Theme.Rgba(255, 255, 255, 255), Theme.Rgba(255, 0, 0, 0));
+        Assert.Equal(255, opaque.R);
+
+        Windows.UI.Color clear = Theme.Over(Theme.Rgba(0, 255, 255, 255), Theme.Rgba(255, 10, 20, 30));
+        Assert.Equal(10, clear.R);
+        Assert.Equal(20, clear.G);
+        Assert.Equal(30, clear.B);
+
+        Windows.UI.Color half = Theme.Over(Theme.Rgba(128, 255, 255, 255), Theme.Rgba(255, 0, 0, 0));
+        Assert.InRange(half.R, 127, 128);
+        Assert.Equal(255, half.A);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ACustomThemeIslandIsTheCompositedWindowBackdrop(bool light)
+    {
+        TerminalTheme saved = Theme.Terminal;
+        bool savedLight = Theme.Light;
+        bool savedWindowLight = Theme.WindowLight;
+        try
+        {
+            // The design's --window-bg is the mica with the scrim on top, so the island and
+            // the chrome are one surface; a custom theme has to derive the same composite or
+            // the island shows up as a card of its own shade.
+            Theme.Light = light;
+            Theme.WindowLight = light;
+            Theme.Terminal = new TerminalTheme { Custom = true, Background = new Rgb(0, 0, 0) };
+
+            Assert.Equal(Theme.Over(Theme.Scrim(), Theme.WindowMica()), Theme.ContentBg());
+            Assert.NotEqual(Theme.TermSurfaceBg(), Theme.ContentBg());
+        }
+        finally
+        {
+            Theme.Terminal = saved;
+            Theme.Light = savedLight;
+            Theme.WindowLight = savedWindowLight;
+        }
+    }
 }

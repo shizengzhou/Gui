@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using Gui.Term;
 
@@ -30,6 +31,7 @@ internal static class Program
     private static int _checks;
     private static int _failures;
     private static JsonElement _types;
+    private static string _dllPath = string.Empty;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate IntPtr TypeJsonFn();
@@ -49,6 +51,11 @@ internal static class Program
     {
         try
         {
+            _dllPath = FindDll();
+            // The declarations are compiled into this assembly, so the resolver has to be
+            // installed before the first P/Invoke the smoke test makes.
+            NativeLibrary.SetDllImportResolver(typeof(GhosttyNative).Assembly, ImportResolver);
+
             using JsonDocument manifest = LoadManifest();
             JsonElement root = manifest.RootElement;
             _types = root.GetProperty("types");
@@ -57,6 +64,7 @@ internal static class Program
             CheckStructs();
             CheckConstants();
             CheckCoverage();
+            CheckScrollbackSmoke();
         }
         catch (Exception error)
         {
@@ -75,10 +83,9 @@ internal static class Program
 
     private static JsonDocument LoadManifest()
     {
-        string dll = FindDll();
-        Console.WriteLine($"DLL: {dll}");
+        Console.WriteLine($"DLL: {_dllPath}");
 
-        IntPtr handle = NativeLibrary.Load(dll);
+        IntPtr handle = NativeLibrary.Load(_dllPath);
         IntPtr export = NativeLibrary.GetExport(handle, "ghostty_type_json");
         TypeJsonFn fn = Marshal.GetDelegateForFunctionPointer<TypeJsonFn>(export);
         IntPtr json = fn();
@@ -89,6 +96,14 @@ internal static class Program
             ?? throw new InvalidOperationException("ghostty_type_json returned invalid UTF-8");
         return JsonDocument.Parse(text);
     }
+
+    /// <summary>
+    /// Binds the P/Invoke declarations to the same DLL the manifest came from, so the smoke
+    /// checks exercise that binary even when nothing named ghostty-vt.dll sits next to the
+    /// test executable.
+    /// </summary>
+    private static IntPtr ImportResolver(string name, Assembly assembly, DllImportSearchPath? searchPath) =>
+        name == DllName ? NativeLibrary.Load(_dllPath) : IntPtr.Zero;
 
     private static string FindDll()
     {
@@ -149,6 +164,9 @@ internal static class Program
             new FieldMap("Underline", "underline")),
         new(typeof(GhosttyNative.GhosttyTerminalScrollViewport), "GhosttyTerminalScrollViewport",
             new FieldMap("Tag", "tag"), new FieldMap("Delta", "value.delta")),
+        new(typeof(GhosttyNative.GhosttyTerminalScrollbar), "GhosttyTerminalScrollbar",
+            new FieldMap("Total", "total"), new FieldMap("Offset", "offset"),
+            new FieldMap("Len", "len")),
         new(typeof(GhosttyNative.GhosttyGridRef), "GhosttyGridRef",
             new FieldMap("Size", "size"), new FieldMap("Node", "node"),
             new FieldMap("X", "x"), new FieldMap("Y", "y")),
@@ -311,10 +329,13 @@ internal static class Program
         new("OPT_COLOR_PALETTE", "GhosttyTerminalOption", "COLOR_PALETTE"),
         new("OPT_SELECTION", "GhosttyTerminalOption", "SELECTION"),
         new("OPT_PWD_CHANGED", "GhosttyTerminalOption", "PWD_CHANGED"),
+        new("OPT_SCROLLBACK_MAX_BYTES", "GhosttyTerminalOption", "SCROLLBACK_MAX_BYTES"),
+        new("OPT_SCROLLBACK_MAX_LINES", "GhosttyTerminalOption", "SCROLLBACK_MAX_LINES"),
         new("OPT_RESIZE_WINDOW", "GhosttyTerminalOption", "RESIZE_WINDOW"),
 
         new("TDATA_COLS", "GhosttyTerminalData", "COLS"),
         new("TDATA_ROWS", "GhosttyTerminalData", "ROWS"),
+        new("TDATA_SCROLLBAR", "GhosttyTerminalData", "SCROLLBAR"),
         new("TDATA_TITLE", "GhosttyTerminalData", "TITLE"),
         new("TDATA_PWD", "GhosttyTerminalData", "PWD"),
         new("TDATA_SELECTION", "GhosttyTerminalData", "SELECTION"),
@@ -413,6 +434,77 @@ internal static class Program
         foreach (FieldInfo field in typeof(GhosttyNative).GetFields(flags)
             .Where(f => f.IsLiteral && f.FieldType == typeof(int)))
             Check($"const {field.Name} has a contract", coveredConstants.Contains(field.Name));
+    }
+
+    // ---------------- scrollback smoke ----------------
+
+    /// <summary>Lines of output the smoke checks push through a terminal.</summary>
+    private const int LineCount = 5_000;
+
+    /// <summary>
+    /// Rows the LF-only run occupies, recorded from the bundled DLL. A bare LF moves the
+    /// cursor down without resetting the column, so those lines wrap and take more rows than
+    /// there are lines; the number catches a fixture that quietly turns into a CRLF run.
+    /// </summary>
+    private const ulong LfOnlyRows = 5_486;
+
+    /// <summary>
+    /// Behavioural check for the two scrollback caps. The sections above only prove that the
+    /// declarations match the manifest; this one drives a real terminal through the same
+    /// P/Invoke surface the app uses, so a wrong option tag or a mis-shaped call fails here
+    /// instead of quietly leaving the app's scrollback uncapped.
+    /// </summary>
+    private static void CheckScrollbackSmoke()
+    {
+        Section("scrollback smoke");
+
+        ulong capped = ScrollbackRows(1_000, "\r\n");
+        Check("row cap trims the history", capped < LineCount, $"kept {capped} of {LineCount}");
+        Check("row cap keeps what it allows", capped > 100 && capped <= 1_000, $"kept {capped}");
+
+        ulong unlimited = ScrollbackRows(ulong.MaxValue, "\r\n");
+        Check("unlimited keeps every row", unlimited == LineCount + 1, $"kept {unlimited}");
+
+        // Regression for line-ending handling: a bare LF moves the cursor down but leaves the
+        // column where it was, so the same lines wrap and occupy more rows. A helper that
+        // splits the stream on '\n' and counts entries as rows would miss all of these.
+        ulong lfOnly = ScrollbackRows(ulong.MaxValue, "\n");
+        Check("lf-only output wraps into more rows", lfOnly > LineCount + 1, $"kept {lfOnly}");
+        Check("lf-only keeps its recorded row count", lfOnly == LfOnlyRows,
+            $"kept {lfOnly}, expected {LfOnlyRows}");
+    }
+
+    /// <summary>
+    /// Feeds <see cref="LineCount"/> lines through a fresh terminal and reports how many rows
+    /// it kept. The byte cap is lifted so only the row cap is measured.
+    /// </summary>
+    private static unsafe ulong ScrollbackRows(ulong lineCap, string lineEnding)
+    {
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+            throw new InvalidOperationException("ghostty_terminal_new failed");
+
+        try
+        {
+            nuint bytes = 50_000_000;
+            GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_SCROLLBACK_MAX_BYTES, &bytes);
+            nuint lines = (nuint)lineCap;
+            GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_SCROLLBACK_MAX_LINES, &lines);
+
+            var text = new StringBuilder(64 * LineCount);
+            for (int i = 0; i < LineCount; i++) text.Append("row ").Append(i).Append(lineEnding);
+            byte[] payload = Encoding.ASCII.GetBytes(text.ToString());
+            fixed (byte* pointer = payload)
+                GhosttyNative.ghostty_terminal_vt_write(terminal, pointer, (nuint)payload.Length);
+
+            GhosttyNative.GhosttyTerminalScrollbar state;
+            if (GhosttyNative.ghostty_terminal_get(terminal, GhosttyNative.TDATA_SCROLLBAR, &state) != GhosttyNative.SUCCESS)
+                throw new InvalidOperationException("ghostty_terminal_get(SCROLLBAR) failed");
+            return state.Total;
+        }
+        finally
+        {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
     }
 
     // ---------------- reporting ----------------

@@ -19,8 +19,9 @@ internal sealed class IconPixels
 
 /// <summary>
 /// Extracts the shell executable's own icon (PowerShell blue icon, cmd icon, ...) for the
-/// pane header and the tab chip. Icons carry an opaque dark tile; the light theme variant
-/// turns them into a monochrome glyph whose alpha follows luminance.
+/// pane header and the tab chip. The icon is used exactly as Windows supplies it: a theme
+/// change must not recolor or re-render it. Icons carry an opaque dark tile, which reads
+/// clearly on both the light and dark chrome.
 ///
 /// GDI extraction is free of any UI-thread affinity, but decoding into a XAML image source
 /// is not: <see cref="GetAsync"/> must be called on the UI thread and does the encode there.
@@ -33,11 +34,11 @@ internal static class ShellIcon
     // ImageSource instances are UI-thread affine, so this cache has no lock.
     private static readonly Dictionary<string, ImageSource?> SourceCache = new();
 
-    public static async Task<ImageSource?> GetAsync(string executable, bool lightVariant)
+    public static async Task<ImageSource?> GetAsync(string executable)
     {
         if (string.IsNullOrEmpty(executable)) return null;
 
-        string key = executable.ToLowerInvariant() + (lightVariant ? "|light" : "|dark");
+        string key = executable.ToLowerInvariant();
         if (SourceCache.TryGetValue(key, out ImageSource? cached)) return cached;
 
         IconPixels? pixels;
@@ -52,7 +53,7 @@ internal static class ShellIcon
 
         if (pixels is null)
         {
-            pixels = await Task.Run(() => Extract(executable, lightVariant));
+            pixels = await Task.Run(() => Extract(executable));
             lock (Gate)
             {
                 PixelCache[key] = pixels;
@@ -109,7 +110,7 @@ internal static class ShellIcon
         }
     }
 
-    private static IconPixels? Extract(string executable, bool lightVariant)
+    private static IconPixels? Extract(string executable)
     {
         var info = new SHFILEINFO();
         if (SHGetFileInfo(executable, FILE_ATTRIBUTE_NORMAL, ref info, (uint)Marshal.SizeOf<SHFILEINFO>(),
@@ -178,8 +179,6 @@ internal static class ShellIcon
                 }
             }
 
-            if (lightVariant) RecolorForLight(pixels);
-
             return new IconPixels { Pixels = pixels, Width = width, Height = height };
         }
         catch
@@ -192,28 +191,6 @@ internal static class ShellIcon
             if (maskBitmap != IntPtr.Zero) DeleteObject(maskBitmap);
             if (dc != IntPtr.Zero) DeleteDC(dc);
             DestroyIcon(icon);
-        }
-    }
-
-    /// <summary>
-    /// Dark shell icons (PowerShell's, for example) sit on an opaque black tile. Turn the
-    /// icon into a monochrome glyph whose alpha follows luminance so the tile disappears and
-    /// the prompt stays readable against the pane header.
-    /// </summary>
-    private static void RecolorForLight(byte[] pixels)
-    {
-        for (int i = 0; i < pixels.Length; i += 4)
-        {
-            uint alpha = pixels[i + 3];
-            uint b = pixels[i], g = pixels[i + 1], r = pixels[i + 2];
-            uint luminance = (r * 299 + g * 587 + b * 114) / 1000;
-            // Drop the dark tile, keep the bright glyph.
-            uint keep = luminance < 64 ? 0 : luminance - 64;
-            uint outAlpha = alpha * keep / (255 - 64);
-            pixels[i] = 0x2F;     // B
-            pixels[i + 1] = 0x29; // G
-            pixels[i + 2] = 0x24; // R
-            pixels[i + 3] = (byte)outAlpha;
         }
     }
 

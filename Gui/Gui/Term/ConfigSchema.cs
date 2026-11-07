@@ -124,7 +124,7 @@ public static class ConfigSchema
         new("input", ConfigKind.List, ConfigPlatform.All, "input sent on startup"),
         new("wait-after-command", ConfigKind.Bool, ConfigPlatform.All, "keep the surface after exit"),
         new("abnormal-command-exit-runtime", ConfigKind.Integer, ConfigPlatform.All, "abnormal exit threshold"),
-        new("scrollback-limit", ConfigKind.Integer, ConfigPlatform.All, "scrollback size in bytes"),
+        new("scrollback-limit", ConfigKind.Text, ConfigPlatform.All, "scrollback size in bytes"),
         new("scrollbar", ConfigKind.Enum, ConfigPlatform.All, "scrollbar visibility"),
         new("link", ConfigKind.List, ConfigPlatform.All, "regex link matcher"),
         new("link-url", ConfigKind.Bool, ConfigPlatform.All, "match URLs"),
@@ -247,6 +247,10 @@ public static class ConfigSchema
     public static readonly ConfigOption[] Application =
     {
         new("tab-position", ConfigKind.Enum, ConfigPlatform.All, "tab strip position: top, left, right"),
+        new("compact", ConfigKind.Bool, ConfigPlatform.All, "panes run edge to edge"),
+        new("sidebar-width-left", ConfigKind.Float, ConfigPlatform.All, "left rail width in DIPs"),
+        new("sidebar-width-right", ConfigKind.Float, ConfigPlatform.All, "right rail width in DIPs"),
+        new("scrollback-limit-lines", ConfigKind.Text, ConfigPlatform.All, "scrollback row cap"),
         new("debug-tap", ConfigKind.Bool, ConfigPlatform.All, "record the raw VT byte stream"),
         new("crash-dumps", ConfigKind.Bool, ConfigPlatform.All, "ask Windows for a full crash dump"),
     };

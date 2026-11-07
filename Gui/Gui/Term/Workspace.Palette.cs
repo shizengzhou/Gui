@@ -24,13 +24,17 @@ public sealed partial class Workspace
     private const double RowSpacing = 1;
 
     /// <summary>
-    /// Commands the list shows at once. The card keeps the height it has with nine rows and
+    /// Commands the list shows at once. The card keeps the height it has with eight rows and
     /// the commands that do not fit are reached by scrolling.
     /// </summary>
-    private const int VisibleRows = 9;
+    private const int VisibleRows = 8;
 
-    /// <summary>Height of the command list when it holds <see cref="VisibleRows"/> commands.</summary>
-    private const double ListMaxHeight = 344;
+    /// <summary>
+    /// Height of the command list when it holds <see cref="VisibleRows"/> commands:
+    /// 8 * <see cref="RowHeight"/> + 7 * <see cref="RowSpacing"/> + the 6px stack margin above
+    /// and below.
+    /// </summary>
+    private const double ListMaxHeight = 8 * RowHeight + 7 * RowSpacing + 12;
 
     // ---------------- theme switching ----------------
 
@@ -105,7 +109,6 @@ public sealed partial class Workspace
         foreach (Tab tab in _tabs) ForEachPane(tab, pane => pane.ApplyTheme());
 
         UpdateHeaders();
-        ScheduleTabArcs();
         UpdateImeSink();
     }
 
@@ -114,16 +117,28 @@ public sealed partial class Workspace
         if (_placement == TabPlacement.Top) return;
         _sidebarCollapsed = collapsed;
         if (_sidebar is not null) _sidebar.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        // A hidden rail has no border to drag: the pane runs to the window edge.
+        if (_sidebarSplitter is not null)
+            _sidebarSplitter.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
         if (_headerSideTools is not null)
             _headerSideTools.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
 
-        if (_contentCard is not null)
-        {
-            _contentCard.Margin = collapsed ? new Thickness(8, 0, 8, 8)
-                : _placement == TabPlacement.Left ? new Thickness(0, 0, 8, 8)
-                : new Thickness(8, 0, 0, 8);
-        }
+        if (_contentCard is not null) _contentCard.Margin = ContentCardMargin();
+
+        // Opening a right-hand rail takes the pane's top-right corner away from the captions,
+        // so the close button returns to a square corner (and back again when it collapses).
+        UpdateCloseCorner();
+
+        // The rail's buttons moved into (or out of) the strip, so the corner panes have to
+        // give them room or take it back.
+        foreach (Tab tab in _tabs) ApplyPaneInsets(tab);
     }
+
+    /// <summary>
+    /// Shows or hides the tab rail. The top layout has no rail, so the toggle does nothing
+    /// there.
+    /// </summary>
+    private void ToggleSidebar() => SetSidebarCollapsed(!_sidebarCollapsed);
 
     // ---------------- command palette ----------------
 
@@ -320,7 +335,9 @@ public sealed partial class Workspace
             // The design's layer is transparent: no dim, no backdrop blur. The transparent
             // brush still hit-tests the empty area so clicking outside closes it.
             Background = ClearBrush(),
-            Padding = new Thickness(16, 52, 16, 16),
+            // The layer spans the whole body, so the card is centered on the window rather
+            // than on the pane area the tab rail leaves over.
+            Padding = new Thickness(16),
         };
         _paletteLayer.PointerPressed += (_, args) =>
         {
@@ -351,7 +368,7 @@ public sealed partial class Workspace
         {
             double availableWidth = Math.Max(0.0, _paletteLayer.ActualWidth - 32.0);
             _palettePanel.Width = Math.Min(520.0, availableWidth);
-            _palettePanel.MaxHeight = Math.Max(0.0, _paletteLayer.ActualHeight - 68.0);
+            _palettePanel.MaxHeight = Math.Max(0.0, _paletteLayer.ActualHeight - 32.0);
         };
         _palettePanel.PointerPressed += (_, args) => args.Handled = true;
 
@@ -471,6 +488,10 @@ public sealed partial class Workspace
         MakeRow(Strings.TabBarLeft, string.Empty, _paletteItems, () => SetTabPlacement("left"));
         MakeRow(Strings.TabBarRight, string.Empty, _paletteItems, () => SetTabPlacement("right"));
 
+        // The design's compact mode: panes stop being islands and fill the content area.
+        _densityRow = MakeRow(DensityLabel(), string.Empty, _paletteItems,
+            () => SetDensity(!CompactDensity));
+
         (string Label, string Value)[] windowOptions =
         {
             (Strings.FollowSystem, "system"), (Strings.Light, "light"), (Strings.Dark, "dark"),
@@ -561,7 +582,14 @@ public sealed partial class Workspace
         layout.Children.Add(footer);
 
         _paletteLayer.Children.Add(_palettePanel);
-        _contentStack.Children.Add(_paletteLayer);
+
+        // The layer belongs to the body, not to the content island: the island starts to the
+        // right of the tab rail, so a card centered inside it lands off-center in the window.
+        // Spanning both body columns keeps the centering on the window and still leaves the
+        // header (the drag strip and the caption buttons) reachable.
+        Grid.SetColumn(_paletteLayer, 0);
+        Grid.SetColumnSpan(_paletteLayer, Math.Max(1, _body.ColumnDefinitions.Count));
+        _body.Children.Add(_paletteLayer);
     }
 
     /// <summary>
@@ -631,10 +659,22 @@ public sealed partial class Workspace
         RefreshPaletteValues();
         FilterPalette();
 
+        // The opening press keeps bubbling to the dismiss handler; mark it so that press is
+        // not mistaken for a click outside. A keyboard open clears the mark on the next
+        // dispatcher turn, when no press can still be in flight.
+        _paletteOpenedByPress = true;
+        _dispatcher?.TryEnqueue(() => _paletteOpenedByPress = false);
+
         _paletteLayer.Opacity = 0.0;
         _palettePanel.Opacity = 0.0;
         _palettePanel.Translation = new System.Numerics.Vector3(0, -6, 32);
         _paletteLayer.Visibility = Visibility.Visible;
+
+        // The IME sink sits above the whole shell at the cursor cell. The card can be drawn
+        // over that cell, and the sink would then swallow presses meant for the card, so it
+        // drops behind the shell while the palette is open. Focus, and with it text and IME
+        // input, does not depend on the z-order.
+        Canvas.SetZIndex(_imeSink, -1);
 
         _dispatcher?.TryEnqueue(() =>
         {
@@ -650,6 +690,7 @@ public sealed partial class Workspace
         // A selection preview is never committed by closing the palette.
         RestoreCommittedTheme();
         _paletteLayer.Visibility = Visibility.Collapsed;
+        Canvas.SetZIndex(_imeSink, 0);
         if (_tabs.Count > 0) _imeSink.Focus(FocusState.Programmatic);
     }
 

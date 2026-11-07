@@ -95,9 +95,15 @@ public sealed class Config
     public const float MinFontSizePoints = 4.5f;   // 6 DIPs
     public const float MaxFontSizePoints = 72.0f;  // 96 DIPs
     public float UnfocusedSplitOpacity = 0.7f;     // 0.15..1, Ghostty's default
+    public ulong ScrollbackLimit = 50_000_000;     // bytes, Ghostty 1.4's default
+    public ulong ScrollbackLimitLines = ulong.MaxValue; // rows; unlimited, Ghostty 1.4's default
+    public string Scrollbar = "system";            // "system" (default) or "never"
     public bool HasUnfocusedSplitFill;
     public Rgb UnfocusedSplitFill;                 // empty: terminal background
     public string TabPosition = string.Empty;      // "top" (default), "left", "right"
+    public bool Compact;                           // true: panes run edge to edge
+    public double SidebarWidthLeft = 240.0;        // DIPs; restored width of a left rail
+    public double SidebarWidthRight = 240.0;       // DIPs; restored width of a right rail
     public string ThemeMode = string.Empty;        // empty, Gui Light, Gui Dark, or a bundled theme name
     public string WindowThemeMode = string.Empty;  // "system" (default), "light", "dark"
     public bool DebugTap;                         // record the raw VT byte stream
@@ -248,9 +254,15 @@ public sealed class Config
         FontStyleBoldItalic = other.FontStyleBoldItalic;
         FontSize = other.FontSize;
         UnfocusedSplitOpacity = other.UnfocusedSplitOpacity;
+        ScrollbackLimit = other.ScrollbackLimit;
+        ScrollbackLimitLines = other.ScrollbackLimitLines;
+        Scrollbar = other.Scrollbar;
         HasUnfocusedSplitFill = other.HasUnfocusedSplitFill;
         UnfocusedSplitFill = other.UnfocusedSplitFill;
         TabPosition = other.TabPosition;
+        Compact = other.Compact;
+        SidebarWidthLeft = other.SidebarWidthLeft;
+        SidebarWidthRight = other.SidebarWidthRight;
         ThemeMode = other.ThemeMode;
         WindowThemeMode = other.WindowThemeMode;
         DebugTap = other.DebugTap;
@@ -567,6 +579,14 @@ public sealed class Config
         TermVariable = Last("term") ?? string.Empty;
 
         TabPosition = (Last("tab-position") ?? string.Empty).ToLowerInvariant();
+        Compact = GetBool("compact", false);
+        SidebarWidthLeft = ParseSidebarWidth(Last("sidebar-width-left"), SidebarWidthLeft);
+        SidebarWidthRight = ParseSidebarWidth(Last("sidebar-width-right"), SidebarWidthRight);
+        ScrollbackLimit = ParseLimit(Last("scrollback-limit"), ScrollbackLimit);
+        ScrollbackLimitLines = ParseLimit(Last("scrollback-limit-lines"), ScrollbackLimitLines);
+        Scrollbar = (Last("scrollbar") ?? string.Empty).Trim().ToLowerInvariant() == "never"
+            ? "never"
+            : "system";
         DebugTap = GetBool("debug-tap", false);
         CrashDumps = GetBool("crash-dumps", false);
 
@@ -1307,11 +1327,20 @@ public sealed class Config
             "# font-size          font size in points; default 10 (about 13 DIPs)\n" +
             "# unfocused-split-opacity  default 0.7; 0.15 (very dim) to 1 (off)\n" +
             "# unfocused-split-fill     empty (default; terminal background) or #RRGGBB\n" +
+            "# scrollback-limit   scrollback budget in bytes, or 'unlimited'; default\n" +
+            "#                    50000000 (50 MB), 0 disables scrollback\n" +
+            "# scrollback-limit-lines  row cap, or 'unlimited' (default); the byte cap and\n" +
+            "#                    this one both apply, whichever is reached first trims\n" +
+            "# scrollbar          system (default; only while there is scrollback) or never\n" +
             "# tab-position       top (default), left or right\n" +
             "# background-image   PNG/JPEG path; relative paths resolve next to this file\n" +
             "# background-opacity window background opacity; 1 (default) is opaque\n" +
             "# background-opacity-cells  true also fades explicit cell backgrounds\n" +
             "# background-blur    true (default) for DWM acrylic blur behind the window\n" +
+            "# compact            false (default; panes float as islands) or true (panes run\n" +
+            "#                    edge to edge with 1px split dividers)\n" +
+            "# sidebar-width-left   left rail width in DIPs; default 240\n" +
+            "# sidebar-width-right  right rail width in DIPs; default 240\n" +
             "# theme              empty (default), Gui Dark, Gui Light, or a built-in theme\n" +
             "#                    name such as Dracula or Catppuccin Mocha\n" +
             "# window-theme       system (default), light or dark; window decorations\n" +
@@ -1325,6 +1354,12 @@ public sealed class Config
             "# font-size = 13\n" +
             "# unfocused-split-opacity = 0.7\n" +
             "# unfocused-split-fill = #21252B\n" +
+            "# scrollback-limit = 50000000\n" +
+            "# scrollback-limit-lines = unlimited\n" +
+            "# scrollbar = system\n" +
+            "# compact = false\n" +
+            "# sidebar-width-left = 240\n" +
+            "# sidebar-width-right = 240\n" +
             "# theme = Gui Dark\n" +
             "# background-image = C:\\images\\background.png\n" +
             "# background-image-fit = contain\n" +
@@ -1388,5 +1423,68 @@ public sealed class Config
             }
         }
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// A byte or row budget: a base-0 count or the literal "unlimited". Anything ghostty's
+    /// grammar does not accept keeps the default.
+    /// </summary>
+    private static ulong ParseLimit(string? value, ulong fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+        if (value.Trim().Equals("unlimited", StringComparison.OrdinalIgnoreCase)) return ulong.MaxValue;
+        return TryParseCount(value, out ulong count) ? count : fallback;
+    }
+
+    /// <summary>Sidebar widths keep a usable range; out-of-range values keep the default.</summary>
+    private static double ParseSidebarWidth(string? value, double fallback)
+    {
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double width) ||
+            width < 120.0 || width > 800.0)
+        {
+            return fallback;
+        }
+        return width;
+    }
+
+    /// <summary>
+    /// Parses a count the way ghostty's config reader does: a bare integer with an optional
+    /// `0x` / `0o` / `0b` prefix (ghostty parses with base 0). Unit suffixes such as `10MB`
+    /// are not part of that grammar and are rejected.
+    /// </summary>
+    internal static bool TryParseCount(string value, out ulong count)
+    {
+        count = 0;
+        string text = value.Trim();
+        if (text.Length == 0) return false;
+
+        int radix = 10;
+        if (text.Length > 2 && text[0] == '0')
+        {
+            radix = char.ToLowerInvariant(text[1]) switch
+            {
+                'x' => 16,
+                'o' => 8,
+                'b' => 2,
+                _ => 10,
+            };
+            if (radix != 10) text = text[2..];
+        }
+
+        if (text.Length == 0) return false;
+        foreach (char c in text)
+        {
+            int digit = c switch
+            {
+                >= '0' and <= '9' => c - '0',
+                >= 'a' and <= 'f' => c - 'a' + 10,
+                >= 'A' and <= 'F' => c - 'A' + 10,
+                _ => -1,
+            };
+            if (digit < 0 || digit >= radix) return false;
+            if (count > (ulong.MaxValue - (ulong)digit) / (ulong)radix) return false;
+            count = count * (ulong)radix + (ulong)digit;
+        }
+        return true;
     }
 }
