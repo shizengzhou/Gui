@@ -1304,7 +1304,7 @@ public sealed unsafe class TerminalRenderer
     {
         if (style.Faint != 0)
         {
-            float opacity = _config?.FaintOpacity ?? 0.35f;
+            float opacity = _config?.FaintOpacity ?? 0.5f;
             return Blend(fg, bg, 1.0f - Math.Clamp(opacity, 0f, 1f));
         }
 

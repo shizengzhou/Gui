@@ -53,13 +53,14 @@ public class ConfigSurfaceTests : IDisposable
     [Fact]
     public void TheSchemaCoversEveryGhosttyReferenceOption()
     {
-        Assert.Equal(202, ConfigSchema.Count);
-        Assert.Equal(202, ConfigSchema.Ghostty.Select(o => o.Name).Distinct().Count());
+        Assert.Equal(213, ConfigSchema.Count);
+        Assert.Equal(213, ConfigSchema.Ghostty.Select(o => o.Name).Distinct().Count());
 
         foreach (string name in new[]
                  {
                      "font-family", "font-size", "theme", "background", "palette", "cursor-style",
-                     "window-padding-x", "keybind", "clipboard-read", "scrollback-limit",
+                     "window-padding-x", "keybind", "clipboard-read", "scrollback-limit-bytes",
+                     "scrollback-compression", "link-osc8", "middle-click-action", "drag-handle",
                      "macos-window-shadow", "gtk-tabs-location", "auto-update-channel",
                  })
         {
@@ -111,7 +112,7 @@ public class ConfigSurfaceTests : IDisposable
             d => d.Key == "no-such-option" && d.Severity == ConfigSeverity.Warning);
         Assert.Contains(config.Diagnostics,
             d => d.Key == "font-size" && d.Severity == ConfigSeverity.Warning);
-        Assert.Equal(10f, config.FontSize);
+        Assert.Equal(12f, config.FontSize);
     }
 
     [Fact]
@@ -142,7 +143,7 @@ public class ConfigSurfaceTests : IDisposable
         Assert.Equal(12f, config.FontSize);
         Assert.Equal(16.0, config.FontSizeDip, 3);
 
-        Assert.Equal(10f, Config.Load(Write(string.Empty)).FontSize);
+        Assert.Equal(12f, Config.Load(Write(string.Empty)).FontSize);
     }
 
     [Fact]
@@ -230,7 +231,8 @@ public class ConfigSurfaceTests : IDisposable
     {
         Assert.Equal(3f, Config.Load(Write("mouse-scroll-multiplier = precision:0.1,discrete:3\n")).MouseScrollMultiplier);
         Assert.Equal(2f, Config.Load(Write("mouse-scroll-multiplier = 2\n")).MouseScrollMultiplier);
-        Assert.Equal(1f, Config.Load(Write("mouse-scroll-multiplier = [bad]\n")).MouseScrollMultiplier);
+        Assert.Equal(3f, Config.Load(Write("mouse-scroll-multiplier = [bad]\n")).MouseScrollMultiplier);
+        Assert.Equal(3f, new Config().MouseScrollMultiplier);
     }
 
     [Fact]
@@ -258,22 +260,29 @@ public class ConfigSurfaceTests : IDisposable
     public void ClipboardAndMouseOptionsResolve()
     {
         Config config = Config.Load(Write(
-            "copy-on-select = clipboard\n" +
+            "copy-on-select = both\n" +
             "right-click-action = ignore\n" +
-            "clipboard-trim-trailing-spaces = true\n" +
+            "clipboard-trim-trailing-spaces = false\n" +
             "selection-clear-on-copy = true\n" +
-            "window-padding-x = 8\n" +
+            "window-padding-x = 8,6\n" +
             "window-padding-y = 4\n"));
 
         Assert.True(config.CopyOnSelect);
         Assert.Equal("ignore", config.RightClickAction);
-        Assert.True(config.ClipboardTrimTrailingSpaces);
+        Assert.False(config.ClipboardTrimTrailingSpaces);
         Assert.True(config.SelectionClearOnCopy);
-        Assert.Equal(8, config.PaddingX);
-        Assert.Equal(4, config.PaddingY);
+        Assert.Equal(8, config.PaddingLeft);
+        Assert.Equal(6, config.PaddingRight);
+        Assert.Equal(4, config.PaddingTop);
+        Assert.Equal(4, config.PaddingBottom);
+
+        // Unset keeps Ghostty's defaults: trim on copy, context menu, 2 DIP padding.
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.True(defaults.ClipboardTrimTrailingSpaces);
+        Assert.Equal("context-menu", defaults.RightClickAction);
 
         Config fallback = Config.Load(Write("right-click-action = nothing\n"));
-        Assert.Equal("copy-or-paste", fallback.RightClickAction);
+        Assert.Equal("context-menu", fallback.RightClickAction);
     }
 
     [Fact]
@@ -655,10 +664,10 @@ public class ConfigSurfaceTests : IDisposable
         Assert.False(Config.Load(Write("background-blur = 0\n")).BackgroundBlur);
         Assert.False(Config.Load(Write("background-blur = -2\n")).BackgroundBlur);
 
-        // Unset and unrecognized values keep the Windows default (on).
-        Assert.True(new Config().BackgroundBlur);
-        Assert.True(Config.Load(Write(string.Empty)).BackgroundBlur);
-        Assert.True(Config.Load(Write("background-blur = blurry\n")).BackgroundBlur);
+        // Unset keeps Ghostty's default (off); a macOS glass value implies on.
+        Assert.False(new Config().BackgroundBlur);
+        Assert.False(Config.Load(Write(string.Empty)).BackgroundBlur);
+        Assert.True(Config.Load(Write("background-blur = macos-glass-regular\n")).BackgroundBlur);
     }
 
     [Fact]
@@ -728,7 +737,8 @@ public class ConfigSurfaceTests : IDisposable
         Assert.Equal("underline", target.CursorStyle);
         Assert.Equal(("A", "1"), target.ExtraEnvironment[0]);
         Assert.Equal(4f, target.MouseScrollMultiplier);
-        Assert.Equal(6, target.PaddingX);
+        Assert.Equal(6, target.PaddingLeft);
+        Assert.Equal(6, target.PaddingRight);
         Assert.Equal(source.All("env"), target.All("env"));
     }
 }

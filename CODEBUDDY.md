@@ -181,12 +181,24 @@ there rather than at the canvas.
 ## Configuration and theming
 
 `%APPDATA%\gui\config` is ghostty-shaped: one `key = value` per line, `#` starts a comment.
-Recognized keys: `command`/`shell`, `working-directory`/`cwd`, `font-family`, `font-size`,
-`unfocused-split-opacity`, `unfocused-split-fill`, `tab-position`, `compact`, `sidebar-width-left`,
-`sidebar-width-right` (written by the app when each rail's edge is dragged, 120..800), `theme`,
-`window-theme`, `scrollback-limit`, `scrollback-limit-lines`, `scrollbar`, `debug-tap`,
-`crash-dumps`.
+Every Ghostty 1.4 key is recognized — `GHOSTTY-CONFIG-TODO.md` records which ones this build
+actually applies. On top of Ghostty's surface the app adds `tab-position`, `compact`,
+`sidebar-width-left`, `sidebar-width-right` (written by the app when each rail's edge is
+dragged, 120..800), `debug-tap` and `crash-dumps`.
 
+- Defaults follow Ghostty 1.4: `font-size = 12` points (about 16 DIPs), `faint-opacity = 0.5`,
+  `background-blur = false`, `right-click-action = context-menu` (this build has no menu, so it
+  behaves like `copy-or-paste`), `clipboard-trim-trailing-spaces = true`, `window-padding-x/y = 2`.
+- `window-padding-x/y` take one value for both sides or `left,right` / `top,bottom`.
+- `mouse-scroll-multiplier` is the number of rows per wheel notch (`discrete`, default 3);
+  `precision:` is accepted, but the Windows wheel is a discrete device.
+- `copy-on-select` accepts Ghostty 1.4's `none` / `primary` / `clipboard` / `both` (plus
+  `true`/`false`); Windows has no selection clipboard, so `primary` does nothing and `both`
+  copies to the system clipboard.
+- 1.4 additions such as `link-osc8`, `middle-click-action`, `drag-handle`,
+  `scrollback-compression`, `clipboard-write-limit-bytes`, `vt-window-resize-allowed`,
+  `vt-xt-checksum-*` and the new `gtk-*` keys are parsed without warnings, but this build has
+  no behavior behind them yet.
 - `compact` is `false` (default: panes float as rounded islands with a 6 DIP gap) or `true`
   (panes run edge to edge in a square content area, split only by 1 DIP dividers; the tab
   chips square off at the bottom and the rail's tool row lifts to the window edge). The
@@ -201,7 +213,7 @@ Recognized keys: `command`/`shell`, `working-directory`/`cwd`, `font-family`, `f
   dimming, the scroll settings and the tab rail (`tab-position` = `top` / `left` / `right`) all
   take effect without a restart. `command` and `working-directory` only affect new panes and
   tabs.
-- `scrollback-limit` is the terminal's scrollback budget in bytes: a bare integer (ghostty
+- `scrollback-limit-bytes` (formerly `scrollback-limit`) is the terminal's scrollback budget in bytes: a bare integer (ghostty
   parses base 0, so `0x…` works), `unlimited`, or `0` to disable scrollback; the default is
   ghostty 1.4's 50 MB. `scrollback-limit-lines` is the row cap with the same grammar, default
   `unlimited`; both caps apply and whichever is reached first trims the history. `scrollbar`

@@ -109,7 +109,8 @@ public sealed class TerminalPane
         {
             UseSharedDevice = true,
             ClearColor = CanvasClearColor(),
-            Margin = new Thickness(config.PaddingX, config.PaddingY, config.PaddingX, config.PaddingY),
+            Margin = new Thickness(
+                config.PaddingLeft, config.PaddingTop, config.PaddingRight, config.PaddingBottom),
         };
 
         _dim = new Border
@@ -120,18 +121,22 @@ public sealed class TerminalPane
             Opacity = 0.0,
         };
 
-        // Scrollbar: the stock WinUI control, over the terminal's right edge in the 14 DIP
-        // the canvas leaves free. It owns the thumb sizing, the drag, the page clicks and the
-        // hover treatment; this class only maps its Value to a scrollback row.
+        // Scrollbar: the stock WinUI control, as an overlay flush with the pane's right edge.
+        // With padding this small there is no gutter to sit in, so it must not take layout
+        // width: appearing would otherwise shrink the canvas, change the column count and
+        // reflow the shell on every scroll. The resting indicator is a thin line that fits
+        // inside the right padding; it only widens over the last cells while hovered, like
+        // Windows Terminal. It owns the thumb sizing, the drag, the page clicks and the hover
+        // treatment; this class only maps its Value to a scrollback row.
         _scrollBar = new ScrollBar
         {
             Orientation = Orientation.Vertical,
             IndicatorMode = ScrollingIndicatorMode.MouseIndicator,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Stretch,
-            // The bar spans the band the canvas draws its rows in, so it follows the
-            // configured padding instead of assuming the default 12 DIP.
-            Margin = new Thickness(0, config.PaddingY, 2, config.PaddingY),
+            // Track the band the canvas draws its rows in; zero on the right so the thin
+            // resting indicator sits inside the right padding rather than over a cell.
+            Margin = new Thickness(0, config.PaddingTop, 0, config.PaddingBottom),
             // The terminal owns the keyboard; a focusable bar would take Tab away from it.
             IsTabStop = false,
             Visibility = Visibility.Collapsed,
@@ -885,8 +890,8 @@ public sealed class TerminalPane
 
         // Cell space starts after the frame's 1 DIP outline, the 34 DIP pane head and the
         // configured term padding (the host is the frame's root, so those offsets count).
-        x = cellX * (double)metrics.Width + 1.0 + _config.PaddingX;
-        y = cellY * (double)metrics.Height + 35.0 + _config.PaddingY;
+        x = cellX * (double)metrics.Width + 1.0 + _config.PaddingLeft;
+        y = cellY * (double)metrics.Height + 35.0 + _config.PaddingTop;
         return true;
     }
 
@@ -1032,8 +1037,8 @@ public sealed class TerminalPane
         int delta = args.GetCurrentPoint(_canvas).Properties.MouseWheelDelta;
         if (delta == 0) return;
 
-        // Three rows per notch is the app's historical step; mouse-scroll-multiplier scales it.
-        int step = Math.Max(1, (int)Math.Round(3.0 * _config.MouseScrollMultiplier));
+        // mouse-scroll-multiplier is the discrete-wheel row count (Ghostty's default is 3).
+        int step = Math.Max(1, (int)Math.Round(_config.MouseScrollMultiplier));
         _session.Scroll(delta > 0 ? -step : step);
         args.Handled = true;
     }

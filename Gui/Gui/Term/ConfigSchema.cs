@@ -57,6 +57,7 @@ public static class ConfigSchema
         new("font-variation-bold-italic", ConfigKind.List, ConfigPlatform.All, "bold italic variable font axes"),
         new("font-codepoint-map", ConfigKind.List, ConfigPlatform.All, "map codepoints to a font"),
         new("clipboard-codepoint-map", ConfigKind.List, ConfigPlatform.All, "rewrite codepoints on copy"),
+        new("clipboard-write-limit-bytes", ConfigKind.Text, ConfigPlatform.All, "OSC 52 write size limit"),
         new("font-thicken", ConfigKind.Bool, ConfigPlatform.MacOS, "thicken font strokes"),
         new("font-thicken-strength", ConfigKind.Integer, ConfigPlatform.MacOS, "thickening strength 0-255"),
         new("font-shaping-break", ConfigKind.Text, ConfigPlatform.All, "where to break shaping runs"),
@@ -111,6 +112,7 @@ public static class ConfigSchema
         new("unfocused-split-fill", ConfigKind.Color, ConfigPlatform.All, "unfocused split fill"),
         new("split-divider-color", ConfigKind.Color, ConfigPlatform.All, "split divider color"),
         new("split-preserve-zoom", ConfigKind.Text, ConfigPlatform.All, "preserve split zoom"),
+        new("drag-handle", ConfigKind.Enum, ConfigPlatform.All, "split drag handle visibility"),
         new("search-foreground", ConfigKind.Color, ConfigPlatform.All, "search match foreground"),
         new("search-background", ConfigKind.Color, ConfigPlatform.All, "search match background"),
         new("search-selected-foreground", ConfigKind.Color, ConfigPlatform.All, "current match foreground"),
@@ -124,10 +126,13 @@ public static class ConfigSchema
         new("input", ConfigKind.List, ConfigPlatform.All, "input sent on startup"),
         new("wait-after-command", ConfigKind.Bool, ConfigPlatform.All, "keep the surface after exit"),
         new("abnormal-command-exit-runtime", ConfigKind.Integer, ConfigPlatform.All, "abnormal exit threshold"),
-        new("scrollback-limit", ConfigKind.Text, ConfigPlatform.All, "scrollback size in bytes"),
+        new("scrollback-limit-bytes", ConfigKind.Text, ConfigPlatform.All, "scrollback size in bytes"),
+        new("scrollback-limit-lines", ConfigKind.Text, ConfigPlatform.All, "scrollback row cap"),
+        new("scrollback-compression", ConfigKind.Bool, ConfigPlatform.All, "compress idle scrollback"),
         new("scrollbar", ConfigKind.Enum, ConfigPlatform.All, "scrollbar visibility"),
         new("link", ConfigKind.List, ConfigPlatform.All, "regex link matcher"),
         new("link-url", ConfigKind.Bool, ConfigPlatform.All, "match URLs"),
+        new("link-osc8", ConfigKind.Bool, ConfigPlatform.All, "OSC 8 hyperlinks"),
         new("link-previews", ConfigKind.Bool, ConfigPlatform.All, "show link previews"),
         new("maximize", ConfigKind.Bool, ConfigPlatform.All, "start maximized"),
         new("fullscreen", ConfigKind.Bool, ConfigPlatform.MacOS, "start fullscreen"),
@@ -137,8 +142,8 @@ public static class ConfigSchema
         new("working-directory", ConfigKind.Text, ConfigPlatform.All, "startup directory"),
         new("keybind", ConfigKind.List, ConfigPlatform.All, "key bindings"),
         new("key-remap", ConfigKind.List, ConfigPlatform.All, "modifier remapping"),
-        new("window-padding-x", ConfigKind.Number, ConfigPlatform.All, "horizontal padding"),
-        new("window-padding-y", ConfigKind.Number, ConfigPlatform.All, "vertical padding"),
+        new("window-padding-x", ConfigKind.Text, ConfigPlatform.All, "horizontal padding (left,right)"),
+        new("window-padding-y", ConfigKind.Text, ConfigPlatform.All, "vertical padding (top,bottom)"),
         new("window-padding-balance", ConfigKind.Bool, ConfigPlatform.All, "balance leftover padding"),
         new("window-padding-color", ConfigKind.Enum, ConfigPlatform.All, "padding area color"),
         new("window-vsync", ConfigKind.Bool, ConfigPlatform.All, "synchronize with the display"),
@@ -174,6 +179,7 @@ public static class ConfigSchema
         new("image-storage-limit", ConfigKind.Integer, ConfigPlatform.All, "image memory limit"),
         new("copy-on-select", ConfigKind.Text, ConfigPlatform.All, "copy when selecting"),
         new("right-click-action", ConfigKind.Enum, ConfigPlatform.All, "right click action"),
+        new("middle-click-action", ConfigKind.Enum, ConfigPlatform.All, "middle click action"),
         new("click-repeat-interval", ConfigKind.Integer, ConfigPlatform.All, "multi-click interval"),
         new("config-file", ConfigKind.List, ConfigPlatform.All, "extra config files"),
         new("config-default-files", ConfigKind.Bool, ConfigPlatform.All, "load default config files"),
@@ -227,6 +233,8 @@ public static class ConfigSchema
         new("gtk-single-instance", ConfigKind.Bool, ConfigPlatform.Linux, "single instance mode"),
         new("gtk-titlebar", ConfigKind.Bool, ConfigPlatform.Linux, "full GTK titlebar"),
         new("gtk-tabs-location", ConfigKind.Enum, ConfigPlatform.Linux, "tab bar location"),
+        new("gtk-horizontal-tab-scroll", ConfigKind.Bool, ConfigPlatform.Linux, "scroll tabs horizontally"),
+        new("gtk-tabs-inverted", ConfigKind.Bool, ConfigPlatform.Linux, "invert tab bar colors"),
         new("gtk-titlebar-hide-when-maximized", ConfigKind.Bool, ConfigPlatform.Linux, "hide titlebar when maximized"),
         new("gtk-toolbar-style", ConfigKind.Enum, ConfigPlatform.Linux, "toolbar style"),
         new("gtk-titlebar-style", ConfigKind.Enum, ConfigPlatform.Linux, "GTK titlebar style"),
@@ -238,6 +246,9 @@ public static class ConfigSchema
         new("faint-opacity", ConfigKind.Float, ConfigPlatform.All, "faint text opacity"),
         new("term", ConfigKind.Text, ConfigPlatform.All, "TERM environment value"),
         new("enquiry-response", ConfigKind.Text, ConfigPlatform.All, "reply to ENQ"),
+        new("vt-window-resize-allowed", ConfigKind.Bool, ConfigPlatform.All, "allow window resize sequences"),
+        new("vt-xt-checksum-extension", ConfigKind.Text, ConfigPlatform.All, "XT checksum extension"),
+        new("vt-xt-checksum-report", ConfigKind.Bool, ConfigPlatform.All, "report XT checksums"),
         new("async-backend", ConfigKind.Enum, ConfigPlatform.All, "async IO backend"),
         new("auto-update", ConfigKind.Enum, ConfigPlatform.MacOS, "auto update"),
         new("auto-update-channel", ConfigKind.Enum, ConfigPlatform.MacOS, "auto update channel"),
@@ -250,7 +261,6 @@ public static class ConfigSchema
         new("compact", ConfigKind.Bool, ConfigPlatform.All, "panes run edge to edge"),
         new("sidebar-width-left", ConfigKind.Float, ConfigPlatform.All, "left rail width in DIPs"),
         new("sidebar-width-right", ConfigKind.Float, ConfigPlatform.All, "right rail width in DIPs"),
-        new("scrollback-limit-lines", ConfigKind.Text, ConfigPlatform.All, "scrollback row cap"),
         new("debug-tap", ConfigKind.Bool, ConfigPlatform.All, "record the raw VT byte stream"),
         new("crash-dumps", ConfigKind.Bool, ConfigPlatform.All, "ask Windows for a full crash dump"),
     };
@@ -266,6 +276,9 @@ public static class ConfigSchema
         // Ghostty aliases kept for older configs.
         index["shell"] = index["command"];
         index["cwd"] = index["working-directory"];
+        index["scrollback-limit"] = index["scrollback-limit-bytes"];
+        index["background-blur-radius"] = index["background-blur"];
+        index["adw-toolbar-style"] = index["gtk-toolbar-style"];
         return index;
     }
 

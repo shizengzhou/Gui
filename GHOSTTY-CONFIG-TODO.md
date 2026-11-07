@@ -1,8 +1,11 @@
 ﻿# Ghostty 配置项清单（TODO）
 
-来源：<https://ghostty.org/docs/config/reference>（抓取于 2026-11-05，共 202 个配置键）
+来源：<https://ghostty.org/docs/config/reference> 与 `D:\dev\ghostty` 的 1.4.1-dev 源码
+（`src/config/Config.zig`，共 213 个配置键；比文档多出 1.4 新增项）
 说明：按功能分组，一项对应一个 Ghostty 配置键；标注「仅 macOS」「仅 Linux/GTK」的项与 Windows 项目无关，可直接跳过。
 状态：`[x]` 已在本分支接入并生效；`[ ]` 已能正常解析（不再报未知选项），但本构建尚无对应实现，或该选项只对 macOS / Linux 有效。
+默认值已按 1.4 源码对齐（`font-size` 12、`faint-opacity` 0.5、`background-blur` 关闭、
+`right-click-action` context-menu、`clipboard-trim-trailing-spaces` 开启、`window-padding` 2）。
 
 ## 1. 应用与语言（1）
 
@@ -10,7 +13,7 @@
 
 ## 2. 字体家族与样式（21）
 
-- [x] `font-family` — 主字体族，可重复配置追加回退字体
+- [ ] `font-family` — 主字体族，可重复配置追加回退字体（目前只取最后一项，回退字体尚未实现）
 - [x] `font-family-bold` — 粗体字体族
 - [x] `font-family-italic` — 斜体字体族
 - [x] `font-family-bold-italic` — 粗斜体字体族
@@ -20,7 +23,7 @@
 - [x] `font-style-bold-italic` — 粗斜体样式名
 - [x] `font-synthetic-style` — 是否合成缺失的粗体/斜体（no-bold / no-italic / no-bold-italic 关闭；Windows 下通过检测真实字面近似实现）
 - [x] `font-feature` — 开启或关闭 OpenType 特性（如 `-calt` 关连字）
-- [x] `font-size` — 字号（pt，可为小数）
+- [x] `font-size` — 字号（pt，可为小数）；默认 12（与 1.4 的非 macOS 默认一致）
 - [x] `font-variation` — 可变字体轴值（如 `wght=600`；Windows 下 wght / wdth / ital / slnt 生效）
 - [x] `font-variation-bold` — 粗体使用的可变字体轴值（未设置时继承 `font-variation`）
 - [x] `font-variation-italic` — 斜体使用的可变字体轴值（未设置时继承 `font-variation`）
@@ -70,7 +73,7 @@
 - [x] `palette-generate` — 由基础 16 色自动生成 16–255 色
 - [x] `palette-harmonious` — 反转自动生成色板的顺序
 - [x] `bold-color` — 覆盖粗体文字颜色
-- [x] `faint-opacity` — 暗色（faint）文字不透明度
+- [x] `faint-opacity` — 暗色（faint）文字不透明度；默认 0.5（与 1.4 一致）
 - [x] `cursor-color` — 光标颜色
 - [x] `cursor-opacity` — 光标不透明度
 - [x] `cursor-style` — 默认光标形状（block/bar/underline 等）
@@ -78,21 +81,22 @@
 - [x] `cursor-text` — 光标下文字颜色
 - [ ] `cursor-click-to-move` — 点击提示符移动光标（依赖 shell 集成）
 
-## 5. 背景、分屏与搜索（11）
+## 5. 背景、分屏与搜索（12）
 
 - [x] `background-opacity` — 窗口背景不透明度（终端表面 + 窗格卡片；低于 1 时启用 DWM 亚克力背景）
 - [x] `background-opacity-cells` — 显式设置背景色的单元格也套用透明度
-- [x] `background-blur` — 背景模糊开关或半径（Windows 下映射为 DWM 亚克力；0/false 关闭）
+- [x] `background-blur` — 背景模糊开关或半径（Windows 下映射为 DWM 亚克力；0/false 关闭）；默认关闭，与 1.4 一致
 - [x] `unfocused-split-opacity` — 未聚焦分屏的不透明度
 - [x] `unfocused-split-fill` — 未聚焦分屏的叠加色
 - [ ] `split-divider-color` — 分屏分隔线颜色
 - [ ] `split-preserve-zoom` — 何时保留分屏缩放状态
+- [ ] `drag-handle` — 分屏拖拽手柄的显示策略（1.4）
 - [ ] `search-foreground` — 搜索命中项前景色
 - [ ] `search-background` — 搜索命中项背景色
 - [ ] `search-selected-foreground` — 当前搜索命中项前景色
 - [ ] `search-selected-background` — 当前搜索命中项背景色
 
-## 6. 进程与启动（11）
+## 6. 进程与启动（13）
 
 - [x] `command` — 启动的命令/Shell
 - [ ] `initial-command` — 仅首个终端使用的启动命令
@@ -103,22 +107,25 @@
 - [x] `input` — 启动时向子进程写入的输入数据
 - [x] `wait-after-command` — 命令退出后保持终端不关闭
 - [ ] `abnormal-command-exit-runtime` — 判定异常退出所需的最短运行毫秒数
-- [x] `scrollback-limit` — 回滚缓冲区字节上限（含活动屏）；`Term/Config.cs`，`Term/TerminalSession.cs` 经 `OPT_SCROLLBACK_MAX_BYTES` 下发，构造与 `Ctrl+Shift+,` 重载时各应用一次。按 Ghostty 1.4 对齐：默认 `50000000`（50 MB），取值只接受整数（base 0，`0x` 可用）或 `unlimited`（内部存 `ulong.MaxValue`），不接受 `10MB` 这类后缀；`0` 关闭回滚。1.4 把键名改成了 `scrollback-limit-bytes`，旧名仍是兼容别名，这里沿用旧名
-- [x] `scrollback-limit-lines` — 回滚行数上限（1.4 新增）；`Term/Config.cs` + `Term/TerminalSession.cs` 经 `OPT_SCROLLBACK_MAX_LINES` 下发。语法同 `scrollback-limit`：整数（base 0）或 `unlimited`，默认 `unlimited`；字节上限与行数上限同时生效，谁先到谁裁
-- [x] `scrollbar` — 滚动条显示策略；`Term/Config.cs` 归一化取值，`Term/TerminalPane.cs` 的 `UpdateScrollbar()` 决定可见性。**只实现 system / never**：`system` = 有回滚内容才显示，没有 macOS overlay 滚动条的闲置淡出（WinUI 的 `ScrollBar` 不提供该行为 —— `IndicatorMode` 只控制鼠标/触摸下的滑轨样式，`ScrollViewer` 的 `Auto` 也只在内容不足时整条隐藏）；Ghostty 的 `always` 未实现，写进配置会回落到 `system`
+- [x] `scrollback-limit-bytes` — 回滚缓冲区字节上限（含活动屏）；`Term/Config.cs`，`Term/TerminalSession.cs` 经 `OPT_SCROLLBACK_MAX_BYTES` 下发，构造与 `Ctrl+Shift+,` 重载时各应用一次。按 Ghostty 1.4 对齐：默认 `50000000`（50 MB），取值只接受整数（base 0，`0x` 可用）或 `unlimited`（内部存 `ulong.MaxValue`），不接受 `10MB` 这类后缀；`0` 关闭回滚。1.4 的新键名，旧名 `scrollback-limit` 作为别名仍可用
+- [x] `scrollback-limit-lines` — 回滚行数上限（1.4 新增）；`Term/Config.cs` + `Term/TerminalSession.cs` 经 `OPT_SCROLLBACK_MAX_LINES` 下发。语法同 `scrollback-limit-bytes`：整数（base 0）或 `unlimited`，默认 `unlimited`；字节上限与行数上限同时生效，谁先到谁裁
+- [x] `scrollback-compression` — 空闲时压缩回滚页（1.4 新增）；本构建仅识别该键，压缩由 libghostty-vt 决定
+- [x] `scrollbar` — 滚动条显示策略；`Term/Config.cs` 归一化取值，`Term/TerminalPane.cs` 的 `UpdateScrollbar()` 决定可见性。**只实现 system / never**：`system` = 有回滚内容才显示（1.4 的取值也只有 system / never，没有 `always`）
 
-## 7. 链接、鼠标与选择（11）
+## 7. 链接、鼠标与选择（13）
 
 - [ ] `link` — 正则匹配终端文本并绑定点击动作
 - [ ] `link-url` — 是否识别 URL 并可点击打开
+- [ ] `link-osc8` — 是否高亮/预览/复制/打开 OSC 8 超链接（1.4）
 - [ ] `link-previews` — 是否显示链接预览
 - [ ] `mouse-hide-while-typing` — 打字时隐藏鼠标指针
 - [ ] `scroll-to-bottom` — 何时自动滚动到底部
 - [ ] `mouse-shift-capture` — Shift+点击是否交给运行中的程序识别
 - [ ] `mouse-reporting` — 是否向程序上报鼠标事件
-- [x] `mouse-scroll-multiplier` — 滚轮滚动倍数（可加 precision:/discrete:）
-- [x] `copy-on-select` — 选中即复制
-- [x] `right-click-action` — 右键行为（context-menu/paste/copy/paste_or_copy）
+- [x] `mouse-scroll-multiplier` — 滚轮滚动倍数（可加 precision:/discrete:）；Windows 使用 discrete，默认 3 行/格
+- [x] `copy-on-select` — 选中即复制（1.4：none/primary/clipboard/both；Windows 无选区剪贴板，both 走系统剪贴板）
+- [x] `right-click-action` — 右键行为（context-menu/paste/copy/copy-or-paste/ignore；默认 context-menu，本构建无菜单时等价于 copy-or-paste）
+- [ ] `middle-click-action` — 中键行为（1.4）
 - [ ] `click-repeat-interval` — 判定连击的间隔毫秒数
 
 ## 8. 窗口与布局（36）
@@ -131,8 +138,8 @@
 - [x] `working-directory` — 启动后切换到的目录
 - [ ] `keybind` — 键绑定（`trigger=action`）
 - [ ] `key-remap` — 应用层修饰键重映射
-- [x] `window-padding-x` — 水平内边距
-- [x] `window-padding-y` — 垂直内边距
+- [x] `window-padding-x` — 水平内边距；单个值或 `left,right`
+- [x] `window-padding-y` — 垂直内边距；单个值或 `top,bottom`
 - [ ] `window-padding-balance` — 余量像素在两侧均衡分配
 - [ ] `window-padding-color` — 内边距区域颜色
 - [ ] `window-vsync` — 垂直同步
@@ -160,15 +167,16 @@
 - [ ] `resize-overlay-duration` — 浮层显示时长
 - [x] `focus-follows-mouse` — 鼠标移动即切换聚焦分屏
 
-## 9. 剪贴板（5）
+## 9. 剪贴板（6）
 
 - [ ] `clipboard-read` — 允许程序读取系统剪贴板（OSC 52）
 - [ ] `clipboard-write` — 允许程序写入系统剪贴板（OSC 52）
-- [x] `clipboard-trim-trailing-spaces` — 复制时去掉行尾空白
+- [x] `clipboard-trim-trailing-spaces` — 复制时去掉行尾空白；默认开启（与 1.4 一致）
 - [ ] `clipboard-paste-protection` — 粘贴可疑内容前二次确认
 - [ ] `clipboard-paste-bracketed-safe` — 括号粘贴视为安全
+- [ ] `clipboard-write-limit-bytes` — OSC 52 写入的字节上限（1.4，默认 64 MB）
 
-## 10. 配置加载与生命周期（17）
+## 10. 配置加载与生命周期（20）
 
 - [ ] `config-file` — 追加读取的配置文件（可重复）
 - [ ] `config-default-files` — 是否加载默认路径的配置文件
@@ -182,6 +190,9 @@
 - [x] `term` — TERM 环境变量值
 - [ ] `enquiry-response` — 收到 ENQ(0x05) 时回复的字符串
 - [ ] `vt-kam-allowed` — 是否允许 KAM 模式禁用键盘输入
+- [ ] `vt-window-resize-allowed` — 是否允许程序通过 CSI 8 t 调整窗口大小
+- [ ] `vt-xt-checksum-extension` — XT 校验和扩展的开关
+- [ ] `vt-xt-checksum-report` — 是否回报 XT 校验和
 - [ ] `osc-color-report-format` — OSC 颜色查询的回报格式
 - [ ] `async-backend` — 异步 IO 后端（auto/epoll/io_uring 等）
 - [ ] `app-notifications` — 应用内通知（toast）的控制项
@@ -239,7 +250,7 @@
 - [ ] `auto-update` — 自动更新开关（仅 macOS）
 - [ ] `auto-update-channel` — 自动更新频道
 
-## 16. Linux / GTK 专属（13）
+## 16. Linux / GTK 专属（15）
 
 - [ ] `linux-cgroup` — 每个终端放入独立 systemd scope
 - [ ] `linux-cgroup-memory-limit` — 单终端进程内存上限（字节）
@@ -249,6 +260,8 @@
 - [ ] `gtk-single-instance` — 是否单实例模式
 - [ ] `gtk-titlebar` — 是否使用完整 GTK 标题栏
 - [ ] `gtk-tabs-location` — 标签栏位置（top/bottom/hidden）
+- [ ] `gtk-horizontal-tab-scroll` — 标签过多时横向滚动（1.4）
+- [ ] `gtk-tabs-inverted` — 反转标签栏配色（1.4）
 - [ ] `gtk-titlebar-hide-when-maximized` — 最大化时隐藏标题栏
 - [ ] `gtk-toolbar-style` — 上下工具栏外观（flat 等）
 - [ ] `gtk-titlebar-style` — GTK 标题栏样式（native/tabs）

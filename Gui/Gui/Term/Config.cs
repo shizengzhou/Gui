@@ -91,7 +91,7 @@ public sealed class Config
     public string FontStyleBold = string.Empty;
     public string FontStyleItalic = string.Empty;
     public string FontStyleBoldItalic = string.Empty;
-    public float FontSize = 10.0f;                 // points, like Ghostty and WezTerm
+    public float FontSize = 12.0f;                 // points; Ghostty's default off macOS
     public const float MinFontSizePoints = 4.5f;   // 6 DIPs
     public const float MaxFontSizePoints = 72.0f;  // 96 DIPs
     public float UnfocusedSplitOpacity = 0.7f;     // 0.15..1, Ghostty's default
@@ -141,7 +141,7 @@ public sealed class Config
 
     public float BackgroundOpacity = 1.0f;          // 0..1; window background translucency
     public bool BackgroundOpacityCells;             // translucent explicit cell backgrounds
-    public bool BackgroundBlur = true;              // DWM acrylic blur behind the window
+    public bool BackgroundBlur;                     // DWM acrylic blur behind the window
     public string BackgroundImage = string.Empty;   // resolved path; empty: none
     public float BackgroundImageOpacity = 1.0f;     // 0..1
     public string BackgroundImagePosition = "center"; // one of the nine anchors
@@ -152,7 +152,7 @@ public sealed class Config
 
     public bool HasBoldColor;
     public Rgb BoldColor;
-    public float FaintOpacity = 0.35f;            // the renderer's previous fixed blend
+    public float FaintOpacity = 0.5f;             // Ghostty's default
     public bool HasSelectionBackground;
     public Rgb SelectionBackground;
     public bool HasSelectionForeground;
@@ -168,16 +168,18 @@ public sealed class Config
 
     // ---- layout -----------------------------------------------------------
 
-    public int PaddingX = 14;                      // DIPs; the app's own defaults
-    public int PaddingY = 12;
-    public float MouseScrollMultiplier = 1.0f;
+    public int PaddingLeft = 2;                    // DIPs; Ghostty's window-padding defaults
+    public int PaddingTop = 2;
+    public int PaddingRight = 2;
+    public int PaddingBottom = 2;
+    public float MouseScrollMultiplier = 3.0f;     // rows per wheel notch; Ghostty's discrete default
     public bool FocusFollowsMouse;
 
     // ---- clipboard and mouse ---------------------------------------------
 
     public bool CopyOnSelect;
-    public string RightClickAction = "copy-or-paste";
-    public bool ClipboardTrimTrailingSpaces;
+    public string RightClickAction = "context-menu";
+    public bool ClipboardTrimTrailingSpaces = true;
     public bool SelectionClearOnCopy;
     public bool SelectionClearOnTyping = true;
 
@@ -317,8 +319,10 @@ public sealed class Config
         CursorStyle = other.CursorStyle;
         CursorBlink = other.CursorBlink;
 
-        PaddingX = other.PaddingX;
-        PaddingY = other.PaddingY;
+        PaddingLeft = other.PaddingLeft;
+        PaddingTop = other.PaddingTop;
+        PaddingRight = other.PaddingRight;
+        PaddingBottom = other.PaddingBottom;
         MouseScrollMultiplier = other.MouseScrollMultiplier;
         FocusFollowsMouse = other.FocusFollowsMouse;
 
@@ -560,14 +564,14 @@ public sealed class Config
         };
         if (TryGetBool("cursor-style-blink", out bool blink)) CursorBlink = blink;
 
-        PaddingX = Math.Max(0, GetInt("window-padding-x", PaddingX));
-        PaddingY = Math.Max(0, GetInt("window-padding-y", PaddingY));
+        ResolvePadding(Last("window-padding-x"), ref PaddingLeft, ref PaddingRight);
+        ResolvePadding(Last("window-padding-y"), ref PaddingTop, ref PaddingBottom);
         MouseScrollMultiplier = Math.Clamp(ParseScrollMultiplier(Last("mouse-scroll-multiplier")), 0.01f, 10000f);
         FocusFollowsMouse = GetBool("focus-follows-mouse", false);
 
         CopyOnSelect = ParseCopyOnSelect(Last("copy-on-select"));
         RightClickAction = NormalizeRightClick(Last("right-click-action"));
-        ClipboardTrimTrailingSpaces = GetBool("clipboard-trim-trailing-spaces", false);
+        ClipboardTrimTrailingSpaces = GetBool("clipboard-trim-trailing-spaces", true);
         SelectionClearOnCopy = GetBool("selection-clear-on-copy", false);
         SelectionClearOnTyping = GetBool("selection-clear-on-typing", true);
         SelectionWordChars = Last("selection-word-chars") ?? DefaultSelectionWordChars;
@@ -582,7 +586,7 @@ public sealed class Config
         Compact = GetBool("compact", false);
         SidebarWidthLeft = ParseSidebarWidth(Last("sidebar-width-left"), SidebarWidthLeft);
         SidebarWidthRight = ParseSidebarWidth(Last("sidebar-width-right"), SidebarWidthRight);
-        ScrollbackLimit = ParseLimit(Last("scrollback-limit"), ScrollbackLimit);
+        ScrollbackLimit = ParseLimit(Last("scrollback-limit-bytes"), ScrollbackLimit);
         ScrollbackLimitLines = ParseLimit(Last("scrollback-limit-lines"), ScrollbackLimitLines);
         Scrollbar = (Last("scrollbar") ?? string.Empty).Trim().ToLowerInvariant() == "never"
             ? "never"
@@ -889,7 +893,7 @@ public sealed class Config
     /// </summary>
     private static bool ParseBackgroundBlur(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return true;
+        if (string.IsNullOrWhiteSpace(value)) return false;
 
         string text = value.Trim().ToLowerInvariant();
         if (text is "true" or "on" or "yes") return true;
@@ -976,12 +980,11 @@ public sealed class Config
 
     private static float ParseScrollMultiplier(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return 1.0f;
+        // Ghostty's shape is { precision = 1, discrete = 3 }; a bare number sets both.
+        // The Windows pointer is a discrete wheel, so the discrete value is the one used.
+        if (string.IsNullOrWhiteSpace(value)) return 3.0f;
 
-        // "precision:0.1,discrete:3" sets the multiplier per device class; the Windows
-        // pointer is a discrete wheel, so prefer that entry and fall back to the bare value.
-        float discrete = float.NaN;
-        float bare = float.NaN;
+        float discrete = 3.0f;
         foreach (string part in value.Split(','))
         {
             string text = part.Trim();
@@ -990,27 +993,27 @@ public sealed class Config
             int colon = text.IndexOf(':');
             if (colon < 0)
             {
-                if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float all)) bare = all;
+                if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float all))
+                    discrete = all;
                 continue;
             }
 
             string kind = text[..colon].Trim().ToLowerInvariant();
-            if (!float.TryParse(text[(colon + 1)..].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float number))
-                continue;
-
-            if (kind == "discrete") discrete = number;
-            else if (kind == "precision" && float.IsNaN(bare)) bare = number;
+            if (kind != "discrete") continue;
+            if (float.TryParse(text[(colon + 1)..].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float number))
+                discrete = number;
         }
 
-        if (!float.IsNaN(discrete)) return discrete;
-        return float.IsNaN(bare) ? 1.0f : bare;
+        return discrete;
     }
 
     private static bool ParseCopyOnSelect(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return false;
+        // Ghostty 1.4: none / primary / clipboard / both, with true/false as aliases.
+        // Windows has no selection clipboard, so "both" means the system clipboard.
         string text = value.Trim().ToLowerInvariant();
-        return text is "true" or "yes" or "on" or "1" or "clipboard";
+        return text is "true" or "yes" or "on" or "1" or "clipboard" or "both";
     }
 
     private static string NormalizeRightClick(string? value)
@@ -1022,7 +1025,7 @@ public sealed class Config
             "copy" => "copy",
             "copy-or-paste" => "copy-or-paste",
             "ignore" => "ignore",
-            _ => "copy-or-paste",
+            _ => "context-menu",
         };
     }
 
@@ -1324,11 +1327,14 @@ public sealed class Config
             "#                    Chinese -> zh-CN, otherwise English); needs a restart\n" +
             "# working-directory  directory the shell starts in; default is your user profile\n" +
             "# font-family        monospace font family; default JetBrainsMono Nerd Font\n" +
-            "# font-size          font size in points; default 10 (about 13 DIPs)\n" +
+            "# font-size          font size in points; default 12 (about 16 DIPs)\n" +
             "# unfocused-split-opacity  default 0.7; 0.15 (very dim) to 1 (off)\n" +
             "# unfocused-split-fill     empty (default; terminal background) or #RRGGBB\n" +
-            "# scrollback-limit   scrollback budget in bytes, or 'unlimited'; default\n" +
-            "#                    50000000 (50 MB), 0 disables scrollback\n" +
+            "# window-padding-x/y  padding in points; one value for both sides or\n" +
+            "#                    'left,right' / 'top,bottom'; default 2\n" +
+            "# scrollback-limit-bytes  scrollback budget in bytes, or 'unlimited'; default\n" +
+            "#                    50000000 (50 MB), 0 disables scrollback; the old\n" +
+            "#                    scrollback-limit name is still accepted\n" +
             "# scrollback-limit-lines  row cap, or 'unlimited' (default); the byte cap and\n" +
             "#                    this one both apply, whichever is reached first trims\n" +
             "# scrollbar          system (default; only while there is scrollback) or never\n" +
@@ -1336,7 +1342,8 @@ public sealed class Config
             "# background-image   PNG/JPEG path; relative paths resolve next to this file\n" +
             "# background-opacity window background opacity; 1 (default) is opaque\n" +
             "# background-opacity-cells  true also fades explicit cell backgrounds\n" +
-            "# background-blur    true (default) for DWM acrylic blur behind the window\n" +
+            "# background-blur    false (default) or true for DWM acrylic blur behind the\n" +
+            "#                    window when background-opacity is below 1\n" +
             "# compact            false (default; panes float as islands) or true (panes run\n" +
             "#                    edge to edge with 1px split dividers)\n" +
             "# sidebar-width-left   left rail width in DIPs; default 240\n" +
@@ -1354,7 +1361,9 @@ public sealed class Config
             "# font-size = 13\n" +
             "# unfocused-split-opacity = 0.7\n" +
             "# unfocused-split-fill = #21252B\n" +
-            "# scrollback-limit = 50000000\n" +
+            "# window-padding-x = 2,4\n" +
+            "# window-padding-y = 2\n" +
+            "# scrollback-limit-bytes = 50000000\n" +
             "# scrollback-limit-lines = unlimited\n" +
             "# scrollbar = system\n" +
             "# compact = false\n" +
@@ -1435,6 +1444,28 @@ public sealed class Config
         if (value.Trim().Equals("unlimited", StringComparison.OrdinalIgnoreCase)) return ulong.MaxValue;
         return TryParseCount(value, out ulong count) ? count : fallback;
     }
+
+    /// <summary>
+    /// "window-padding-x/y" is one pixel count for both sides or "left,right" /
+    /// "top,bottom", matching Ghostty's WindowPadding grammar.
+    /// </summary>
+    private static void ResolvePadding(string? value, ref int first, ref int second)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        string[] parts = value.Split(',');
+        if (!TryParsePadding(parts[0], out int a)) return;
+
+        int b = a;
+        if (parts.Length > 1 && !TryParsePadding(parts[1], out b)) return;
+
+        first = a;
+        second = b;
+    }
+
+    private static bool TryParsePadding(string text, out int value) =>
+        int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value) &&
+        value >= 0;
 
     /// <summary>Sidebar widths keep a usable range; out-of-range values keep the default.</summary>
     private static double ParseSidebarWidth(string? value, double fallback)

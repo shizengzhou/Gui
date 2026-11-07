@@ -104,7 +104,7 @@ public class ConfigTests : IDisposable
         Config config = Config.Load(path);
 
         // An unparsable size keeps the default, a parsable one is clamped into range.
-        Assert.Equal(10f, config.FontSize);
+        Assert.Equal(12f, config.FontSize);
         Assert.Equal(0.15f, config.UnfocusedSplitOpacity);
     }
 
@@ -114,6 +114,7 @@ public class ConfigTests : IDisposable
         // Ghostty 1.4's default, and its grammar: a bare integer (base 0, so 0x works) or
         // "unlimited", which the config stores as the largest value of the type.
         Assert.Equal(50_000_000UL, Config.Load(Write(string.Empty)).ScrollbackLimit);
+        Assert.Equal(2_000_000UL, Config.Load(Write("scrollback-limit-bytes = 2000000\n")).ScrollbackLimit);
         Assert.Equal(2_000_000UL, Config.Load(Write("scrollback-limit = 2000000\n")).ScrollbackLimit);
         Assert.Equal(20_000_000UL, Config.Load(Write("scrollback-limit = 0x1312D00\n")).ScrollbackLimit);
         Assert.Equal(0UL, Config.Load(Write("scrollback-limit = 0\n")).ScrollbackLimit);
@@ -156,8 +157,8 @@ public class ConfigTests : IDisposable
         Assert.Equal("never", Config.Load(Write("scrollbar = never\n")).Scrollbar);
         Assert.Equal("never", Config.Load(Write("scrollbar = NEVER\n")).Scrollbar);
 
-        // Ghostty's "always" has no counterpart here: only system and never exist, so
-        // anything else falls back to the default.
+        // Ghostty 1.4 only defines system and never, so anything else falls back to
+        // the default.
         Assert.Equal("system", Config.Load(Write("scrollbar = always\n")).Scrollbar);
         Assert.Equal("system", Config.Load(Write("scrollbar = sometimes\n")).Scrollbar);
     }
@@ -167,7 +168,7 @@ public class ConfigTests : IDisposable
     {
         Config config = Config.Load(Path.Combine(_dir, "does-not-exist"));
 
-        Assert.Equal(10f, config.FontSize);
+        Assert.Equal(12f, config.FontSize);
         Assert.Equal(string.Empty, config.ThemeMode);
     }
 
