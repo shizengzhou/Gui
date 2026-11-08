@@ -94,15 +94,21 @@ public sealed partial class Workspace
         {
             element.Height = closingExtent;
             element.VerticalAlignment = closingIsFirst ? VerticalAlignment.Top : VerticalAlignment.Bottom;
-            rowDefinition = parent.RowDefinitions[closingIsFirst ? 0 : 1];
+            rowDefinition = parent.RowDefinitions[closingIsFirst ? 0 : 2];
             rowDefinition.Height = new GridLength(closingExtent);
+            // The gap track would otherwise stay as a 6 DIP strip at the edge while the
+            // survivor grows; the grid is thrown away once the animation settles.
+            if (parent.RowDefinitions.Count > 2)
+                parent.RowDefinitions[1].Height = new GridLength(0);
         }
         else
         {
             element.Width = closingExtent;
             element.HorizontalAlignment = closingIsFirst ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-            column = parent.ColumnDefinitions[closingIsFirst ? 0 : 1];
+            column = parent.ColumnDefinitions[closingIsFirst ? 0 : 2];
             column.Width = new GridLength(closingExtent);
+            if (parent.ColumnDefinitions.Count > 2)
+                parent.ColumnDefinitions[1].Width = new GridLength(0);
         }
 
         var timer = _dispatcher.CreateTimer();
@@ -585,12 +591,17 @@ public sealed partial class Workspace
     {
         if (_window is null) return;
 
-        string title = "Terminal";
-        if (_tabs.Count > 0)
+        // "title" pins the window title; otherwise it follows the focused surface.
+        string title = _config.WindowTitle;
+        if (title.Length == 0)
         {
-            Tab tab = _tabs[_active];
-            if (tab.Focused is not null && tab.Focused.Title.Length > 0) title = tab.Focused.Title;
-            else if (tab.Title.Length > 0) title = tab.Title;
+            title = "Terminal";
+            if (_tabs.Count > 0)
+            {
+                Tab tab = _tabs[_active];
+                if (tab.Focused is not null && tab.Focused.Title.Length > 0) title = tab.Focused.Title;
+                else if (tab.Title.Length > 0) title = tab.Title;
+            }
         }
 
         // Keep the taskbar / alt-tab entry in sync with the active tab.

@@ -1,4 +1,4 @@
-﻿# CODEBUDDY.md
+﻿﻿# CODEBUDDY.md
 
 This file provides guidance to CodeBuddy Code when working with code in this repository.
 
@@ -101,6 +101,7 @@ resulting cell grid is drawn with Win2D.
 | `Term/TerminalSession.cs` | libghostty-vt facade + ConPTY + shell process + reader thread |
 | `Term/ConPty.cs` | `CreatePseudoConsole` + `CreateProcess`, pipe reader/writer |
 | `Term/GhosttyNative.cs` | P/Invoke surface for `ghostty-vt.dll` |
+| `Term/ShellIntegration.cs` | PowerShell prompt wrapper (OSC 133 + OSC 7) and the OSC 133 mark parser |
 | `Term/KeyMap.cs` | `VirtualKey` → libghostty-vt physical key codes |
 | `Term/ShellIcon.cs` | Extracts the shell's own icon for the pane header / tab chip; used as Windows supplies it — never recolored per theme, and no plate or outline is put behind it |
 | `Term/TerminalRenderer.cs` | Win2D renderer for a render state |
@@ -163,11 +164,45 @@ empty cells are laid out. Three invariants keep the rebuild safe:
 - A pane's visual can outlive its `TerminalPane`, so `Close()` unhooks every canvas handler and
   stops the reader thread before dropping the session.
 
+Splits can be rearranged with the mouse, matching Ghostty 1.4: the pane header itself is the
+grab bar once the tab has two or more splits (`drag-handle = auto`; `always` keeps it draggable
+on a lone pane too, `never` turns the drag off). Only the shell icon and the cwd text are the
+grab area and show the move cursor — the text block is left-aligned so it measures to its
+visible glyphs, which makes the area follow the path after a `cd` — while the rest of the band
+and the action buttons keep the arrow. `Border` is sealed and `UIElement.ProtectedCursor` can
+only be set from a subclass, so the band and the actions host are cursor-only `Grid` subclasses.
+Grabbing the header and dragging hands over the whole tile to `Term/Workspace.Drag.cs`, which
+translates the pointer into the surface host and paints a floating card plus a soft accent
+overlay over the half of the target split the pane will take — the side is whichever offset from
+the target's centre dominates. Dropping lifts the leaf out of the split tree and re-inserts it
+beside the target, so the pane keeps its live session and the shell, scrollback and working
+directory travel with it. Esc or a lost capture cancels, hover focus is suppressed while the
+drag runs, and a zoomed tab (which paints only one pane) refuses the drag.
+
+Split boundaries are resize handles too: every non-leaf split is a three-track `Grid` (first
+half, the 6 DIP gap or compact's 1 DIP divider, second half) so the boundary is a real track
+instead of a spacing, and an invisible 10 DIP `ResizeGrip` fills that track with negative
+margins that reach into both panes (the tab rail's splitter control, now parameterized with its
+cursor). Dragging writes the node's `Ratio` — the first child's star weight — and re-applies the
+grid's row/column stars live, so the shells reflow as the line moves; the ratio lives in the
+node, so a rebuild (new split, close, zoom) keeps the size. Each side is clamped to 40 DIP, and
+the drag maths subtracts the gap track so the line stays under the pointer.
+
 The rail's top row shows the sidebar toggle, new tab and search as three buttons while they
 fit; only when they do not fit do the latter two become one `MenuFlyout` overflow button
 (edge-aligned below it), with the toggle still outside the menu. A right-hand rail shares that
 row with the caption buttons, so it switches at ~238 DIP and can be dragged down to 198 DIP;
 a left-hand rail always has room for all three.
+
+`Ctrl+Shift+N` (or the palette's New window row) opens another `MainWindow`. `App` keeps every
+open window in a list — WinUI drops a `Window` that nothing references — and removes it again
+when it closes; the new window cascades down-right and starts in the focused shell's directory
+when `window-inherit-working-directory` is on. `Theme` is process-wide, so the window that
+commits a theme change (the palette, or `Ctrl+Shift+,`) copies the theme fields to the other
+windows and repaints them through `App.ApplyThemeToOtherWindows`; previewed themes stay on the
+window under the pointer until they are committed. Palette rows that persist a process-wide
+layout setting (tab rail, compact density) call `App.ReloadOtherWindows`, which re-reads the
+file in every other window; the `_applyingConfig` guard keeps a peer reload from bouncing back.
 
 All keyboard input goes through one shared, invisible `TextBox` (the IME sink): `PreviewKeyDown`
 runs the shortcut table and the key encoder, and `TextChanged` forwards printable text. The sink
@@ -187,15 +222,72 @@ actually applies. On top of Ghostty's surface the app adds `tab-position`, `comp
 dragged, 120..800), `debug-tap` and `crash-dumps`.
 
 - Defaults follow Ghostty 1.4: `font-size = 12` points (about 16 DIPs), `faint-opacity = 0.5`,
-  `background-blur = false`, `right-click-action = context-menu` (this build has no menu, so it
-  behaves like `copy-or-paste`), `clipboard-trim-trailing-spaces = true`, `window-padding-x/y = 2`.
-- `window-padding-x/y` take one value for both sides or `left,right` / `top,bottom`.
+  `background-blur = false`, `right-click-action = context-menu` (the pane shows a Copy/Paste
+  `MenuFlyout`), `clipboard-trim-trailing-spaces = true`, `window-padding-x/y = 2`.
+- `background-opacity` below 1 makes the whole window — chrome included — translucent through a
+  single tinted backdrop modelled on Windows Terminal: acrylic when `background-blur = true`, a
+  plain unblurred color brush on Windows 11 when it is false (Windows 10 keeps acrylic, which is
+  what Windows Terminal does too). The root, shell scrim and content card are cleared and the
+  panes stay transparent, so the opacity is applied exactly once instead of stacking on the
+  system acrylic tint.
+- `window-padding-x/y` are in points (default `2`), like Ghostty: one value for both sides
+  or `left,right` / `top,bottom`. At layout time they follow Ghostty's
+  `floor(points * dpi / 72)` scaling into physical pixels, so the padding tracks screen DPI.
 - `mouse-scroll-multiplier` is the number of rows per wheel notch (`discrete`, default 3);
   `precision:` is accepted, but the Windows wheel is a discrete device.
 - `copy-on-select` accepts Ghostty 1.4's `none` / `primary` / `clipboard` / `both` (plus
   `true`/`false`); Windows has no selection clipboard, so `primary` does nothing and `both`
   copies to the system clipboard.
-- 1.4 additions such as `link-osc8`, `middle-click-action`, `drag-handle`,
+- OSC 52 / the kitty clipboard protocol: libghostty-vt's `clipboard_write` / `clipboard_read`
+  callbacks are wired in `TerminalSession`, which answers synchronously through the Win32
+  clipboard (`Term/ClipboardAccess.cs`) because the VT stream waits for the reply. Only text
+  MIME types are served; images are `unsupported`. `clipboard-write` (default `allow`) and
+  `clipboard-read` (default `ask`) honor allow/deny; `ask` has no blocking prompt in this
+  build, so it behaves like `deny`. `clipboard-write-limit-bytes` goes to
+  `OPT_CLIPBOARD_WRITE_MAX_BYTES`, so the native layer rejects oversized writes first.
+- `mouse-reporting` (default on) drives the libghostty mouse encoder from the terminal's own
+  modes; `mouse-shift-capture` (false/true/always/never) decides whether Shift+click still
+  goes to the program; `middle-click-action` pastes on Windows for both paste values;
+  `mouse-hide-while-typing` hides the pointer through `ShowCursor` until it moves again.
+- `scroll-to-bottom` splits into keystroke/output halves (`no-keystroke` / `no-output`).
+- `link-url` and `link-osc8` open links on Ctrl+click: OSC 8 hyperlinks resolve first through
+  `ghostty_grid_ref_hyperlink_uri`, then a plain URL scan of the cell's text.
+  `link-previews` (`true` / `osc8` / `false`) shows a URL badge next to the pointer.
+- `window-padding-balance` splits the pixels left after the last whole cell between both
+  sides (off by default, like Ghostty). Column math uses the font's exact advance rather
+  than the rounded-up cell width, so the leftover on the right is under one cell;
+  `window-title-font-family` applies to the tab titles. `window-width`/`window-height`
+  grow the window by whole cells from the current grid, and `window-position-x`/`-y` place
+  the initial window in screen pixels.
+- `click-repeat-interval` drives double- and triple-click selection (0 means Ghostty's 500 ms
+  non-macOS default); `clipboard-paste-protection` asks before pasting multi-line or control
+  text, and `clipboard-paste-bracketed-safe` treats bracketed pastes as safe.
+- `bell-features` (system / audio / attention / title / border) is wired to libghostty's
+  `OPT_BELL`; `bell-audio-path` and `bell-audio-volume` drive a `MediaPlayer`.
+- `config-file` includes load after the including file, relative to the file that names them;
+  `?path` is optional and cycles are ignored with a warning.
+- Search (`Ctrl+Shift+F` or the palette's Find row) is a per-pane find bar backed
+  by libghostty's search API: it covers scrollback, scans incrementally on a 25 ms timer, shows
+  all candidate matches in `search-background` and the selected one in
+  `search-selected-background`, and navigates with Enter / Shift+Enter. Esc or clicking the
+  terminal closes it.
+- The pane header mirrors the shell's directory: cmd.exe is polled through its process
+  environment block, and a bare PowerShell shell is started with a prompt wrapper
+  (`-NoExit -EncodedCommand`) that reports the location over OSC 7 — the only cwd sequence
+  libghostty-vt feeds into its pwd data, since it treats ConEmu's OSC 9;9 as a notification and
+  PowerShell's `Set-Location` does not touch the process working directory. `ExecutableToken`
+  keeps the full unquoted path (the auto-detected `pwsh.exe` lives under `C:\Program Files`),
+  which the hook's "bare shell only" test needs.
+- `shell-integration` (default `detect`) gates that wrapper; `none` leaves the shell alone and
+  the Unix shell names are recognized with a Notice. The session only injects into a bare
+  PowerShell command. The wrapper also emits OSC 133 A/B/C/D: `Term/ShellIntegration.cs`'s
+  mark parser turns C/D into `TerminalSession.CommandRunning` and an `OnCommandFinished`
+  callback. `shell-integration-features` drives the `cursor` (bar cursor at the prompt, with
+  `cursor:steady`) and `title` (cwd as the title) parts; `sudo`, `ssh-*` and `path` are parsed
+  but have no Windows behavior. Command finish feeds `notify-on-command-finish` (bell via
+  `bell-features`, notify via the Windows app notification, with a taskbar-flash fallback) and
+  the running state feeds `confirm-close-surface` at window close.
+- 1.4 additions such as `link` (upstream is itself a TODO),
   `scrollback-compression`, `clipboard-write-limit-bytes`, `vt-window-resize-allowed`,
   `vt-xt-checksum-*` and the new `gtk-*` keys are parsed without warnings, but this build has
   no behavior behind them yet.
@@ -211,8 +303,12 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   `Config.SaveValue`.
 - `Ctrl+Shift+,` re-reads the file and applies it live: theme, window theme, font, split
   dimming, the scroll settings and the tab rail (`tab-position` = `top` / `left` / `right`) all
-  take effect without a restart. `command` and `working-directory` only affect new panes and
-  tabs.
+  take effect without a restart. Split panes hold their own config copy (their session command
+  and working directory are per pane), so the reload pushes the new values into every pane
+  through `TerminalPane.SyncConfig` before anything re-reads them. `command` and
+  `working-directory` only affect new panes and tabs. Each window also tracks its own
+  `_appliedLanguage`, because `Strings.Current` is process-wide and the window that reloads
+  switches it before the others run, which would otherwise look like "no change".
 - `scrollback-limit-bytes` (formerly `scrollback-limit`) is the terminal's scrollback budget in bytes: a bare integer (ghostty
   parses base 0, so `0x…` works), `unlimited`, or `0` to disable scrollback; the default is
   ghostty 1.4's 50 MB. `scrollback-limit-lines` is the row cap with the same grammar, default

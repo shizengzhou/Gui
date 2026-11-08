@@ -13,6 +13,7 @@ internal static unsafe class GhosttyNative
 
     internal const int SUCCESS = 0;
     internal const int OUT_OF_SPACE = -3;
+    internal const int NO_VALUE = -4;
 
     // ---- GhosttyTerminalOption ----
     internal const int OPT_USERDATA = 0;
@@ -25,9 +26,24 @@ internal static unsafe class GhosttyNative
     internal const int OPT_COLOR_PALETTE = 14;
     internal const int OPT_SELECTION = 21;
     internal const int OPT_PWD_CHANGED = 25;
+    internal const int OPT_CLIPBOARD_WRITE = 26;
     internal const int OPT_SCROLLBACK_MAX_BYTES = 27;
     internal const int OPT_SCROLLBACK_MAX_LINES = 28;
+    internal const int OPT_CLIPBOARD_READ = 38;
+    internal const int OPT_CLIPBOARD_WRITE_MAX_BYTES = 39;
     internal const int OPT_RESIZE_WINDOW = 47;
+
+    // ---- GhosttyClipboardLocation / results ----
+    internal const int CLIPBOARD_LOCATION_STANDARD = 0;
+    internal const int CLIPBOARD_WRITE_SUCCESS = 0;
+    internal const int CLIPBOARD_WRITE_DENIED = 1;
+    internal const int CLIPBOARD_WRITE_UNSUPPORTED = 2;
+    internal const int CLIPBOARD_WRITE_INVALID_DATA = 4;
+    internal const int CLIPBOARD_WRITE_IO_ERROR = 5;
+    internal const int CLIPBOARD_READ_SUCCESS = 0;
+    internal const int CLIPBOARD_READ_DENIED = 1;
+    internal const int CLIPBOARD_READ_UNSUPPORTED = 2;
+    internal const int CLIPBOARD_READ_IO_ERROR = 4;
 
     // ---- GhosttyTerminalData ----
     internal const int TDATA_COLS = 1;
@@ -88,6 +104,41 @@ internal static unsafe class GhosttyNative
 
     // ---- GhosttyPointTag ----
     internal const int POINT_VIEWPORT = 1;
+    internal const int POINT_SCREEN = 2;
+
+    // ---- GhosttyMouseAction ----
+    internal const int MOUSE_ACTION_PRESS = 0;
+    internal const int MOUSE_ACTION_RELEASE = 1;
+    internal const int MOUSE_ACTION_MOTION = 2;
+
+    // ---- GhosttyMouseButton ----
+    internal const int MOUSE_BUTTON_LEFT = 1;
+    internal const int MOUSE_BUTTON_RIGHT = 2;
+    internal const int MOUSE_BUTTON_MIDDLE = 3;
+    internal const int MOUSE_BUTTON_FOUR = 4;
+    internal const int MOUSE_BUTTON_FIVE = 5;
+
+    // ---- search ----
+    internal const int SEARCH_STATUS_RUNNING = 0;
+    internal const int SEARCH_STATUS_FEED_REQUIRED = 1;
+    internal const int SEARCH_STATUS_COMPLETE = 2;
+
+    internal const int SEARCH_DATA_STATUS = 0;
+    internal const int SEARCH_DATA_NEEDLE = 1;
+    internal const int SEARCH_DATA_TOTAL_MATCHES = 2;
+    internal const int SEARCH_DATA_SELECTED_INDEX = 3;
+    internal const int SEARCH_DATA_SELECTED_MATCH = 4;
+    internal const int SEARCH_DATA_MATCHES = 5;
+    internal const int SEARCH_DATA_VIEWPORT_MATCHES = 6;
+    internal const int SEARCH_DATA_SELECT_SCROLL = 7;
+
+    internal const int SEARCH_OPT_NEEDLE = 0;
+    internal const int SEARCH_OPT_SELECT_NEXT = 1;
+    internal const int SEARCH_OPT_SELECT_PREV = 2;
+    internal const int SEARCH_OPT_SELECT_SCROLL = 3;
+
+    internal const int SEARCH_SCROLL_IF_NEEDED = 0;
+    internal const int SEARCH_SCROLL_NONE = 1;
 
     // ---- GhosttyKeyAction ----
     internal const int KEY_ACTION_PRESS = 1;
@@ -122,6 +173,64 @@ internal static unsafe class GhosttyNative
         public IntPtr Ptr;
         public nuint Cap;
         public nuint Len;
+    }
+
+    /// <summary>One MIME representation in a clipboard write/read reply.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyClipboardContent
+    {
+        public GhosttyString Mime;
+        public GhosttyString Data;
+    }
+
+    /// <summary>Sized request: the embedder answers through <see cref="GhosttyClipboardWrite.Reply"/>.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyClipboardWrite
+    {
+        public nuint Size;
+        public int Location;
+        public IntPtr Contents;
+        public nuint ContentsLen;
+        public GhosttyString Name;
+        public byte Granted;
+        public byte CanRemember;
+        public IntPtr Ctx;
+        public IntPtr Reply;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyClipboardRead
+    {
+        public nuint Size;
+        public int Location;
+        public IntPtr Mimes;
+        public nuint MimesLen;
+        public byte List;
+        public GhosttyString Name;
+        public byte Granted;
+        public byte CanRemember;
+        public IntPtr Ctx;
+        public IntPtr Reply;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyClipboardWriteReply
+    {
+        public nuint Size;
+        public int Result;
+        public byte Remember;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyClipboardReadReply
+    {
+        public nuint Size;
+        public int Result;
+        public IntPtr Contents;
+        public nuint ContentsLen;
+        public IntPtr Available;
+        public nuint AvailableLen;
+        public byte Remember;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -191,6 +300,30 @@ internal static unsafe class GhosttyNative
         [FieldOffset(0)] public int Tag;
         [FieldOffset(8)] public ushort X;
         [FieldOffset(12)] public uint Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyMousePosition
+    {
+        public float X;
+        public float Y;
+    }
+
+    /// <summary>Buffer of GhosttySelection entries, used by search results.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttySelectionBuffer
+    {
+        public IntPtr Ptr;
+        public nuint Cap;
+        public nuint Len;
+    }
+
+    /// <summary>Coordinate in a GhosttyPointTag coordinate system.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyPointCoordinate
+    {
+        public ushort X;
+        public uint Y;
     }
 
     /// <summary>Sized struct: Size must be set to sizeof(GhosttySelection).</summary>
@@ -285,6 +418,14 @@ internal static unsafe class GhosttyNative
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void NotifyFn(IntPtr terminal, IntPtr userdata);
 
+    /// <summary>OSC 52 / kitty clipboard callback: <paramref name="request"/> is a sized struct.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void ClipboardFn(IntPtr terminal, IntPtr userdata, IntPtr request);
+
+    /// <summary>Answers a clipboard request; must be called before the callback returns.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void ClipboardReplyFn(IntPtr request, IntPtr reply);
+
     // ---- terminal ----
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_terminal_new(IntPtr allocator, out IntPtr terminal, ushort cols, ushort rows);
@@ -311,7 +452,73 @@ internal static unsafe class GhosttyNative
     internal static extern int ghostty_terminal_grid_ref(IntPtr terminal, GhosttyPoint point, GhosttyGridRef* output);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_terminal_point_from_grid_ref(
+        IntPtr terminal, in GhosttyGridRef gridRef, int tag, GhosttyPointCoordinate* output);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_grid_ref_hyperlink_uri(
+        in GhosttyGridRef gridRef, byte* buffer, nuint bufferSize, out nuint written);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_cell_get(ulong cell, int data, void* output);
+
+    // ---- mouse ----
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_encoder_new(IntPtr allocator, out IntPtr encoder);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern void ghostty_mouse_encoder_free(IntPtr encoder);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_encoder_setopt_from_terminal(IntPtr encoder, IntPtr terminal);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_encoder_encode(
+        IntPtr encoder, IntPtr mouseEvent, byte* buffer, nuint bufferSize, out nuint written);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_event_new(IntPtr allocator, out IntPtr mouseEvent);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern void ghostty_mouse_event_free(IntPtr mouseEvent);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_event_set_action(IntPtr mouseEvent, int action);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_event_set_button(IntPtr mouseEvent, int button);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_event_clear_button(IntPtr mouseEvent);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_event_set_mods(IntPtr mouseEvent, ushort mods);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_event_set_position(
+        IntPtr mouseEvent, GhosttyMousePosition position);
+
+    // ---- search ----
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_new(IntPtr allocator, out IntPtr search, IntPtr terminal);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern void ghostty_search_free(IntPtr search);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_set(IntPtr search, int option, void* value);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_get(IntPtr search, int data, void* value);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_feed(IntPtr search);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_tick(IntPtr search, int* outStatus);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_run(IntPtr search);
 
     // ---- render state ----
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]

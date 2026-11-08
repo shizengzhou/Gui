@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using Microsoft.UI.Xaml;
 
 namespace Gui;
@@ -10,7 +11,11 @@ namespace Gui;
 /// </summary>
 public partial class App : Application
 {
-    private Window? _window;
+    /// <summary>
+    /// Every open window is referenced here: WinUI drops a Window that nothing holds, and the
+    /// Closed handler removes it again so closing the last one lets the process exit.
+    /// </summary>
+    private readonly List<Window> _windows = new();
 
     public App()
     {
@@ -60,14 +65,58 @@ public partial class App : Application
     {
         try
         {
-            _window = new MainWindow();
-            _window.Activate();
+            ShowWindow(null);
             Diag.Log("App.OnLaunched", "activated");
         }
         catch (Exception error)
         {
             Diag.LogException("App.OnLaunched", error);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Opens another window, optionally started in <paramref name="workingDirectory"/>
+    /// (Ctrl+Shift+N, the command palette and "window-inherit-working-directory").
+    /// </summary>
+    internal static void OpenWindow(string? workingDirectory = null)
+    {
+        if (Current is App app) app.ShowWindow(workingDirectory);
+    }
+
+    private void ShowWindow(string? workingDirectory)
+    {
+        var window = new MainWindow(workingDirectory);
+        _windows.Add(window);
+        window.Closed += (_, _) => _windows.Remove(window);
+        window.Activate();
+    }
+
+    /// <summary>
+    /// The theme lives in process-wide statics, so the window that commits a change has to
+    /// repaint the others: they copy the theme fields and refresh their own brushes.
+    /// </summary>
+    internal static void ApplyThemeToOtherWindows(Term.Workspace source, Term.Config config)
+    {
+        if (Current is not App app) return;
+        foreach (Window window in app._windows)
+        {
+            if (window is MainWindow main && !ReferenceEquals(main.Workspace, source))
+                main.Workspace?.ApplyThemeFrom(config);
+        }
+    }
+
+    /// <summary>
+    /// Re-reads the config in the other windows after one of them persisted a setting that
+    /// belongs to the whole process (tab rail placement, compact density, theme, ...).
+    /// </summary>
+    internal static void ReloadOtherWindows(Term.Workspace source)
+    {
+        if (Current is not App app) return;
+        foreach (Window window in app._windows)
+        {
+            if (window is MainWindow main && !ReferenceEquals(main.Workspace, source))
+                main.Workspace?.ReloadFromPeer();
         }
     }
 }

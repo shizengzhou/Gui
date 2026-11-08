@@ -1,5 +1,6 @@
-﻿using System;
+﻿﻿using System;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Input;
@@ -11,6 +12,8 @@ using Windows.Foundation;
 using Windows.Graphics;
 using Windows.System;
 using Windows.UI.Core;
+using Microsoft.Windows.AppNotifications;
+using Microsoft.Windows.AppNotifications.Builder;
 
 namespace Gui.Term;
 
@@ -114,8 +117,185 @@ public sealed partial class Workspace
         if (_window?.AppWindow.Presenter is OverlappedPresenter presenter) presenter.Minimize();
     }
 
-    // ---------------- IME ----------------
+    /// <summary>
+    /// "bell-features = attention": asks the taskbar to flash while the window is in the
+    /// background. Windows stops the flash as soon as the window is activated.
+    /// </summary>
+    private void FlashWindow()
+    {
+        if (_hwnd == IntPtr.Zero || GetForegroundWindow() == _hwnd) return;
+        var info = new FLASHWINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<FLASHWINFO>(),
+            hwnd = _hwnd,
+            dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG,
+            uCount = 1,
+        };
+        FlashWindowEx(ref info);
+    }
 
+    private const uint FLASHW_TRAY = 0x00000002;
+    private const uint FLASHW_TIMERNOFG = 0x0000000C;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FLASHWINFO info);
+
+    // ---------------- command notifications and close confirmation ----------------
+
+    /// <summary>
+    /// "notify-on-command-finish": the shell integration reports every finished command;
+    /// notify when it ran for at least "notify-on-command-finish-after" and the pane is
+    /// unfocused (or the mode is always).
+    /// </summary>
+    private void OnPaneCommandFinished(TerminalPane pane, int exitCode, TimeSpan duration)
+    {
+        string mode = _config.NotifyOnCommandFinish;
+        if (mode == "never") return;
+        if (duration < _config.NotifyOnCommandFinishAfter) return;
+        if (mode == "unfocused" && IsActivePane(pane)) return;
+
+        if (_config.NotifyOnCommandFinishBell) pane.RingBell();
+        if (_config.NotifyOnCommandFinishToast) ShowCommandNotification(pane, exitCode);
+    }
+
+    /// <summary>True when this pane is focused and its window is in the foreground.</summary>
+    private bool IsActivePane(TerminalPane pane)
+    {
+        if (_hwnd == IntPtr.Zero || GetForegroundWindow() != _hwnd) return false;
+        if (_active < 0 || _active >= _tabs.Count) return false;
+        return ReferenceEquals(_tabs[_active].Focused, pane);
+    }
+
+    private static bool _notificationsRegistered;
+
+    private void ShowCommandNotification(TerminalPane pane, int exitCode)
+    {
+        try
+        {
+            if (!_notificationsRegistered)
+            {
+                AppNotificationManager.Default.Register();
+                _notificationsRegistered = true;
+            }
+
+            var notification = new AppNotificationBuilder()
+                .AddText(Strings.CommandFinishedTitle)
+                .AddText(Strings.CommandFinishedNotification(pane.Title, exitCode))
+                .BuildNotification();
+            AppNotificationManager.Default.Show(notification);
+        }
+        catch (Exception error)
+        {
+            // Unpackaged hosts can refuse toasts; the taskbar flash is the fallback.
+            Diag.LogException("Workspace.notify", error);
+            FlashWindow();
+        }
+    }
+
+    /// <summary>
+    /// "confirm-close-surface": true asks only while a command is still running, false
+    /// never asks, and always asks on every window close.
+    /// </summary>
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_allowClose) return;
+
+        string policy = _config.ConfirmCloseSurface;
+        if (policy == "false") return;
+        if (policy == "true" && !AnyCommandRunning()) return;
+
+        // The confirmation is asynchronous, so hold the close and ask.
+        args.Cancel = true;
+        if (_closePromptOpen) return;
+        _closePromptOpen = true;
+        _ = ConfirmWindowCloseAsync();
+    }
+
+    private bool AnyCommandRunning()
+    {
+        foreach (Tab tab in _tabs)
+        {
+            bool running = false;
+            ForEachPane(tab, pane =>
+            {
+                if (pane.CommandRunning) running = true;
+            });
+            if (running) return true;
+        }
+        return false;
+    }
+
+    private async Task ConfirmWindowCloseAsync()
+    {
+        try
+        {
+            XamlRoot? root = _root.XamlRoot;
+            if (root is null)
+            {
+                _allowClose = true;
+                _window?.Close();
+                return;
+            }
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = root,
+                Title = Strings.CloseWarningTitle,
+                Content = new TextBlock
+                {
+                    Text = Strings.CloseWarningBody,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 420,
+                },
+                PrimaryButtonText = Strings.CloseWindow,
+                CloseButtonText = Strings.Cancel,
+                DefaultButton = ContentDialogButton.Close,
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+            _allowClose = true;
+            _window?.Close();
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.confirmClose", error);
+            _allowClose = true;
+            _window?.Close();
+        }
+        finally
+        {
+            _closePromptOpen = false;
+        }
+    }
+
+    // ---------------- windows ----------------
+
+    /// <summary>
+    /// Opens another window (Ctrl+Shift+N / the palette). It starts in the focused shell's
+    /// directory when "window-inherit-working-directory" allows it, like Ghostty.
+    /// </summary>
+    private void OpenNewWindow()
+    {
+        string? directory = _config.WindowInheritWorkingDirectory && _tabs.Count > 0
+            ? _tabs[_active].Focused?.WorkingDirectory()
+            : null;
+        App.OpenWindow(directory);
+    }
+
+    // ---------------- IME ----------------
     private void UpdateImeSink()
     {
         if (_tabs.Count == 0) return;
@@ -174,9 +354,21 @@ public sealed partial class Workspace
 
     private bool OnKey(KeyRoutedEventArgs args)
     {
+        // Esc aborts a split drag before any other shortcut or the shell sees the key.
+        if (_dragPane is not null && args.Key == VirtualKey.Escape)
+        {
+            EndPaneDrag(_dragPane, false);
+            return true;
+        }
+
         // The palette owns its own keys (filter box, arrow navigation, Enter/Esc).
         if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible)
             return OnPaletteKey(args);
+
+        // The find bar owns typing, Enter and Esc only while focus is in it; after Esc with
+        // a query the bar stays visible and the terminal gets the keyboard back.
+        if (_tabs.Count > 0 && _tabs[_active].Focused is { SearchHasFocus: true })
+            return false;
 
         _keySeen = true;
         _swallowText = false;
@@ -260,8 +452,10 @@ public sealed partial class Workspace
             switch (args.Key)
             {
                 case VirtualKey.T:
-                    NewTab();
-                    Activate(_tabs.Count - 1);
+                    Activate(IndexOf(NewTab()));
+                    return true;
+                case VirtualKey.N:
+                    OpenNewWindow();
                     return true;
                 case VirtualKey.W:
                     CloseFocusedPane();
@@ -271,6 +465,9 @@ public sealed partial class Workspace
                     return true;
                 case VirtualKey.P:
                     ShowCommandPalette();
+                    return true;
+                case VirtualKey.F:
+                    if (_tabs.Count > 0) _tabs[_active].Focused?.ShowSearch();
                     return true;
                 case VirtualKey.C:
                     if (_tabs.Count > 0) _tabs[_active].Focused?.CopySelection();

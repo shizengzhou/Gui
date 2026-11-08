@@ -74,7 +74,7 @@ public class ConfigSurfaceTests : IDisposable
         // background/foreground/cursor-color/palette resolve through the native palette
         // generator, which is covered by the tests that ship the app; here the goal is the
         // parser accepting every documented key.
-        var skip = new HashSet<string> { "background", "foreground", "cursor-color", "palette" };
+        var skip = new HashSet<string> { "background", "foreground", "cursor-color", "palette", "config-file" };
 
         var text = new StringBuilder();
         foreach (ConfigOption option in ConfigSchema.Ghostty)
@@ -125,11 +125,14 @@ public class ConfigSurfaceTests : IDisposable
             "font-feature = -liga\n"));
 
         Assert.Equal(2, config.All("font-family").Count);
-        Assert.Equal("Beta", config.FontFamily);
+        // Ghostty treats the first entry as the face and later ones as fallbacks.
+        Assert.Equal(new[] { "Alpha", "Beta" }, config.FontFamilies);
+        Assert.Equal("Alpha", config.FontFamily);
         Assert.Equal(new[] { "-calt", "-liga" }, config.FontFeatures);
 
         Config cleared = Config.Load(Write("font-family = Alpha\nfont-family = \"\"\n"));
         Assert.Empty(cleared.All("font-family"));
+        Assert.Empty(cleared.FontFamilies);
         Assert.Equal(string.Empty, cleared.FontFamily);
     }
 
@@ -257,6 +260,85 @@ public class ConfigSurfaceTests : IDisposable
     }
 
     [Fact]
+    public void ShellIntegrationOptionsResolve()
+    {
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.Equal("detect", defaults.ShellIntegration);
+        Assert.Equal(ShellIntegrationFeatures.Default, defaults.ShellFeatures);
+
+        Config config = Config.Load(Write(
+            "shell-integration = powershell\n" +
+            "shell-integration-features = no-cursor,title,cursor:steady,no-title\n"));
+        Assert.Equal("powershell", config.ShellIntegration);
+        Assert.True(config.ShellFeatures.Cursor);
+        Assert.True(config.ShellFeatures.CursorSteady);
+        Assert.False(config.ShellFeatures.Title);
+
+        Assert.Equal("none", Config.Load(Write("shell-integration = none\n")).ShellIntegration);
+
+        Config all = Config.Load(Write("shell-integration-features = true\n"));
+        Assert.True(all.ShellFeatures.Cursor);
+        Assert.True(all.ShellFeatures.Title);
+        Assert.True(all.ShellFeatures.Sudo);
+        Assert.True(all.ShellFeatures.Path);
+
+        Config off = Config.Load(Write("shell-integration-features = false\n"));
+        Assert.False(off.ShellFeatures.Cursor);
+        Assert.False(off.ShellFeatures.Title);
+
+        // A Unix shell name is recognized but cannot be injected on Windows.
+        Config bash = Config.Load(Write("shell-integration = bash\n"));
+        Assert.Equal("bash", bash.ShellIntegration);
+        Assert.Contains(bash.Diagnostics,
+            d => d.Key == "shell-integration" && d.Severity == ConfigSeverity.Notice);
+    }
+
+    [Fact]
+    public void CommandFinishNotificationsResolve()
+    {
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.Equal("never", defaults.NotifyOnCommandFinish);
+        Assert.True(defaults.NotifyOnCommandFinishBell);
+        Assert.False(defaults.NotifyOnCommandFinishToast);
+        Assert.Equal(TimeSpan.FromSeconds(5), defaults.NotifyOnCommandFinishAfter);
+
+        Config config = Config.Load(Write(
+            "notify-on-command-finish = unfocused\n" +
+            "notify-on-command-finish-action = no-bell,notify\n" +
+            "notify-on-command-finish-after = 1h30m\n"));
+        Assert.Equal("unfocused", config.NotifyOnCommandFinish);
+        Assert.False(config.NotifyOnCommandFinishBell);
+        Assert.True(config.NotifyOnCommandFinishToast);
+        Assert.Equal(TimeSpan.FromMinutes(90), config.NotifyOnCommandFinishAfter);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(500),
+            Config.Load(Write("notify-on-command-finish-after = 500ms\n")).NotifyOnCommandFinishAfter);
+        Assert.Equal(TimeSpan.FromSeconds(5),
+            Config.Load(Write("notify-on-command-finish-after = not-a-duration\n")).NotifyOnCommandFinishAfter);
+    }
+
+    [Fact]
+    public void CopyFromCarriesShellIntegrationAndNotifications()
+    {
+        Config source = Config.Load(Write(
+            "shell-integration = none\n" +
+            "shell-integration-features = no-title\n" +
+            "notify-on-command-finish = always\n" +
+            "notify-on-command-finish-action = no-bell,notify\n" +
+            "notify-on-command-finish-after = 2s\n"));
+
+        var target = new Config();
+        target.CopyFrom(source);
+
+        Assert.Equal("none", target.ShellIntegration);
+        Assert.False(target.ShellFeatures.Title);
+        Assert.Equal("always", target.NotifyOnCommandFinish);
+        Assert.False(target.NotifyOnCommandFinishBell);
+        Assert.True(target.NotifyOnCommandFinishToast);
+        Assert.Equal(TimeSpan.FromSeconds(2), target.NotifyOnCommandFinishAfter);
+    }
+
+    [Fact]
     public void ClipboardAndMouseOptionsResolve()
     {
         Config config = Config.Load(Write(
@@ -283,6 +365,194 @@ public class ConfigSurfaceTests : IDisposable
 
         Config fallback = Config.Load(Write("right-click-action = nothing\n"));
         Assert.Equal("context-menu", fallback.RightClickAction);
+    }
+
+    [Fact]
+    public void MouseAndLinkOptionsResolve()
+    {
+        Config config = Config.Load(Write(
+            "mouse-reporting = false\n" +
+            "mouse-shift-capture = always\n" +
+            "mouse-hide-while-typing = true\n" +
+            "scroll-to-bottom = no-keystroke,output\n" +
+            "link-url = false\n" +
+            "link-osc8 = false\n" +
+            "link-previews = osc8\n"));
+
+        Assert.False(config.MouseReporting);
+        Assert.Equal("always", config.MouseShiftCapture);
+        Assert.True(config.MouseHideWhileTyping);
+        Assert.False(config.ScrollToBottomKeystroke);
+        Assert.True(config.ScrollToBottomOutput);
+        Assert.False(config.LinkUrl);
+        Assert.False(config.LinkOsc8);
+        Assert.Equal("osc8", config.LinkPreviews);
+
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.True(defaults.MouseReporting);
+        Assert.Equal("false", defaults.MouseShiftCapture);
+        Assert.False(defaults.MouseHideWhileTyping);
+        Assert.True(defaults.ScrollToBottomKeystroke);
+        Assert.False(defaults.ScrollToBottomOutput);
+        Assert.True(defaults.LinkUrl);
+        Assert.True(defaults.LinkOsc8);
+    }
+
+    [Fact]
+    public void WindowAndTabOptionsResolve()
+    {
+        Config config = Config.Load(Write(
+            "maximize = true\n" +
+            "fullscreen = non-native\n" +
+            "title = Pinned\n" +
+            "window-show-tab-bar = never\n" +
+            "window-new-tab-position = end\n" +
+            "tab-inherit-working-directory = false\n" +
+            "split-inherit-working-directory = false\n" +
+            "window-inherit-font-size = false\n" +
+            "middle-click-action = ignore\n" +
+            "split-divider-color = #112233\n" +
+            "window-padding-balance = true\n" +
+            "window-title-font-family = Consolas\n" +
+            "click-repeat-interval = 350\n" +
+            "window-width = 120\n" +
+            "window-height = 40\n" +
+            "window-position-x = 40\n" +
+            "window-position-y = 50\n"));
+
+        Assert.True(config.Maximize);
+        Assert.True(config.Fullscreen);
+        Assert.Equal("Pinned", config.WindowTitle);
+        Assert.False(config.ShowTabBar);
+        Assert.Equal("end", config.NewTabPosition);
+        Assert.False(config.TabInheritWorkingDirectory);
+        Assert.False(config.SplitInheritWorkingDirectory);
+        Assert.False(config.InheritFontSize);
+        Assert.Equal("ignore", config.MiddleClickAction);
+        Assert.True(config.HasSplitDividerColor);
+        Assert.Equal(new Rgb(0x11, 0x22, 0x33), config.SplitDividerColor);
+        Assert.True(config.PaddingBalance);
+        Assert.Equal("Consolas", config.TitleFontFamily);
+        Assert.Equal(350, config.ClickRepeatInterval);
+        Assert.Equal(120, config.WindowWidth);
+        Assert.Equal(40, config.WindowHeight);
+        Assert.True(config.HasWindowPosition);
+        Assert.Equal(40, config.WindowPositionX);
+        Assert.Equal(50, config.WindowPositionY);
+
+        // Both members of each pair are required, like Ghostty.
+        Config partial = Config.Load(Write(
+            "window-width = 120\n" +
+            "window-position-x = 10\n"));
+        Assert.Equal(0, partial.WindowWidth);
+        Assert.False(partial.HasWindowPosition);
+
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.False(defaults.Maximize);
+        Assert.False(defaults.Fullscreen);
+        Assert.True(defaults.ShowTabBar);
+        Assert.Equal("current", defaults.NewTabPosition);
+        Assert.True(defaults.TabInheritWorkingDirectory);
+        Assert.True(defaults.SplitInheritWorkingDirectory);
+        Assert.True(defaults.InheritFontSize);
+        Assert.Equal("primary-paste", defaults.MiddleClickAction);
+        Assert.False(defaults.PaddingBalance);
+        Assert.Equal(string.Empty, defaults.TitleFontFamily);
+        Assert.Equal(0, defaults.ClickRepeatInterval);
+        Assert.Equal(0, defaults.WindowWidth);
+        Assert.Equal(0, defaults.WindowHeight);
+        Assert.False(defaults.HasWindowPosition);
+    }
+
+    [Fact]
+    public void ClipboardAndBellOptionsResolve()
+    {
+        Config config = Config.Load(Write(
+            "clipboard-paste-protection = false\n" +
+            "clipboard-paste-bracketed-safe = false\n" +
+            "confirm-close-surface = always\n" +
+            "bell-features = audio,system,no-title,no-attention,border\n" +
+            "bell-audio-path = sounds/bell.wav\n" +
+            "bell-audio-volume = 0.8\n"));
+
+        Assert.False(config.PasteProtection);
+        Assert.False(config.PasteBracketedSafe);
+        Assert.Equal("always", config.ConfirmCloseSurface);
+        Assert.True(config.BellAudio);
+        Assert.True(config.BellSystem);
+        Assert.False(config.BellTitle);
+        Assert.True(config.BellBorder);
+        Assert.False(config.BellAttention);
+        Assert.True(Path.IsPathRooted(config.BellAudioPath));
+        Assert.EndsWith(Path.Combine("sounds", "bell.wav"), config.BellAudioPath);
+        Assert.Equal(0.8f, config.BellAudioVolume, 3);
+
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.True(defaults.PasteProtection);
+        Assert.True(defaults.PasteBracketedSafe);
+        Assert.Equal("true", defaults.ConfirmCloseSurface);
+        Assert.False(defaults.BellAudio);
+        Assert.False(defaults.BellSystem);
+        Assert.True(defaults.BellAttention);
+        Assert.True(defaults.BellTitle);
+        Assert.False(defaults.BellBorder);
+        Assert.Equal(string.Empty, defaults.BellAudioPath);
+        Assert.Equal(0.5f, defaults.BellAudioVolume, 3);
+    }
+
+    [Fact]
+    public void SearchColorsResolve()
+    {
+        Config config = Config.Load(Write(
+            "search-foreground = #112233\n" +
+            "search-background = cell-background\n" +
+            "search-selected-foreground = cell-foreground\n" +
+            "search-selected-background = #445566\n"));
+
+        Assert.Equal(SearchColorKind.Explicit, config.SearchForeground.Kind);
+        Assert.Equal(new Rgb(0x11, 0x22, 0x33), config.SearchForeground.Value);
+        Assert.Equal(SearchColorKind.CellBackground, config.SearchBackground.Kind);
+        Assert.Equal(SearchColorKind.CellForeground, config.SearchSelectedForeground.Kind);
+        Assert.Equal(SearchColorKind.Explicit, config.SearchSelectedBackground.Kind);
+        Assert.Equal(new Rgb(0x44, 0x55, 0x66), config.SearchSelectedBackground.Value);
+
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.Equal(SearchColorKind.Default, defaults.SearchForeground.Kind);
+        Assert.Equal(SearchColorKind.Default, defaults.SearchBackground.Kind);
+        Assert.Equal(SearchColorKind.Default, defaults.SearchSelectedForeground.Kind);
+        Assert.Equal(SearchColorKind.Default, defaults.SearchSelectedBackground.Kind);
+    }
+
+    [Fact]
+    public void ConfigFilesLoadAfterTheIncludingFile()
+    {
+        string main = Write("font-size = 10\nconfig-file = extra\nconfig-file = ?missing\n");
+        File.WriteAllText(Path.Combine(_dir, "extra"),
+            "font-size = 14\nbell-features = no-title\n", new UTF8Encoding(false));
+
+        Config config = Config.Load(main);
+
+        // The included file wins because Ghostty loads includes after the whole parent.
+        Assert.Equal(14f, config.FontSize);
+        Assert.False(config.BellTitle);
+
+        // A missing optional include is silent; the resolved path is recorded.
+        Assert.DoesNotContain(config.Diagnostics, d => d.Key == "config-file");
+        Assert.Single(config.ConfigFiles);
+        Assert.Equal(Path.Combine(_dir, "extra"), config.ConfigFiles[0]);
+    }
+
+    [Fact]
+    public void ConfigFileCyclesAreIgnored()
+    {
+        string main = Write("config-file = extra\n");
+        File.WriteAllText(Path.Combine(_dir, "extra"), "config-file = config\n", new UTF8Encoding(false));
+
+        Config config = Config.Load(main);
+
+        Assert.Contains(config.Diagnostics,
+            d => d.Key == "config-file" && d.Severity == ConfigSeverity.Warning);
+        Assert.Equal(12f, config.FontSize);
     }
 
     [Fact]

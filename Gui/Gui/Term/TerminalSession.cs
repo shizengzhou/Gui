@@ -20,6 +20,12 @@ public struct CellMetrics
 }
 
 /// <summary>
+/// One horizontal search highlight in viewport coordinates: zero-based row, inclusive
+/// start/end columns, and whether it is the currently selected match.
+/// </summary>
+public readonly record struct SearchSpan(int Row, int StartX, int EndX, bool Selected);
+
+/// <summary>
 /// Thin facade over libghostty-vt plus a ConPTY-backed shell process. All native
 /// terminal calls happen on the thread that owns this object (the UI thread); PTY bytes
 /// are queued by a reader thread and drained there.
@@ -33,6 +39,9 @@ public sealed unsafe class TerminalSession : IDisposable
     private IntPtr _terminal;
     private IntPtr _renderState;
     private IntPtr _keyEncoder;
+    private IntPtr _mouseEncoder;
+    private IntPtr _mouseEvent;
+    private IntPtr _search;
     private IntPtr _rowIterator;
     private IntPtr _cells;
     private ConPty? _pty;
@@ -44,17 +53,36 @@ public sealed unsafe class TerminalSession : IDisposable
     private readonly GhosttyNative.WritePtyFn _writePty;
     private readonly GhosttyNative.NotifyFn _titleChanged;
     private readonly GhosttyNative.NotifyFn _pwdChanged;
+    private readonly GhosttyNative.NotifyFn _bell;
+    private readonly GhosttyNative.ClipboardFn _clipboardWrite;
+    private readonly GhosttyNative.ClipboardFn _clipboardRead;
+
+    // "clipboard-write" / "clipboard-read": allow, deny, or ask. "ask" has no prompt in this
+    // build (the reply must be synchronous), so it behaves like deny.
+    private string _clipboardWritePolicy = "allow";
+    private string _clipboardReadPolicy = "ask";
 
     // Last pwd reported by the shell over OSC 7 / OSC 9;9. UI-thread only.
     private string _oscPwd = string.Empty;
     private string _shellExecutable = string.Empty;
 
+    // OSC 133 marks emitted by the injected shell integration. UI-thread only.
+    private readonly ShellMarkParser _marks = new();
+
     /// <summary>Marshals work onto the UI thread. Must not block; called from the reader thread.</summary>
     public Action<Action>? Post;
 
     public Action? OnUpdate;
+    public Action? OnOutput;
     public Action<string>? OnTitle;
+    public Action? OnBell;
     public Action? OnExit;
+
+    /// <summary>OSC 133 D: a command finished, with its exit code and runtime.</summary>
+    public Action<int, TimeSpan>? OnCommandFinished;
+
+    /// <summary>True between the command's output start (C) and its finish (D).</summary>
+    public bool CommandRunning => _marks.CommandRunning;
 
     public IntPtr Terminal => _terminal;
     public IntPtr RenderState => _renderState;
@@ -66,13 +94,23 @@ public sealed unsafe class TerminalSession : IDisposable
         _writePty = OnWritePty;
         _titleChanged = OnTitleChanged;
         _pwdChanged = OnPwdChanged;
+        _bell = OnBellChanged;
+        _clipboardWrite = OnClipboardWrite;
+        _clipboardRead = OnClipboardRead;
+        _marks.CommandFinished = (exit, duration) => OnCommandFinished?.Invoke(exit, duration);
 
         if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out _terminal, 80, 24) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_terminal_new failed");
+        if (GhosttyNative.ghostty_search_new(IntPtr.Zero, out _search, _terminal) != GhosttyNative.SUCCESS)
+            _search = IntPtr.Zero;
         if (GhosttyNative.ghostty_render_state_new(IntPtr.Zero, out _renderState) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_render_state_new failed");
         if (GhosttyNative.ghostty_key_encoder_new(IntPtr.Zero, out _keyEncoder) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_key_encoder_new failed");
+        if (GhosttyNative.ghostty_mouse_encoder_new(IntPtr.Zero, out _mouseEncoder) != GhosttyNative.SUCCESS)
+            _mouseEncoder = IntPtr.Zero;
+        if (GhosttyNative.ghostty_mouse_event_new(IntPtr.Zero, out _mouseEvent) != GhosttyNative.SUCCESS)
+            _mouseEvent = IntPtr.Zero;
         if (GhosttyNative.ghostty_render_state_row_iterator_new(IntPtr.Zero, out _rowIterator) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_render_state_row_iterator_new failed");
         if (GhosttyNative.ghostty_render_state_row_cells_new(IntPtr.Zero, out _cells) != GhosttyNative.SUCCESS)
@@ -81,8 +119,27 @@ public sealed unsafe class TerminalSession : IDisposable
         SetFunctionPointer(GhosttyNative.OPT_WRITE_PTY, _writePty);
         SetFunctionPointer(GhosttyNative.OPT_TITLE_CHANGED, _titleChanged);
         SetFunctionPointer(GhosttyNative.OPT_PWD_CHANGED, _pwdChanged);
+        SetFunctionPointer(GhosttyNative.OPT_BELL, _bell);
+        SetFunctionPointer(GhosttyNative.OPT_CLIPBOARD_WRITE, _clipboardWrite);
+        SetFunctionPointer(GhosttyNative.OPT_CLIPBOARD_READ, _clipboardRead);
 
         ApplyTheme(Theme.Terminal);
+    }
+
+    /// <summary>
+    /// "clipboard-write" / "clipboard-read" policies and the per-write byte limit
+    /// ("clipboard-write-limit-bytes"). The limit is enforced natively before the callback
+    /// runs, so a program cannot make the app buffer more than it allows.
+    /// </summary>
+    public unsafe void ApplyClipboardSettings(string read, string write, ulong writeLimitBytes)
+    {
+        _clipboardReadPolicy = read;
+        _clipboardWritePolicy = write;
+        if (_terminal == IntPtr.Zero) return;
+
+        nuint limit = writeLimitBytes == ulong.MaxValue ? nuint.MaxValue : (nuint)writeLimitBytes;
+        GhosttyNative.ghostty_terminal_set(
+            _terminal, GhosttyNative.OPT_CLIPBOARD_WRITE_MAX_BYTES, &limit);
     }
 
     private void SetFunctionPointer(int option, Delegate callback)
@@ -124,19 +181,23 @@ public sealed unsafe class TerminalSession : IDisposable
 
     /// <summary>Spawns the shell inside a ConPTY of the given character grid size.</summary>
     public bool Start(string command, string workingDirectory, ushort cols, ushort rows, CellMetrics metrics,
-        IReadOnlyList<(string Name, string Value)>? environment = null, string term = "", string input = "")
+        IReadOnlyList<(string Name, string Value)>? environment, string term, string input,
+        string shellIntegration, ShellIntegrationFeatures shellFeatures)
     {
         if (_terminal == IntPtr.Zero || _pty is not null) return false;
 
         if (string.IsNullOrEmpty(command)) command = DefaultShellPath();
-        _shellExecutable = FirstToken(command);
+        string executable = ExecutableToken(command);
+        _shellExecutable = executable;
         // Only augment a bare shell command: any configured arguments are left exactly
-        // as the user wrote them.
-        if (IsPowerShell(command) && !command.Contains(" -"))
-            command = PowerShellWithPwdHook(command);
+        // as the user wrote them. An auto-detected shell is an unquoted full path that may
+        // contain spaces, so "bare" compares against the executable, not the first token.
+        if (IsPowerShell(command) && command.Trim().Length == executable.Length)
+            command = ShellIntegration.Inject(command, shellIntegration, shellFeatures);
 
         try
         {
+            Diag.Debug("pty.start", $"cols={cols} rows={rows} exec={executable}");
             _pty = ConPty.Start(command, (short)cols, (short)rows, workingDirectory, environment, term);
         }
         catch (Exception error)
@@ -191,6 +252,9 @@ public sealed unsafe class TerminalSession : IDisposable
             fixed (byte* data = bytes)
                 GhosttyNative.ghostty_terminal_vt_write(_terminal, data, (nuint)bytes.Length);
         }
+        // The terminal consumes the OSC sequences; read them from the same bytes first.
+        _marks.Feed(bytes);
+        OnOutput?.Invoke();
         OnUpdate?.Invoke();
     }
 
@@ -206,6 +270,7 @@ public sealed unsafe class TerminalSession : IDisposable
             pty.Exited -= OnPtyExited;
             pty.Dispose();
         }
+        _marks.Reset();
     }
 
     public void WriteInput(ReadOnlySpan<byte> utf8)
@@ -232,6 +297,146 @@ public sealed unsafe class TerminalSession : IDisposable
         OnTitle?.Invoke(Encoding.UTF8.GetString((byte*)title.Ptr, checked((int)title.Len)));
     }
 
+    private void OnBellChanged(IntPtr terminal, IntPtr userdata) => OnBell?.Invoke();
+
+    // ---------------- clipboard (OSC 52 / kitty) ----------------
+
+    private unsafe void OnClipboardWrite(IntPtr terminal, IntPtr userdata, IntPtr request)
+    {
+        var write = *(GhosttyNative.GhosttyClipboardWrite*)request;
+        int result = ClipboardAllowed(write.Granted != 0, _clipboardWritePolicy)
+            ? WriteClipboard(in write)
+            : GhosttyNative.CLIPBOARD_WRITE_DENIED;
+
+        var reply = new GhosttyNative.GhosttyClipboardWriteReply
+        {
+            Size = (nuint)sizeof(GhosttyNative.GhosttyClipboardWriteReply),
+            Result = result,
+        };
+        Reply(request, write.Reply, &reply);
+    }
+
+    private static unsafe int WriteClipboard(in GhosttyNative.GhosttyClipboardWrite request)
+    {
+        // An empty write clears the destination.
+        if (request.ContentsLen == 0)
+        {
+            return ClipboardAccess.TryClear()
+                ? GhosttyNative.CLIPBOARD_WRITE_SUCCESS
+                : GhosttyNative.CLIPBOARD_WRITE_IO_ERROR;
+        }
+        if (request.Contents == IntPtr.Zero) return GhosttyNative.CLIPBOARD_WRITE_UNSUPPORTED;
+
+        var contents = (GhosttyNative.GhosttyClipboardContent*)request.Contents;
+        for (nuint i = 0; i < request.ContentsLen; i++)
+        {
+            GhosttyNative.GhosttyClipboardContent item = contents[i];
+            if (!IsTextMime(ReadString(item.Mime))) continue;
+            return ClipboardAccess.TryWriteText(ReadString(item.Data))
+                ? GhosttyNative.CLIPBOARD_WRITE_SUCCESS
+                : GhosttyNative.CLIPBOARD_WRITE_IO_ERROR;
+        }
+
+        // Only text is served; kitty protocol images and other MIME types are not.
+        return GhosttyNative.CLIPBOARD_WRITE_UNSUPPORTED;
+    }
+
+    private unsafe void OnClipboardRead(IntPtr terminal, IntPtr userdata, IntPtr request)
+    {
+        var read = *(GhosttyNative.GhosttyClipboardRead*)request;
+
+        if (!ClipboardAllowed(read.Granted != 0, _clipboardReadPolicy))
+        {
+            var denied = NewReadReply(GhosttyNative.CLIPBOARD_READ_DENIED);
+            Reply(request, read.Reply, &denied);
+            return;
+        }
+
+        // Serve the first requested MIME this build can answer; it only has text.
+        string? mime = null;
+        var mimes = (GhosttyNative.GhosttyString*)read.Mimes;
+        for (nuint i = 0; i < read.MimesLen; i++)
+        {
+            string candidate = ReadString(mimes[i]);
+            if (!IsTextMime(candidate)) continue;
+            mime = candidate;
+            break;
+        }
+
+        if (mime is null)
+        {
+            var unsupported = NewReadReply(read.MimesLen == 0
+                ? GhosttyNative.CLIPBOARD_READ_SUCCESS
+                : GhosttyNative.CLIPBOARD_READ_UNSUPPORTED);
+            Reply(request, read.Reply, &unsupported);
+            return;
+        }
+
+        if (!ClipboardAccess.TryReadText(out string text))
+        {
+            var ioError = NewReadReply(GhosttyNative.CLIPBOARD_READ_IO_ERROR);
+            Reply(request, read.Reply, &ioError);
+            return;
+        }
+
+        byte[] mimeBytes = Encoding.UTF8.GetBytes(mime);
+        byte[] dataBytes = Encoding.UTF8.GetBytes(text);
+        fixed (byte* mimePointer = mimeBytes)
+        fixed (byte* dataPointer = dataBytes)
+        {
+            var content = new GhosttyNative.GhosttyClipboardContent
+            {
+                Mime = new GhosttyNative.GhosttyString
+                {
+                    Ptr = (IntPtr)mimePointer,
+                    Len = (nuint)mimeBytes.Length,
+                },
+                Data = new GhosttyNative.GhosttyString
+                {
+                    Ptr = (IntPtr)dataPointer,
+                    Len = (nuint)dataBytes.Length,
+                },
+            };
+            var reply = new GhosttyNative.GhosttyClipboardReadReply
+            {
+                Size = (nuint)sizeof(GhosttyNative.GhosttyClipboardReadReply),
+                Result = GhosttyNative.CLIPBOARD_READ_SUCCESS,
+                Contents = (IntPtr)(&content),
+                ContentsLen = 1,
+            };
+            Reply(request, read.Reply, &reply);
+        }
+    }
+
+    private static GhosttyNative.GhosttyClipboardReadReply NewReadReply(int result) =>
+        new()
+        {
+            Size = (nuint)Marshal.SizeOf<GhosttyNative.GhosttyClipboardReadReply>(),
+            Result = result,
+        };
+
+    /// <summary>
+    /// "ask" needs a synchronous prompt, which this build cannot show without re-entering the
+    /// VT stream; it denies instead. A session grant (kitty password) always allows.
+    /// </summary>
+    private static bool ClipboardAllowed(bool granted, string policy) =>
+        granted || policy == "allow";
+
+    private static bool IsTextMime(string mime) =>
+        mime is "text/plain" or "text/plain;charset=utf-8" or "UTF8_STRING" or "TEXT" or "STRING";
+
+    private static unsafe string ReadString(GhosttyNative.GhosttyString value) =>
+        value.Ptr == IntPtr.Zero || value.Len == 0
+            ? string.Empty
+            : Encoding.UTF8.GetString((byte*)value.Ptr, checked((int)value.Len));
+
+    private static unsafe void Reply(IntPtr request, IntPtr replyPointer, void* reply)
+    {
+        if (replyPointer == IntPtr.Zero) return;
+        var callback = Marshal.GetDelegateForFunctionPointer<GhosttyNative.ClipboardReplyFn>(replyPointer);
+        callback(request, (IntPtr)reply);
+    }
+
     private void OnPwdChanged(IntPtr terminal, IntPtr userdata)
     {
         GhosttyNative.GhosttyString pwd;
@@ -243,6 +448,203 @@ public sealed unsafe class TerminalSession : IDisposable
             return;
         }
         _oscPwd = DecodePwd(Encoding.UTF8.GetString((byte*)pwd.Ptr, checked((int)pwd.Len)));
+        Diag.Debug("pwd", _oscPwd);
+    }
+
+    // ---------------- search ----------------
+
+    /// <summary>
+    /// Starts (or clears) a text search. Empty or null returns the search to idle; changing
+    /// the needle restarts the scan from scratch. All calls run on the UI thread, which also
+    /// mutates the terminal, so no extra locking is needed.
+    /// </summary>
+    public bool SearchSetNeedle(string? needle)
+    {
+        if (_search == IntPtr.Zero) return false;
+        if (string.IsNullOrEmpty(needle))
+            return GhosttyNative.ghostty_search_set(_search, GhosttyNative.SEARCH_OPT_NEEDLE, null)
+                   == GhosttyNative.SUCCESS;
+
+        byte[] bytes = Encoding.UTF8.GetBytes(needle);
+        fixed (byte* pointer = bytes)
+        {
+            var value = new GhosttyNative.GhosttyString
+            {
+                Ptr = (IntPtr)pointer,
+                Len = (nuint)bytes.Length,
+            };
+            return GhosttyNative.ghostty_search_set(_search, GhosttyNative.SEARCH_OPT_NEEDLE, &value)
+                   == GhosttyNative.SUCCESS;
+        }
+    }
+
+    /// <summary>
+    /// Advances the scan with a small time budget so typing never blocks on a large
+    /// scrollback. Returns true once the search is caught up with the terminal.
+    /// </summary>
+    public bool SearchStep()
+    {
+        if (_search == IntPtr.Zero) return true;
+
+        long deadline = Environment.TickCount64 + 8;
+        for (int guard = 0; guard < 10000; guard++)
+        {
+            int status = -1;
+            if (GhosttyNative.ghostty_search_tick(_search, &status) != GhosttyNative.SUCCESS)
+                return true;
+
+            if (status == GhosttyNative.SEARCH_STATUS_COMPLETE) return true;
+            if (status == GhosttyNative.SEARCH_STATUS_RUNNING)
+            {
+                if (Environment.TickCount64 >= deadline) return false;
+                continue;
+            }
+
+            // FEED_REQUIRED: copy the next chunk of terminal data, then keep ticking.
+            if (GhosttyNative.ghostty_search_feed(_search) != GhosttyNative.SUCCESS) return true;
+            if (Environment.TickCount64 >= deadline) return false;
+        }
+        return false;
+    }
+
+    /// <summary>Selects the next (older) or previous (newer) match, scrolling it into view.</summary>
+    public bool SearchSelect(bool next)
+    {
+        if (_search == IntPtr.Zero) return false;
+        int option = next ? GhosttyNative.SEARCH_OPT_SELECT_NEXT : GhosttyNative.SEARCH_OPT_SELECT_PREV;
+        return GhosttyNative.ghostty_search_set(_search, option, null) == GhosttyNative.SUCCESS;
+    }
+
+    /// <summary>Total matches and the selected match index (0 = newest); null when none is selected.</summary>
+    public void SearchStats(out ulong total, out ulong? selected)
+    {
+        total = 0;
+        selected = null;
+        if (_search == IntPtr.Zero) return;
+
+        ulong count = 0;
+        if (GhosttyNative.ghostty_search_get(_search, GhosttyNative.SEARCH_DATA_TOTAL_MATCHES, &count)
+            == GhosttyNative.SUCCESS)
+        {
+            total = count;
+        }
+
+        ulong index = 0;
+        if (GhosttyNative.ghostty_search_get(_search, GhosttyNative.SEARCH_DATA_SELECTED_INDEX, &index)
+            == GhosttyNative.SUCCESS)
+        {
+            selected = index;
+        }
+    }
+
+    /// <summary>
+    /// The highlight rectangles for the current viewport. The cached viewport list is
+    /// refreshed with a feed so manual scrolling does not draw yesterday's matches, and
+    /// each match is converted from screen coordinates so partially visible matches clip
+    /// to the visible rows.
+    /// </summary>
+    public List<SearchSpan> SearchSpans()
+    {
+        var spans = new List<SearchSpan>();
+        if (_search == IntPtr.Zero || _terminal == IntPtr.Zero) return spans;
+
+        GhosttyNative.ghostty_search_feed(_search);
+
+        ushort cols = 80;
+        GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_COLS, &cols);
+        if (!Scrollbar(out _, out ulong offset, out ulong len) || len == 0) return spans;
+
+        if (TryGetSelections(GhosttyNative.SEARCH_DATA_VIEWPORT_MATCHES, out var matches))
+        {
+            foreach (GhosttyNative.GhosttySelection match in matches)
+                AddSelectionSpans(spans, match, cols, offset, len, false);
+        }
+
+        var selected = new GhosttyNative.GhosttySelection
+        {
+            Size = (nuint)sizeof(GhosttyNative.GhosttySelection),
+        };
+        if (GhosttyNative.ghostty_search_get(_search, GhosttyNative.SEARCH_DATA_SELECTED_MATCH, &selected)
+            == GhosttyNative.SUCCESS)
+        {
+            AddSelectionSpans(spans, selected, cols, offset, len, true);
+        }
+
+        return spans;
+    }
+
+    /// <summary>Reads a GhosttySelectionBuffer field, growing the array to the reported size.</summary>
+    private bool TryGetSelections(int data, out GhosttyNative.GhosttySelection[] selections)
+    {
+        selections = Array.Empty<GhosttyNative.GhosttySelection>();
+
+        var query = new GhosttyNative.GhosttySelectionBuffer();
+        int result = GhosttyNative.ghostty_search_get(_search, data, &query);
+        if (query.Len == 0)
+            return result == GhosttyNative.SUCCESS || result == GhosttyNative.NO_VALUE;
+        if (result != GhosttyNative.OUT_OF_SPACE) return false;
+
+        var items = new GhosttyNative.GhosttySelection[(int)query.Len];
+        fixed (GhosttyNative.GhosttySelection* pointer = items)
+        {
+            var buffer = new GhosttyNative.GhosttySelectionBuffer
+            {
+                Ptr = (IntPtr)pointer,
+                Cap = query.Len,
+                Len = 0,
+            };
+            if (GhosttyNative.ghostty_search_get(_search, data, &buffer) != GhosttyNative.SUCCESS)
+                return false;
+
+            int count = (int)buffer.Len;
+            if (count < items.Length) Array.Resize(ref items, count);
+            selections = items;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Converts a match to viewport-relative rows. Search selections are linear ranges;
+    /// a range can span soft-wrapped rows, so each covered row contributes its own span.
+    /// </summary>
+    private void AddSelectionSpans(List<SearchSpan> spans, GhosttyNative.GhosttySelection selection,
+        ushort cols, ulong offset, ulong viewportRows, bool selected)
+    {
+        GhosttyNative.GhosttyPointCoordinate start;
+        GhosttyNative.GhosttyPointCoordinate end;
+        if (GhosttyNative.ghostty_terminal_point_from_grid_ref(
+                _terminal, in selection.Start, GhosttyNative.POINT_SCREEN, &start) != GhosttyNative.SUCCESS)
+        {
+            return;
+        }
+        if (GhosttyNative.ghostty_terminal_point_from_grid_ref(
+                _terminal, in selection.End, GhosttyNative.POINT_SCREEN, &end) != GhosttyNative.SUCCESS)
+        {
+            return;
+        }
+
+        uint firstRow = start.Y;
+        uint lastRow = end.Y;
+        ushort firstX = start.X;
+        ushort lastX = end.X;
+        if (firstRow > lastRow || (firstRow == lastRow && firstX > lastX))
+        {
+            (firstRow, lastRow) = (lastRow, firstRow);
+            (firstX, lastX) = (lastX, firstX);
+        }
+
+        for (uint row = firstRow; row <= lastRow; row++)
+        {
+            long viewportRow = (long)row - (long)offset;
+            if (viewportRow < 0 || viewportRow >= (long)viewportRows) continue;
+
+            int startX = row == firstRow ? firstX : 0;
+            int endX = row == lastRow ? lastX : Math.Max(0, cols - 1);
+            if (endX < startX) continue;
+
+            spans.Add(new SearchSpan((int)viewportRow, startX, endX, selected));
+            if (row == uint.MaxValue) break;
+        }
     }
 
     // ---------------- selection ----------------
@@ -293,7 +695,24 @@ public sealed unsafe class TerminalSession : IDisposable
 
         var anchor = new GhosttyNative.GhosttyPoint { Tag = GhosttyNative.POINT_VIEWPORT, X = anchorX, Y = anchorY };
         var cursor = new GhosttyNative.GhosttyPoint { Tag = GhosttyNative.POINT_VIEWPORT, X = cursorX, Y = cursorY };
+        return ApplySelection(anchor, cursor);
+    }
 
+    /// <summary>
+    /// Selection endpoints in screen (scrollback-absolute) rows. A drag that auto-scrolls
+    /// the viewport keeps the anchor on the same text, unlike viewport-relative rows.
+    /// </summary>
+    public bool SetSelectionScreen(ushort anchorX, uint anchorY, ushort cursorX, uint cursorY)
+    {
+        if (_terminal == IntPtr.Zero) return false;
+
+        var anchor = new GhosttyNative.GhosttyPoint { Tag = GhosttyNative.POINT_SCREEN, X = anchorX, Y = anchorY };
+        var cursor = new GhosttyNative.GhosttyPoint { Tag = GhosttyNative.POINT_SCREEN, X = cursorX, Y = cursorY };
+        return ApplySelection(anchor, cursor);
+    }
+
+    private bool ApplySelection(GhosttyNative.GhosttyPoint anchor, GhosttyNative.GhosttyPoint cursor)
+    {
         GhosttyNative.GhosttyGridRef start = default;
         GhosttyNative.GhosttyGridRef end = default;
         start.Size = (nuint)sizeof(GhosttyNative.GhosttyGridRef);
@@ -474,6 +893,7 @@ public sealed unsafe class TerminalSession : IDisposable
     {
         if (_terminal == IntPtr.Zero || cols == 0 || rows == 0) return;
 
+        Diag.Debug("session.resize", $"cols={cols} rows={rows} pty={_pty is not null}");
         _pty?.Resize((short)cols, (short)rows);
         GhosttyNative.ghostty_terminal_resize(_terminal, cols, rows, metrics.Width, metrics.Height);
         OnUpdate?.Invoke();
@@ -489,6 +909,95 @@ public sealed unsafe class TerminalSession : IDisposable
         };
         GhosttyNative.ghostty_terminal_scroll_viewport(_terminal, behavior);
         OnUpdate?.Invoke();
+    }
+
+    /// <summary>Scrolls the viewport to the newest row ("scroll-to-bottom").</summary>
+    public void ScrollToBottom()
+    {
+        if (_terminal == IntPtr.Zero) return;
+        var behavior = new GhosttyNative.GhosttyTerminalScrollViewport
+        {
+            Tag = GhosttyNative.SCROLL_BOTTOM,
+        };
+        GhosttyNative.ghostty_terminal_scroll_viewport(_terminal, behavior);
+        OnUpdate?.Invoke();
+    }
+
+    /// <summary>
+    /// Encodes one mouse event into the escape sequence the running program asked for.
+    /// The position is in cell coordinates: the encoder's default 1x1 cell geometry then
+    /// maps it straight to a terminal cell. False when nothing was reported (the terminal
+    /// is not in a mouse tracking mode).
+    /// </summary>
+    public bool EncodeMouse(int action, int button, int mods, double cellX, double cellY,
+        out byte[] bytes)
+    {
+        bytes = Array.Empty<byte>();
+        if (_mouseEncoder == IntPtr.Zero || _mouseEvent == IntPtr.Zero || _terminal == IntPtr.Zero)
+            return false;
+
+        // Tracking mode and wire format come from the terminal's current modes.
+        if (GhosttyNative.ghostty_mouse_encoder_setopt_from_terminal(_mouseEncoder, _terminal)
+            != GhosttyNative.SUCCESS)
+        {
+            return false;
+        }
+
+        GhosttyNative.ghostty_mouse_event_set_action(_mouseEvent, action);
+        if (button > 0) GhosttyNative.ghostty_mouse_event_set_button(_mouseEvent, button);
+        else GhosttyNative.ghostty_mouse_event_clear_button(_mouseEvent);
+        GhosttyNative.ghostty_mouse_event_set_mods(_mouseEvent, (ushort)mods);
+        GhosttyNative.ghostty_mouse_event_set_position(_mouseEvent,
+            new GhosttyNative.GhosttyMousePosition { X = (float)cellX, Y = (float)cellY });
+
+        var buffer = new byte[256];
+        fixed (byte* output = buffer)
+        {
+            int result = GhosttyNative.ghostty_mouse_encoder_encode(
+                _mouseEncoder, _mouseEvent, output, (nuint)buffer.Length, out nuint written);
+            if (result != GhosttyNative.SUCCESS || written == 0) return false;
+
+            bytes = buffer.AsSpan(0, (int)written).ToArray();
+            return true;
+        }
+    }
+
+    /// <summary>The OSC 8 hyperlink URI at a viewport cell, or null when there is none.</summary>
+    public string? HyperlinkAt(ushort x, ushort y)
+    {
+        if (_terminal == IntPtr.Zero) return null;
+
+        var point = new GhosttyNative.GhosttyPoint
+        {
+            Tag = GhosttyNative.POINT_VIEWPORT,
+            X = x,
+            Y = y,
+        };
+        var gridRef = default(GhosttyNative.GhosttyGridRef);
+        gridRef.Size = (nuint)sizeof(GhosttyNative.GhosttyGridRef);
+        if (GhosttyNative.ghostty_terminal_grid_ref(_terminal, point, &gridRef)
+            != GhosttyNative.SUCCESS)
+        {
+            return null;
+        }
+
+        if (GhosttyNative.ghostty_grid_ref_hyperlink_uri(in gridRef, null, 0, out nuint needed)
+            != GhosttyNative.OUT_OF_SPACE || needed == 0)
+        {
+            return null;
+        }
+
+        var buffer = new byte[(int)needed];
+        fixed (byte* data = buffer)
+        {
+            if (GhosttyNative.ghostty_grid_ref_hyperlink_uri(
+                    in gridRef, data, (nuint)buffer.Length, out nuint written) != GhosttyNative.SUCCESS ||
+                written == 0)
+            {
+                return null;
+            }
+            return Encoding.UTF8.GetString(buffer, 0, (int)written);
+        }
     }
 
     /// <summary>
@@ -668,7 +1177,7 @@ public sealed unsafe class TerminalSession : IDisposable
 
     public static string SafeStem(string command)
     {
-        string token = FirstToken(command);
+        string token = ExecutableToken(command);
         if (token.Length == 0) return string.Empty;
         try
         {
@@ -681,31 +1190,19 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     /// <summary>
-    /// PowerShell never reports its cwd on its own. For the default shell, wrap the
-    /// existing prompt (profiles load before -EncodedCommand) so every prompt emits
-    /// OSC 9;9; the user's prompt output is preserved.
+    /// The executable part of a shell command. An auto-detected shell is an unquoted full
+    /// path that can contain spaces, so the whole string wins when it names a real file;
+    /// otherwise the command is "exe args" and the first token is the executable.
     /// </summary>
-    private static string PowerShellWithPwdHook(string shell)
+    public static string ExecutableToken(string command)
     {
-        const string script =
-            "$global:__guiPrompt = $function:prompt\n" +
-            "function global:prompt {\n" +
-            "  $loc = $executionContext.SessionState.Path.CurrentLocation\n" +
-            "  $out = ''\n" +
-            "  if ($loc.Provider.Name -eq 'FileSystem') {\n" +
-            "    $esc = [char]27\n" +
-            "    $quote = [char]34\n" +
-            "    $out = \"$esc]9;9;$quote$($loc.ProviderPath)$quote$esc\\\"\n" +
-            "  }\n" +
-            "  $orig = & $global:__guiPrompt\n" +
-            "  if ($orig) { $out + $orig } else { $out + \"PS $loc> \" }\n" +
-            "}\n";
-
-        string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-        return shell + " -NoExit -EncodedCommand " + encoded;
+        string trimmed = command.Trim();
+        return File.Exists(trimmed) ? trimmed : FirstToken(command);
     }
 
-    // OSC 7 sends a file:// URI, OSC 9;9 (ConEmu) sends a quoted Windows path.
+    // OSC 7 sends a file:// URI, OSC 9;9 (ConEmu) sends a quoted Windows path. Only OSC 7
+    // reaches this app: libghostty-vt maps it to the terminal's pwd, and treats OSC 9 as a
+    // notification.
     private static string DecodePwd(string raw)
     {
         if (raw.Length >= 2 && raw[0] == '"' && raw[^1] == '"')
@@ -751,7 +1248,10 @@ public sealed unsafe class TerminalSession : IDisposable
 
         if (_cells != IntPtr.Zero) { GhosttyNative.ghostty_render_state_row_cells_free(_cells); _cells = IntPtr.Zero; }
         if (_rowIterator != IntPtr.Zero) { GhosttyNative.ghostty_render_state_row_iterator_free(_rowIterator); _rowIterator = IntPtr.Zero; }
+        if (_mouseEvent != IntPtr.Zero) { GhosttyNative.ghostty_mouse_event_free(_mouseEvent); _mouseEvent = IntPtr.Zero; }
+        if (_mouseEncoder != IntPtr.Zero) { GhosttyNative.ghostty_mouse_encoder_free(_mouseEncoder); _mouseEncoder = IntPtr.Zero; }
         if (_keyEncoder != IntPtr.Zero) { GhosttyNative.ghostty_key_encoder_free(_keyEncoder); _keyEncoder = IntPtr.Zero; }
+        if (_search != IntPtr.Zero) { GhosttyNative.ghostty_search_free(_search); _search = IntPtr.Zero; }
         if (_renderState != IntPtr.Zero) { GhosttyNative.ghostty_render_state_free(_renderState); _renderState = IntPtr.Zero; }
         if (_terminal != IntPtr.Zero) { GhosttyNative.ghostty_terminal_free(_terminal); _terminal = IntPtr.Zero; }
 

@@ -5,7 +5,7 @@
 说明：按功能分组，一项对应一个 Ghostty 配置键；标注「仅 macOS」「仅 Linux/GTK」的项与 Windows 项目无关，可直接跳过。
 状态：`[x]` 已在本分支接入并生效；`[ ]` 已能正常解析（不再报未知选项），但本构建尚无对应实现，或该选项只对 macOS / Linux 有效。
 默认值已按 1.4 源码对齐（`font-size` 12、`faint-opacity` 0.5、`background-blur` 关闭、
-`right-click-action` context-menu、`clipboard-trim-trailing-spaces` 开启、`window-padding` 2）。
+`right-click-action` context-menu、`clipboard-trim-trailing-spaces` 开启、`window-padding` 2pt）。
 
 ## 1. 应用与语言（1）
 
@@ -13,7 +13,7 @@
 
 ## 2. 字体家族与样式（21）
 
-- [ ] `font-family` — 主字体族，可重复配置追加回退字体（目前只取最后一项，回退字体尚未实现）
+- [x] `font-family` — 主字体族，可重复配置追加回退字体（首项为主字体，缺字时按后续项逐字形回退）
 - [x] `font-family-bold` — 粗体字体族
 - [x] `font-family-italic` — 斜体字体族
 - [x] `font-family-bold-italic` — 粗斜体字体族
@@ -83,26 +83,26 @@
 
 ## 5. 背景、分屏与搜索（12）
 
-- [x] `background-opacity` — 窗口背景不透明度（终端表面 + 窗格卡片；低于 1 时启用 DWM 亚克力背景）
+- [x] `background-opacity` — 整个窗口的不透明度（含标题栏/侧栏/窗格）；低于 1 时由一层带色调的窗口背景提供透明，窗格本身保持透明，避免和系统亚克力的色调叠加两次
 - [x] `background-opacity-cells` — 显式设置背景色的单元格也套用透明度
-- [x] `background-blur` — 背景模糊开关或半径（Windows 下映射为 DWM 亚克力；0/false 关闭）；默认关闭，与 1.4 一致
+- [x] `background-blur` — true 使用 DWM 亚克力（模糊）；false 在 Windows 11 使用普通半透明画刷（不模糊，失败时回退亚克力），Windows 10 没有无模糊透明，和 Windows Terminal 一样仍走亚克力；默认关闭，与 1.4 一致
 - [x] `unfocused-split-opacity` — 未聚焦分屏的不透明度
 - [x] `unfocused-split-fill` — 未聚焦分屏的叠加色
-- [ ] `split-divider-color` — 分屏分隔线颜色
+- [x] `split-divider-color` — 分屏分隔线颜色；作用于 compact 模式下 1 DIP 的分隔线
 - [ ] `split-preserve-zoom` — 何时保留分屏缩放状态
-- [ ] `drag-handle` — 分屏拖拽手柄的显示策略（1.4）
-- [ ] `search-foreground` — 搜索命中项前景色
-- [ ] `search-background` — 搜索命中项背景色
-- [ ] `search-selected-foreground` — 当前搜索命中项前景色
-- [ ] `search-selected-background` — 当前搜索命中项背景色
+- [x] `drag-handle` — 分屏拖拽开关：`auto`（默认，标签页内有两个及以上分屏时可拖）、`always`（始终可拖）、`never`（禁用拖动）；把手是标题栏里的 shell 图标 + 工作目录文字（宽度随文字变化，悬停显示移动光标），拖到另一个分屏的左/右/上/下侧即可重排
+- [x] `search-foreground` — 搜索命中项前景色；`Term/Config.cs` 解析（支持颜色、`cell-foreground`、`cell-background`），`Term/TerminalRenderer.cs` 逐单元格应用
+- [x] `search-background` — 搜索命中项背景色；默认 `#FFE082`（Ghostty 的金色）
+- [x] `search-selected-foreground` — 当前搜索命中项前景色；默认黑色
+- [x] `search-selected-background` — 当前搜索命中项背景色；默认 `#F2A57E`（Ghostty 的柔桃色）
 
 ## 6. 进程与启动（13）
 
 - [x] `command` — 启动的命令/Shell
-- [ ] `initial-command` — 仅首个终端使用的启动命令
-- [ ] `notify-on-command-finish` — 命令结束时是否通知（never/always/unfocused）
-- [ ] `notify-on-command-finish-action` — 通知方式（bell/notification）
-- [ ] `notify-on-command-finish-after` — 命令运行超过多久才触发通知
+- [x] `initial-command` — 仅首个终端使用的启动命令；后续标签页仍用 `command`
+- [x] `notify-on-command-finish` — 命令结束时是否通知（never/unfocused/always，默认 never）；依赖 shell 集成上报的 OSC 133 D，`unfocused` 只在窗格未聚焦或窗口不在前台时通知
+- [x] `notify-on-command-finish-action` — 通知方式（bell/notify，可用 `no-` 关闭，默认 bell）；bell 走 `bell-features`，notify 走 Windows 应用通知（失败回退任务栏闪烁）
+- [x] `notify-on-command-finish-after` — 命令运行超过多久才触发通知；支持 `1h30m`、`45s`、`500ms` 这类时长，默认 5s
 - [x] `env` — 追加环境变量（`KEY=VALUE`，可重复）
 - [x] `input` — 启动时向子进程写入的输入数据
 - [x] `wait-after-command` — 命令退出后保持终端不关闭
@@ -114,52 +114,52 @@
 
 ## 7. 链接、鼠标与选择（13）
 
-- [ ] `link` — 正则匹配终端文本并绑定点击动作
-- [ ] `link-url` — 是否识别 URL 并可点击打开
-- [ ] `link-osc8` — 是否高亮/预览/复制/打开 OSC 8 超链接（1.4）
-- [ ] `link-previews` — 是否显示链接预览
-- [ ] `mouse-hide-while-typing` — 打字时隐藏鼠标指针
-- [ ] `scroll-to-bottom` — 何时自动滚动到底部
-- [ ] `mouse-shift-capture` — Shift+点击是否交给运行中的程序识别
-- [ ] `mouse-reporting` — 是否向程序上报鼠标事件
+- [ ] `link` — 正则匹配终端文本并绑定点击动作（Ghostty 1.4 自身仍标记 TODO，无实际语义）
+- [x] `link-url` — 是否识别 URL 并可点击打开；`Term/Config.cs`，`Term/TerminalPane.cs` 的 `UpdateLinkHover()` 用 `UrlPattern`（`http(s)://` 与 `www.`）识别鼠标下的单元格，Ctrl+点击经 `OpenLink()` 打开
+- [x] `link-osc8` — 是否识别 OSC 8 超链接；`Term/TerminalSession.cs` 的 `HyperlinkAt()` 走 `ghostty_terminal_grid_ref` + `ghostty_grid_ref_hyperlink_uri`，优先于 URL 正则，Ctrl+点击同样打开
+- [x] `link-previews` — 悬停链接时显示 URL 徽标；`Term/TerminalPane.cs` 的 `UpdateLinkPreview()`，`true` 显示所有链接、`osc8` 仅 OSC 8、`false` 关闭
+- [x] `mouse-hide-while-typing` — 打字时隐藏鼠标指针；`Term/TerminalPane.cs` 的 `HidePointer()`/`ShowPointer()` 经 `ShowCursor(bool)` 下发，键盘/文本输入时隐藏、指针移动时恢复
+- [x] `scroll-to-bottom` — 何时自动滚动到底部；`Term/Config.cs` 拆成 keystroke/output 两个布尔（`no-keystroke`/`no-output`），`Term/TerminalPane.cs` 在按键/文本输入与 `_session.OnOutput` 时调用 `ScrollToBottom()`
+- [x] `mouse-shift-capture` — Shift+点击是否交给运行中的程序识别；`Term/Config.cs` 归一化为 false/true/always/never，`Term/TerminalPane.cs` 的 `TryReportMouse()` 控制 Shift 是否放行
+- [x] `mouse-reporting` — 是否向程序上报鼠标事件；`Term/TerminalPane.cs` 的 `TryReportMouse()` 组合按键/移动/滚轮，`Term/TerminalSession.cs` 的 `EncodeMouse()` 经 `ghostty_mouse_encoder_setopt_from_terminal` + `ghostty_mouse_encoder_encode` 生成 SGR 序列（按单元格坐标）
 - [x] `mouse-scroll-multiplier` — 滚轮滚动倍数（可加 precision:/discrete:）；Windows 使用 discrete，默认 3 行/格
 - [x] `copy-on-select` — 选中即复制（1.4：none/primary/clipboard/both；Windows 无选区剪贴板，both 走系统剪贴板）
-- [x] `right-click-action` — 右键行为（context-menu/paste/copy/copy-or-paste/ignore；默认 context-menu，本构建无菜单时等价于 copy-or-paste）
-- [ ] `middle-click-action` — 中键行为（1.4）
-- [ ] `click-repeat-interval` — 判定连击的间隔毫秒数
+- [x] `right-click-action` — 右键行为（context-menu/paste/copy/copy-or-paste/ignore）；默认 `context-menu` 会在指针位置弹出 Copy/Paste 菜单（无选区时 Copy 禁用），同时屏蔽 IME 输入框自带的文本框菜单，避免“弹菜单 + 立即粘贴”同时发生
+- [x] `middle-click-action` — 中键行为（primary-paste / clipboard-paste / ignore）；Windows 没有主选区，两个粘贴值都走系统剪贴板
+- [x] `click-repeat-interval` — 判定连击的间隔毫秒数；`Term/TerminalPane.cs` 的 `OnPointerPressed()` 用 `Environment.TickCount64` 手动判定双击/三击（双击选词、三击选行），0 表示 Ghostty 在非 macOS 的 500ms 默认值
 
 ## 8. 窗口与布局（36）
 
-- [ ] `maximize` — 新窗口启动即最大化
-- [ ] `fullscreen` — 新窗口启动即全屏
-- [ ] `title` — 固定窗口标题
+- [x] `maximize` — 新窗口启动即最大化
+- [x] `fullscreen` — 新窗口启动即全屏；non-native* 在 Windows 上等同 true
+- [x] `title` — 固定窗口标题（不再跟随终端标题）
 - [ ] `class` — 应用窗口类名（X11 WM_CLASS）
 - [ ] `x11-instance-name` — X11 WM_CLASS 实例名（仅 X11）
 - [x] `working-directory` — 启动后切换到的目录
 - [ ] `keybind` — 键绑定（`trigger=action`）
 - [ ] `key-remap` — 应用层修饰键重映射
-- [x] `window-padding-x` — 水平内边距；单个值或 `left,right`
-- [x] `window-padding-y` — 垂直内边距；单个值或 `top,bottom`
-- [ ] `window-padding-balance` — 余量像素在两侧均衡分配
-- [ ] `window-padding-color` — 内边距区域颜色
-- [ ] `window-vsync` — 垂直同步
-- [ ] `window-inherit-working-directory` — 新窗口继承工作目录
-- [ ] `tab-inherit-working-directory` — 新标签页继承工作目录
-- [ ] `split-inherit-working-directory` — 新分屏继承工作目录
-- [ ] `window-inherit-font-size` — 新窗口/标签继承字号
-- [ ] `window-decoration` — 窗口装饰（标题栏/边框）偏好
-- [ ] `window-title-font-family` — 窗口与标签标题字体
+- [x] `window-padding-x` — 水平内边距；**单位 pt**（与 Ghostty 一致），单个值或 `left,right`；`Term/Config.cs` 的 `PaddingDips` 按 `floor(pt × dpi / 72)` 折算成物理像素，再除以缩放比例得到布局用的 DIP
+- [x] `window-padding-y` — 垂直内边距；**单位 pt**，单个值或 `top,bottom`，换算方式同上
+- [x] `window-padding-balance` — 余量像素在两侧均衡分配（默认关闭，与 Ghostty 一致）；`Term/TerminalPane.cs` 的 `BalancePadding()` 在扣除整格后把余量平分到左右/上下，`SizeChanged` 后重新布局。列数改用字体的精确 advance 而不是向上取整的单元格宽度，右侧余量本身已小于一格
+- [ ] `window-padding-color` — 内边距区域颜色；`background`（默认）与当前绘制一致；`extend`/`extend-always` 需要把边缘单元格颜色画进内边距，渲染器暂未实现
+- [ ] `window-vsync` — 垂直同步；Win2D 的 `CanvasControl` 走合成器同步，无法关闭，等同于始终开启
+- [x] `window-inherit-working-directory` — 新建窗口（`Ctrl+Shift+N` 或命令面板的 “New window”）以当前窗格的工作目录启动；关闭时用默认目录
+- [x] `tab-inherit-working-directory` — 新标签页继承当前 shell 的工作目录（默认开启）
+- [x] `split-inherit-working-directory` — 新分屏继承当前 shell 的工作目录（默认开启）
+- [x] `window-inherit-font-size` — 新标签页继承当前窗格的字号（含缩放，默认开启）
+- [ ] `window-decoration` — 窗口装饰（标题栏/边框）偏好；本构建始终使用无原生标题栏的自绘窗口，true/false/auto 无差异
+- [x] `window-title-font-family` — 窗口与标签标题字体；`Term/Workspace.cs` 的 `TitleFontFamily()`/`ApplyTitleFont()` 作用于标签标题与提示，重载配置即时生效
 - [ ] `window-subtitle` — 窗口副标题内容
 - [x] `window-theme` — 窗口主题（auto/light/dark/ghostty）
 - [ ] `window-colorspace` — 解释终端颜色所用的色彩空间
-- [ ] `window-height` — 初始窗口高度（单元格）
-- [ ] `window-width` — 初始窗口宽度（单元格）
-- [ ] `window-position-x` — 初始窗口 X 位置（像素）
-- [ ] `window-position-y` — 初始窗口 Y 位置（像素）
+- [x] `window-height` — 初始窗口高度（单元格）；与 `window-width` 成对生效，`MainWindow.ApplyInitialGeometry()` 按当前网格差值调整窗口大小
+- [x] `window-width` — 初始窗口宽度（单元格）；同上，10×4 以下的取值被忽略
+- [x] `window-position-x` — 初始窗口 X 位置（像素）；与 `window-position-y` 成对生效，见 `MainWindow.ApplyInitialGeometry()`
+- [x] `window-position-y` — 初始窗口 Y 位置（像素）；同上
 - [ ] `window-save-state` — 保存并恢复窗口状态
 - [ ] `window-step-resize` — 按单元格尺寸步进调整窗口
-- [ ] `window-new-tab-position` — 新标签页插入位置
-- [ ] `window-show-tab-bar` — 标签栏显示策略
+- [x] `window-new-tab-position` — 新标签页插入位置（current 紧跟当前页 / end 末尾）
+- [x] `window-show-tab-bar` — never 隐藏标签条；always / auto 保持现有显示（标题栏仍保留拖拽区）
 - [ ] `window-titlebar-background` — 标题栏背景色（window-theme=ghostty）
 - [ ] `window-titlebar-foreground` — 标题栏前景色（window-theme=ghostty）
 - [ ] `resize-overlay` — 调整大小时浮层的显示策略
@@ -169,19 +169,19 @@
 
 ## 9. 剪贴板（6）
 
-- [ ] `clipboard-read` — 允许程序读取系统剪贴板（OSC 52）
-- [ ] `clipboard-write` — 允许程序写入系统剪贴板（OSC 52）
+- [x] `clipboard-read` — `allow` / `deny` / `ask`（默认 ask）；libghostty-vt 的 OSC 52/kitty 读取回调接到 `TerminalSession`，只提供文本 MIME；本构建没有阻塞确认框，`ask` 按 `deny` 处理
+- [x] `clipboard-write` — `allow` / `deny` / `ask`（默认 allow）；OSC 52 与 kitty 的文本写入落到 Win32 剪贴板（`CF_UNICODETEXT`），空写入清空剪贴板，非文本 MIME 返回 unsupported，`ask` 同样按 `deny`
 - [x] `clipboard-trim-trailing-spaces` — 复制时去掉行尾空白；默认开启（与 1.4 一致）
-- [ ] `clipboard-paste-protection` — 粘贴可疑内容前二次确认
-- [ ] `clipboard-paste-bracketed-safe` — 括号粘贴视为安全
-- [ ] `clipboard-write-limit-bytes` — OSC 52 写入的字节上限（1.4，默认 64 MB）
+- [x] `clipboard-paste-protection` — 粘贴可疑内容前二次确认；`Term/TerminalPane.cs` 的 `ConfirmPasteAsync()` 在内容含换行或控制字符且非括号粘贴时弹出确认框
+- [x] `clipboard-paste-bracketed-safe` — 括号粘贴视为安全；开启时（默认）程序已启用 bracketed paste 就不再确认
+- [x] `clipboard-write-limit-bytes` — OSC 52/kitty 写入的字节上限（1.4，默认 64 MiB，`unlimited` 解除）；下发到 `OPT_CLIPBOARD_WRITE_MAX_BYTES`，由原生层在回调前限流
 
 ## 10. 配置加载与生命周期（20）
 
-- [ ] `config-file` — 追加读取的配置文件（可重复）
-- [ ] `config-default-files` — 是否加载默认路径的配置文件
-- [ ] `confirm-close-surface` — 关闭终端前是否需要确认（默认 true）
-- [ ] `quit-after-last-window-closed` — 最后一个窗口关闭后是否退出
+- [x] `config-file` — 追加读取的配置文件（可重复）；`Term/Config.cs` 的 `LoadFile()` 按 Ghostty 语义在被包含文件之后加载（后者覆盖前者），路径相对声明它的文件，`?` 前缀表示缺失可忽略，循环引用只记警告
+- [ ] `config-default-files` — 是否加载默认路径的配置文件；Ghostty 本身仅限 CLI 参数，写入配置文件无效果
+- [x] `confirm-close-surface` — 关闭窗口前是否需要确认（默认 true）；`true` 只在 shell 集成报告仍有命令运行时询问，`false` 从不询问，`always` 每次关闭都询问；确认框为应用内的 ContentDialog
+- [ ] `quit-after-last-window-closed` — 最后一个窗口关闭后是否退出；本构建为单窗口应用，关闭窗口即退出
 - [ ] `quit-after-last-window-closed-delay` — 退出前的延迟时长
 - [ ] `initial-window` — 启动时是否创建初始窗口
 - [ ] `undo-timeout` — 撤销操作的有效期
@@ -213,8 +213,8 @@
 
 ## 12. Shell 集成与命令面板（3）
 
-- [ ] `shell-integration` — 是否自动注入 shell 集成
-- [ ] `shell-integration-features` — 启用哪些 shell 集成特性
+- [x] `shell-integration` — 是否自动注入 shell 集成（none/detect/powershell，默认 detect）；仅对裸 PowerShell 命令注入，脚本在提示符前后发 OSC 133 A/B/C/D 与 OSC 7；Unix shell 名会被识别但仅记 Notice
+- [x] `shell-integration-features` — 启用哪些 shell 集成特性（逗号分隔，可用 `no-` 关闭，`true`/`false` 全开/全关）；Windows 生效的是 `cursor`（提示符处竖线光标，支持 `cursor:steady`）与 `title`（用工作目录设置标题），`sudo`/`ssh-*`/`path` 只解析不生效
 - [ ] `command-palette-entry` — 自定义命令面板条目
 
 ## 13. 自定义着色器（2）
@@ -224,9 +224,9 @@
 
 ## 14. 提示音与通知（3）
 
-- [ ] `bell-features` — 铃音特性（audio/attention 等，逗号分隔）
-- [ ] `bell-audio-path` — 提示音音频文件路径
-- [ ] `bell-audio-volume` — 提示音音量（相对系统音量）
+- [x] `bell-features` — 铃音特性；`Term/TerminalSession.cs` 接 `OPT_BELL`，`Term/TerminalPane.cs` 实现 system（`MessageBeep`）、audio、attention（任务栏闪烁）、title（标题前加 🔔）、border（窗格边框高亮）
+- [x] `bell-audio-path` — 提示音音频文件路径；解析时相对配置文件目录展开，`bell-features` 含 `audio` 时经 `MediaPlayer` 播放
+- [x] `bell-audio-volume` — 提示音音量（相对系统音量，默认 0.5）；传给 `MediaPlayer.Volume`
 
 ## 15. macOS 专属（19）
 

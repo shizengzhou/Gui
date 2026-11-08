@@ -207,15 +207,39 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
-    public void SaveValueLeavesTheCommentedTemplateAlone()
+    public void SaveValueStripsComments()
     {
-        string path = Write("# theme = dark\ntheme = light\n");
+        string path = Write("# theme = dark\n# a note\ntheme = light\n");
 
         Config.SaveValue(path, "theme", "dark");
 
         string text = File.ReadAllText(path);
-        Assert.Contains("# theme = dark", text);
+        Assert.DoesNotContain("#", text);
         Assert.Contains("theme = dark", text);
+        Assert.DoesNotContain("theme = light", text);
+    }
+
+    [Fact]
+    public void EnsureDefaultWritesAnEmptyFile()
+    {
+        string path = Path.Combine(_dir, "fresh", "config");
+
+        Config.EnsureDefault(path);
+
+        Assert.True(File.Exists(path));
+        Assert.Equal(string.Empty, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void PaddingDipsMatchesGhosttysPointScaling()
+    {
+        // Ghostty: floor(points * dpi / 72) physical pixels, with dpi = 96 * scale.
+        // WinUI lays out in DIPs, so that pixel count is divided back by the scale.
+        Assert.Equal(2.0, Config.PaddingDips(2, 1.0), 6);          // 96 dpi -> 2 px
+        Assert.Equal(2.5, Config.PaddingDips(2, 2.0), 6);          // 192 dpi -> 5 px
+        Assert.Equal(4.0 / 1.5, Config.PaddingDips(2, 1.5), 6);    // 144 dpi -> 4 px
+        Assert.Equal(0.0, Config.PaddingDips(0, 2.0), 6);
+        Assert.Equal(2.0, Config.PaddingDips(2, 0.0), 6);          // scale unknown yet
     }
 
     [Fact]

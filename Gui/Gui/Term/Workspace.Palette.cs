@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.UI.Xaml;
@@ -84,6 +84,24 @@ public sealed partial class Workspace
         RefreshTheme();
     }
 
+    /// <summary>
+    /// Repaints this window after another one committed a theme change: the Theme statics
+    /// are already updated, so only the per-window brushes and the palette lists need the
+    /// new fields.
+    /// </summary>
+    internal void ApplyThemeFrom(Config source)
+    {
+        _config.ThemeMode = source.ThemeMode;
+        _config.LightTheme = source.LightTheme;
+        _config.WindowLight = source.WindowLight;
+        _config.WindowThemeMode = source.WindowThemeMode;
+        _config.TerminalTheme = source.TerminalTheme;
+        RefreshTheme();
+    }
+
+    /// <summary>Theme is process-wide, so a committed change has to reach the other windows.</summary>
+    private void BroadcastTheme() => App.ApplyThemeToOtherWindows(this, _config);
+
     private void RefreshTheme()
     {
         // Shared brushes update in place, which also refreshes the colors captured by
@@ -105,8 +123,14 @@ public sealed partial class Workspace
 
         ApplyWindowTheme();
         ApplyBackgroundOpacity();
+        ApplyTabBarVisibility();
 
-        foreach (Tab tab in _tabs) ForEachPane(tab, pane => pane.ApplyTheme());
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane =>
+            {
+                pane.SyncConfig(_config);
+                pane.ApplyTheme();
+            });
 
         UpdateHeaders();
         UpdateImeSink();
@@ -443,14 +467,16 @@ public sealed partial class Workspace
 
         _paletteRows = new StackPanel { Margin = new Thickness(6), Spacing = RowSpacing };
 
-        MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems, () =>
-        {
-            NewTab();
-            Activate(_tabs.Count - 1);
-        });
+        MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems,
+            () => Activate(IndexOf(NewTab())));
+        MakeRow(Strings.NewWindow, "Ctrl+Shift+N", _paletteItems, OpenNewWindow);
         MakeRow(Strings.SplitRight, "Alt+Shift+Plus", _paletteItems, () => SplitFocused(false));
         MakeRow(Strings.SplitDown, "Alt+Shift+-", _paletteItems, () => SplitFocused(true));
         MakeRow(Strings.CloseFocusedPane, "Ctrl+Shift+W", _paletteItems, CloseFocusedPane);
+        MakeRow(Strings.FindInTerminal, "Ctrl+Shift+F", _paletteItems, () =>
+        {
+            if (_tabs.Count > 0) _tabs[_active].Focused?.ShowSearch();
+        });
         MakeRow(Strings.CopySelection, "Ctrl+Shift+C", _paletteItems, () =>
         {
             if (_tabs.Count > 0) _tabs[_active].Focused?.CopySelection();
@@ -504,6 +530,7 @@ public sealed partial class Workspace
                 ApplyWindowThemeMode(optionValue);
                 Config.SaveValue("window-theme", optionValue);
                 _themePreviewActive = false;
+                BroadcastTheme();
             });
         }
 
@@ -521,6 +548,7 @@ public sealed partial class Workspace
                 ApplyDesignTheme(lightMode);
                 Config.SaveValue("theme", value);
                 _themePreviewActive = false;
+                BroadcastTheme();
             });
         }
 
@@ -864,6 +892,7 @@ public sealed partial class Workspace
                     ApplyNamedTheme(themeName);
                     Config.SaveValue("theme", themeName);
                     _themePreviewActive = false;
+                    BroadcastTheme();
                 });
             }
             // The bundled rows did not exist when the palette opened, so their check marks

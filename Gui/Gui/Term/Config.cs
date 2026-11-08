@@ -29,6 +29,35 @@ public readonly record struct FontCodepointMap(int Start, int End, string Family
 public readonly record struct FontVariation(string Axis, float Value);
 
 /// <summary>
+/// "shell-integration-features": which pieces the injected script emits. Defaults mirror
+/// Ghostty: cursor and title on, the sudo/ssh/path helpers off (and irrelevant on Windows).
+/// </summary>
+public readonly record struct ShellIntegrationFeatures(
+    bool Cursor, bool CursorSteady, bool Title, bool Sudo, bool SshEnv, bool SshTerminfo, bool Path)
+{
+    public static ShellIntegrationFeatures Default => new(true, false, true, false, false, false, true);
+}
+
+/// <summary>Where a search highlight color comes from.</summary>
+public enum SearchColorKind
+{
+    /// <summary>The built-in golden/peach search color.</summary>
+    Default,
+
+    /// <summary>A fixed color from the configuration.</summary>
+    Explicit,
+
+    /// <summary>Use the matched cell's foreground.</summary>
+    CellForeground,
+
+    /// <summary>Use the matched cell's background.</summary>
+    CellBackground,
+}
+
+/// <summary>A "search-*" color: an explicit value or a per-cell reference.</summary>
+public readonly record struct SearchColor(SearchColorKind Kind, Rgb Value);
+
+/// <summary>
 /// A pixel or percentage adjustment, the shape Ghostty uses for every "adjust-*" option:
 /// a bare number is a pixel delta, a trailing "%" is a percentage of the base value.
 /// </summary>
@@ -83,10 +112,17 @@ public sealed class Config
     public Language Language = Language.English;   // "language"; English is the default
     public string InitialCommand = string.Empty;   // empty: same as Command
     public string WorkingDirectory = string.Empty; // empty: %USERPROFILE%
+    public string WindowTitle = string.Empty;      // empty: follow the active pane title
+    public bool Maximize;                          // "maximize": start maximized
+    public bool Fullscreen;                        // "fullscreen": start fullscreen
     public string FontFamily = string.Empty;       // empty: JetBrainsMono Nerd Font
     public string FontFamilyBold = string.Empty;   // empty: FontFamily
     public string FontFamilyItalic = string.Empty; // empty: FontFamily
     public string FontFamilyBoldItalic = string.Empty; // empty: FontFamilyBold or FontFamily
+    public List<string> FontFamilies = new();       // primary first, then fallbacks
+    public List<string> FontFamiliesBold = new();
+    public List<string> FontFamiliesItalic = new();
+    public List<string> FontFamiliesBoldItalic = new();
     public string FontStyleName = string.Empty;    // empty: the style the family advertises
     public string FontStyleBold = string.Empty;
     public string FontStyleItalic = string.Empty;
@@ -100,12 +136,40 @@ public sealed class Config
     public string Scrollbar = "system";            // "system" (default) or "never"
     public bool HasUnfocusedSplitFill;
     public Rgb UnfocusedSplitFill;                 // empty: terminal background
+    public bool HasSplitDividerColor;
+    public Rgb SplitDividerColor;                  // empty: the theme's pane stroke
     public string TabPosition = string.Empty;      // "top" (default), "left", "right"
+    public string NewTabPosition = "current";      // "current" (default) or "end"
+    public bool ShowTabBar = true;                 // window-show-tab-bar: false when never
+    public bool TabInheritWorkingDirectory = true; // new tabs start in the focused shell's cwd
+    public bool WindowInheritWorkingDirectory = true; // new windows do the same
+    public bool SplitInheritWorkingDirectory = true; // new splits do the same
+    public string DragHandle = "auto";             // drag-handle: "auto" (default), "always", "never"
+    public bool InheritFontSize = true;            // new tabs keep the focused pane's font size
     public bool Compact;                           // true: panes run edge to edge
     public double SidebarWidthLeft = 240.0;        // DIPs; restored width of a left rail
     public double SidebarWidthRight = 240.0;       // DIPs; restored width of a right rail
     public string ThemeMode = string.Empty;        // empty, Gui Light, Gui Dark, or a bundled theme name
     public string WindowThemeMode = string.Empty;  // "system" (default), "light", "dark"
+    public string TitleFontFamily = string.Empty;  // window-title-font-family; empty: system default
+    public int WindowWidth;                        // window-width in cells; 0: runtime default
+    public int WindowHeight;                       // window-height in cells; 0: runtime default
+    public bool HasWindowPosition;                 // both window-position-x and -y were set
+    public int WindowPositionX;
+    public int WindowPositionY;
+    public bool PaddingBalance;                    // window-padding-balance
+    public string ConfirmCloseSurface = "true";    // "true", "false", "always"
+    public int ClickRepeatInterval;                // milliseconds; 0 = Ghostty's 500ms default
+    public bool PasteProtection = true;            // clipboard-paste-protection
+    public bool PasteBracketedSafe = true;         // clipboard-paste-bracketed-safe
+    public List<string> ConfigFiles = new();       // config-file entries, resolved
+    public bool BellSystem;                        // bell-features: system
+    public bool BellAudio;                         // bell-features: audio
+    public bool BellAttention = true;              // bell-features: attention
+    public bool BellTitle = true;                  // bell-features: title
+    public bool BellBorder;                        // bell-features: border
+    public string BellAudioPath = string.Empty;    // resolved path; empty: none
+    public float BellAudioVolume = 0.5f;           // 0..1
     public bool DebugTap;                         // record the raw VT byte stream
     public bool CrashDumps;                        // ask WER for full crash dumps
     public TerminalTheme TerminalTheme = new();    // resolved terminal palette
@@ -142,6 +206,12 @@ public sealed class Config
     public float BackgroundOpacity = 1.0f;          // 0..1; window background translucency
     public bool BackgroundOpacityCells;             // translucent explicit cell backgrounds
     public bool BackgroundBlur;                     // DWM acrylic blur behind the window
+
+    /// <summary>
+    /// Runtime state, not a config key: true while the window backdrop owns the terminal
+    /// background tint, so panes must stay transparent and not apply the opacity again.
+    /// </summary>
+    public bool SingleLayerTransparency;
     public string BackgroundImage = string.Empty;   // resolved path; empty: none
     public float BackgroundImageOpacity = 1.0f;     // 0..1
     public string BackgroundImagePosition = "center"; // one of the nine anchors
@@ -157,6 +227,10 @@ public sealed class Config
     public Rgb SelectionBackground;
     public bool HasSelectionForeground;
     public Rgb SelectionForeground;
+    public SearchColor SearchForeground;
+    public SearchColor SearchBackground;
+    public SearchColor SearchSelectedForeground;
+    public SearchColor SearchSelectedBackground;
     public bool HasCursorText;
     public Rgb CursorText;
     public float CursorOpacity = 1.0f;
@@ -168,7 +242,8 @@ public sealed class Config
 
     // ---- layout -----------------------------------------------------------
 
-    public int PaddingLeft = 2;                    // DIPs; Ghostty's window-padding defaults
+    // Ghostty points, not DIPs: PaddingDips converts them at layout time.
+    public int PaddingLeft = 2;                    // Ghostty's window-padding defaults
     public int PaddingTop = 2;
     public int PaddingRight = 2;
     public int PaddingBottom = 2;
@@ -179,7 +254,19 @@ public sealed class Config
 
     public bool CopyOnSelect;
     public string RightClickAction = "context-menu";
+    public string MiddleClickAction = "primary-paste";
+    public bool MouseReporting = true;
+    public string MouseShiftCapture = "false";
+    public bool MouseHideWhileTyping;
+    public bool ScrollToBottomKeystroke = true;
+    public bool ScrollToBottomOutput;
+    public bool LinkUrl = true;
+    public bool LinkOsc8 = true;
+    public string LinkPreviews = "true";           // parsed; previews are not drawn yet
     public bool ClipboardTrimTrailingSpaces = true;
+    public string ClipboardRead = "ask";           // clipboard-read: ask|allow|deny
+    public string ClipboardWrite = "allow";        // clipboard-write: ask|allow|deny
+    public ulong ClipboardWriteLimitBytes = 64 * 1024 * 1024; // clipboard-write-limit-bytes
     public bool SelectionClearOnCopy;
     public bool SelectionClearOnTyping = true;
 
@@ -192,6 +279,15 @@ public sealed class Config
 
     /// <summary>"clipboard-codepoint-map" entries, later entries taking priority.</summary>
     public List<CodepointMap> ClipboardCodepointMap = new();
+
+    // ---- shell integration and notifications ------------------------------
+
+    public string ShellIntegration = "detect";     // none, detect, or a shell name
+    public ShellIntegrationFeatures ShellFeatures = ShellIntegrationFeatures.Default;
+    public string NotifyOnCommandFinish = "never"; // never, unfocused, always
+    public bool NotifyOnCommandFinishBell = true;  // notify-on-command-finish-action: bell
+    public bool NotifyOnCommandFinishToast;        // notify-on-command-finish-action: notify
+    public TimeSpan NotifyOnCommandFinishAfter = TimeSpan.FromSeconds(5);
 
     // ---- process ----------------------------------------------------------
 
@@ -246,10 +342,17 @@ public sealed class Config
         Language = other.Language;
         InitialCommand = other.InitialCommand;
         WorkingDirectory = other.WorkingDirectory;
+        WindowTitle = other.WindowTitle;
+        Maximize = other.Maximize;
+        Fullscreen = other.Fullscreen;
         FontFamily = other.FontFamily;
         FontFamilyBold = other.FontFamilyBold;
         FontFamilyItalic = other.FontFamilyItalic;
         FontFamilyBoldItalic = other.FontFamilyBoldItalic;
+        FontFamilies = new List<string>(other.FontFamilies);
+        FontFamiliesBold = new List<string>(other.FontFamiliesBold);
+        FontFamiliesItalic = new List<string>(other.FontFamiliesItalic);
+        FontFamiliesBoldItalic = new List<string>(other.FontFamiliesBoldItalic);
         FontStyleName = other.FontStyleName;
         FontStyleBold = other.FontStyleBold;
         FontStyleItalic = other.FontStyleItalic;
@@ -261,12 +364,40 @@ public sealed class Config
         Scrollbar = other.Scrollbar;
         HasUnfocusedSplitFill = other.HasUnfocusedSplitFill;
         UnfocusedSplitFill = other.UnfocusedSplitFill;
+        HasSplitDividerColor = other.HasSplitDividerColor;
+        SplitDividerColor = other.SplitDividerColor;
         TabPosition = other.TabPosition;
+        NewTabPosition = other.NewTabPosition;
+        ShowTabBar = other.ShowTabBar;
+        TabInheritWorkingDirectory = other.TabInheritWorkingDirectory;
+        WindowInheritWorkingDirectory = other.WindowInheritWorkingDirectory;
+        SplitInheritWorkingDirectory = other.SplitInheritWorkingDirectory;
+        DragHandle = other.DragHandle;
+        InheritFontSize = other.InheritFontSize;
         Compact = other.Compact;
         SidebarWidthLeft = other.SidebarWidthLeft;
         SidebarWidthRight = other.SidebarWidthRight;
         ThemeMode = other.ThemeMode;
         WindowThemeMode = other.WindowThemeMode;
+        TitleFontFamily = other.TitleFontFamily;
+        WindowWidth = other.WindowWidth;
+        WindowHeight = other.WindowHeight;
+        HasWindowPosition = other.HasWindowPosition;
+        WindowPositionX = other.WindowPositionX;
+        WindowPositionY = other.WindowPositionY;
+        PaddingBalance = other.PaddingBalance;
+        ConfirmCloseSurface = other.ConfirmCloseSurface;
+        ClickRepeatInterval = other.ClickRepeatInterval;
+        PasteProtection = other.PasteProtection;
+        PasteBracketedSafe = other.PasteBracketedSafe;
+        ConfigFiles = new List<string>(other.ConfigFiles);
+        BellSystem = other.BellSystem;
+        BellAudio = other.BellAudio;
+        BellAttention = other.BellAttention;
+        BellTitle = other.BellTitle;
+        BellBorder = other.BellBorder;
+        BellAudioPath = other.BellAudioPath;
+        BellAudioVolume = other.BellAudioVolume;
         DebugTap = other.DebugTap;
         CrashDumps = other.CrashDumps;
         TerminalTheme = other.TerminalTheme;
@@ -300,6 +431,7 @@ public sealed class Config
         BackgroundOpacity = other.BackgroundOpacity;
         BackgroundOpacityCells = other.BackgroundOpacityCells;
         BackgroundBlur = other.BackgroundBlur;
+        SingleLayerTransparency = other.SingleLayerTransparency;
         BackgroundImageOpacity = other.BackgroundImageOpacity;
         BackgroundImagePosition = other.BackgroundImagePosition;
         BackgroundImageFit = other.BackgroundImageFit;
@@ -312,6 +444,10 @@ public sealed class Config
         SelectionBackground = other.SelectionBackground;
         HasSelectionForeground = other.HasSelectionForeground;
         SelectionForeground = other.SelectionForeground;
+        SearchForeground = other.SearchForeground;
+        SearchBackground = other.SearchBackground;
+        SearchSelectedForeground = other.SearchSelectedForeground;
+        SearchSelectedBackground = other.SearchSelectedBackground;
         HasCursorText = other.HasCursorText;
         CursorText = other.CursorText;
         CursorOpacity = other.CursorOpacity;
@@ -328,7 +464,19 @@ public sealed class Config
 
         CopyOnSelect = other.CopyOnSelect;
         RightClickAction = other.RightClickAction;
+        MiddleClickAction = other.MiddleClickAction;
+        MouseReporting = other.MouseReporting;
+        MouseShiftCapture = other.MouseShiftCapture;
+        MouseHideWhileTyping = other.MouseHideWhileTyping;
+        ScrollToBottomKeystroke = other.ScrollToBottomKeystroke;
+        ScrollToBottomOutput = other.ScrollToBottomOutput;
+        LinkUrl = other.LinkUrl;
+        LinkOsc8 = other.LinkOsc8;
+        LinkPreviews = other.LinkPreviews;
         ClipboardTrimTrailingSpaces = other.ClipboardTrimTrailingSpaces;
+        ClipboardRead = other.ClipboardRead;
+        ClipboardWrite = other.ClipboardWrite;
+        ClipboardWriteLimitBytes = other.ClipboardWriteLimitBytes;
         SelectionClearOnCopy = other.SelectionClearOnCopy;
         SelectionClearOnTyping = other.SelectionClearOnTyping;
         SelectionWordChars = other.SelectionWordChars;
@@ -338,6 +486,12 @@ public sealed class Config
         Input = other.Input;
         WaitAfterCommand = other.WaitAfterCommand;
         TermVariable = other.TermVariable;
+        ShellIntegration = other.ShellIntegration;
+        ShellFeatures = other.ShellFeatures;
+        NotifyOnCommandFinish = other.NotifyOnCommandFinish;
+        NotifyOnCommandFinishBell = other.NotifyOnCommandFinishBell;
+        NotifyOnCommandFinishToast = other.NotifyOnCommandFinishToast;
+        NotifyOnCommandFinishAfter = other.NotifyOnCommandFinishAfter;
 
         _values.Clear();
         foreach (var pair in other._values)
@@ -351,26 +505,126 @@ public sealed class Config
     public static Config Load(string file)
     {
         var config = new Config();
-        string data;
         try
         {
-            config._configDirectory = Path.GetDirectoryName(Path.GetFullPath(file)) ?? string.Empty;
             if (!File.Exists(file)) return config;
-            data = File.ReadAllText(file, Encoding.UTF8);
         }
         catch
         {
             return config;
         }
 
-        config.Parse(data);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        config.LoadFile(file, seen, 0);
         config.Resolve();
         return config;
     }
 
+    /// <summary>
+    /// Parses the file and its "config-file" includes without resolving the values into
+    /// typed fields. CLI tools that only need the merged raw keys use this, so no theme
+    /// lookup, registry access or libghostty-vt call happens outside the app process.
+    /// Unlike <see cref="Load()"/> this never writes a template file.
+    /// </summary>
+    public static Config LoadRaw(string file)
+    {
+        var config = new Config();
+        try
+        {
+            if (!File.Exists(file)) return config;
+        }
+        catch
+        {
+            return config;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        config.LoadFile(file, seen, 0);
+        return config;
+    }
+
+    /// <summary>
+    /// Parses one file, then the "config-file" entries it declared. Ghostty loads the
+    /// included files after the entire including file, so their values win. Paths are
+    /// relative to the file that names them and a cycle is ignored instead of recursing.
+    /// </summary>
+    private void LoadFile(string file, HashSet<string> seen, int depth)
+    {
+        string full;
+        try
+        {
+            full = Path.GetFullPath(file);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (!File.Exists(full))
+        {
+            if (depth > 0)
+            {
+                _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, "config-file",
+                    "file not found: " + full));
+            }
+            return;
+        }
+
+        if (depth > 8 || !seen.Add(full))
+        {
+            _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, "config-file",
+                "config-file cycle ignored: " + full));
+            return;
+        }
+
+        string previousDirectory = _configDirectory;
+        _configDirectory = Path.GetDirectoryName(full) ?? string.Empty;
+
+        string data;
+        try
+        {
+            data = File.ReadAllText(full, Encoding.UTF8);
+        }
+        catch
+        {
+            _configDirectory = previousDirectory;
+            seen.Remove(full);
+            return;
+        }
+
+        var includes = new List<string>();
+        Parse(data, includes);
+        _configDirectory = previousDirectory;
+
+        foreach (string raw in includes)
+        {
+            string entry = raw.Trim();
+            bool optional = entry.StartsWith("?", StringComparison.Ordinal);
+            if (optional) entry = entry[1..];
+            if (entry.Length == 0) continue;
+
+            string path = ResolvePath(entry, Path.GetDirectoryName(full) ?? string.Empty);
+            if (path.Length == 0) continue;
+            if (!File.Exists(path))
+            {
+                if (!optional)
+                {
+                    _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, "config-file",
+                        "file not found: " + path));
+                }
+                continue;
+            }
+
+            ConfigFiles.Add(path);
+            LoadFile(path, seen, depth + 1);
+        }
+
+        seen.Remove(full);
+    }
+
     // ---------------- parsing ----------------
 
-    private void Parse(string data)
+    private void Parse(string data, List<string> includes)
     {
         string[] lines = data.Split('\n');
         for (int i = 0; i < lines.Length; i++)
@@ -400,6 +654,11 @@ public sealed class Config
             // Aliases ("shell", "cwd") resolve to the canonical option name.
             key = option.Name;
 
+            // Path-shaped values are relative to the file that contains them, so they are
+            // made absolute while that file's directory is still current.
+            if (key is "background-image" or "bell-audio-path")
+                value = ResolvePath(value, _configDirectory);
+
             // "key = """ clears a repeatable list; an empty value for anything else is a no-op.
             if (value.Length == 0)
             {
@@ -412,6 +671,8 @@ public sealed class Config
                 _diagnostics.Add(new ConfigDiagnostic(i + 1, ConfigSeverity.Warning, key, reason));
                 continue;
             }
+
+            if (key == "config-file") includes.Add(value);
 
             if (option.Kind == ConfigKind.List)
             {
@@ -478,10 +739,19 @@ public sealed class Config
         Language = ParseLanguage(Last("language")) ?? DetectSystemLanguage();
         InitialCommand = Last("initial-command") ?? string.Empty;
         WorkingDirectory = Last("working-directory") ?? string.Empty;
-        FontFamily = Last("font-family") ?? string.Empty;
-        FontFamilyBold = Last("font-family-bold") ?? string.Empty;
-        FontFamilyItalic = Last("font-family-italic") ?? string.Empty;
-        FontFamilyBoldItalic = Last("font-family-bold-italic") ?? string.Empty;
+        WindowTitle = Last("title") ?? string.Empty;
+        Maximize = GetBool("maximize", false);
+        Fullscreen = ParseFullscreen(Last("fullscreen"));
+        // "font-family" is repeatable: Ghostty uses the first entry as the primary face and
+        // every following entry as a fallback for glyphs the earlier ones do not cover.
+        FontFamilies = ParseFamilies("font-family");
+        FontFamiliesBold = ParseFamilies("font-family-bold");
+        FontFamiliesItalic = ParseFamilies("font-family-italic");
+        FontFamiliesBoldItalic = ParseFamilies("font-family-bold-italic");
+        FontFamily = FontFamilies.Count > 0 ? FontFamilies[0] : string.Empty;
+        FontFamilyBold = FontFamiliesBold.Count > 0 ? FontFamiliesBold[0] : string.Empty;
+        FontFamilyItalic = FontFamiliesItalic.Count > 0 ? FontFamiliesItalic[0] : string.Empty;
+        FontFamilyBoldItalic = FontFamiliesBoldItalic.Count > 0 ? FontFamiliesBoldItalic[0] : string.Empty;
         FontStyleName = Last("font-style") ?? string.Empty;
         FontStyleBold = Last("font-style-bold") ?? string.Empty;
         FontStyleItalic = Last("font-style-italic") ?? string.Empty;
@@ -546,6 +816,10 @@ public sealed class Config
             HasSelectionForeground = true;
             SelectionForeground = selectionForeground;
         }
+        SearchForeground = ParseSearchColor(Last("search-foreground"));
+        SearchBackground = ParseSearchColor(Last("search-background"));
+        SearchSelectedForeground = ParseSearchColor(Last("search-selected-foreground"));
+        SearchSelectedBackground = ParseSearchColor(Last("search-selected-background"));
         if (TryGetColor("cursor-text", out Rgb cursorText))
         {
             HasCursorText = true;
@@ -571,18 +845,93 @@ public sealed class Config
 
         CopyOnSelect = ParseCopyOnSelect(Last("copy-on-select"));
         RightClickAction = NormalizeRightClick(Last("right-click-action"));
+        MiddleClickAction = NormalizeMiddleClick(Last("middle-click-action"));
+        MouseReporting = GetBool("mouse-reporting", true);
+        MouseShiftCapture = NormalizeShiftCapture(Last("mouse-shift-capture"));
+        MouseHideWhileTyping = GetBool("mouse-hide-while-typing", false);
+        (ScrollToBottomKeystroke, ScrollToBottomOutput) = ParseScrollToBottom(Last("scroll-to-bottom"));
+        LinkUrl = GetBool("link-url", true);
+        LinkOsc8 = GetBool("link-osc8", true);
+        LinkPreviews = (Last("link-previews") ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "false" => "false",
+            "osc8" => "osc8",
+            _ => "true",
+        };
         ClipboardTrimTrailingSpaces = GetBool("clipboard-trim-trailing-spaces", true);
+        ClipboardRead = ParseClipboardAccess(Last("clipboard-read"), ClipboardRead);
+        ClipboardWrite = ParseClipboardAccess(Last("clipboard-write"), ClipboardWrite);
+        ClipboardWriteLimitBytes = ParseLimit(Last("clipboard-write-limit-bytes"), ClipboardWriteLimitBytes);
         SelectionClearOnCopy = GetBool("selection-clear-on-copy", false);
         SelectionClearOnTyping = GetBool("selection-clear-on-typing", true);
         SelectionWordChars = Last("selection-word-chars") ?? DefaultSelectionWordChars;
         ClipboardCodepointMap = ParseCodepointMaps(All("clipboard-codepoint-map"));
+        PasteProtection = GetBool("clipboard-paste-protection", true);
+        PasteBracketedSafe = GetBool("clipboard-paste-bracketed-safe", true);
+        ClickRepeatInterval = Math.Clamp(GetInt("click-repeat-interval", 0), 0, 10000);
+        ConfirmCloseSurface = NormalizeConfirmClose(Last("confirm-close-surface"));
+
+        TitleFontFamily = (Last("window-title-font-family") ?? string.Empty).Trim();
+        PaddingBalance = GetBool("window-padding-balance", false);
+
+        // "window-width"/"window-height" are grid cells and only apply as a pair.
+        int windowWidth = GetInt("window-width", 0);
+        int windowHeight = GetInt("window-height", 0);
+        if (windowWidth >= 10 && windowHeight >= 4)
+        {
+            WindowWidth = windowWidth;
+            WindowHeight = windowHeight;
+        }
+
+        // "window-position-x"/"window-position-y" are pixels and also apply as a pair.
+        bool hasX = TryGetInt("window-position-x", out int positionX);
+        bool hasY = TryGetInt("window-position-y", out int positionY);
+        if (hasX && hasY)
+        {
+            HasWindowPosition = true;
+            WindowPositionX = positionX;
+            WindowPositionY = positionY;
+        }
+
+        ApplyBellFeatures(Last("bell-features"));
+        BellAudioPath = ResolveImagePath(Last("bell-audio-path") ?? string.Empty);
+        BellAudioVolume = Math.Clamp(GetFloat("bell-audio-volume", 0.5f), 0.0f, 1.0f);
 
         ExtraEnvironment = ParseEnvironment(All("env"));
         Input = string.Concat(All("input"));
         WaitAfterCommand = GetBool("wait-after-command", false);
         TermVariable = Last("term") ?? string.Empty;
+        ShellIntegration = NormalizeShellIntegration(Last("shell-integration"));
+        ApplyShellFeatures(Last("shell-integration-features"));
+        NotifyOnCommandFinish = NormalizeNotifyMode(Last("notify-on-command-finish"));
+        (NotifyOnCommandFinishBell, NotifyOnCommandFinishToast) =
+            ParseNotifyAction(Last("notify-on-command-finish-action"));
+        NotifyOnCommandFinishAfter =
+            ParseDuration(Last("notify-on-command-finish-after"), TimeSpan.FromSeconds(5));
 
         TabPosition = (Last("tab-position") ?? string.Empty).ToLowerInvariant();
+        NewTabPosition =
+            (Last("window-new-tab-position") ?? string.Empty).Trim().ToLowerInvariant() == "end"
+                ? "end"
+                : "current";
+        ShowTabBar = (Last("window-show-tab-bar") ?? string.Empty).Trim().ToLowerInvariant() != "never";
+        TabInheritWorkingDirectory = GetBool("tab-inherit-working-directory", true);
+        WindowInheritWorkingDirectory = GetBool("window-inherit-working-directory", true);
+        SplitInheritWorkingDirectory = GetBool("split-inherit-working-directory", true);
+        InheritFontSize = GetBool("window-inherit-font-size", true);
+        if (TryGetColor("split-divider-color", out Rgb splitDivider))
+        {
+            HasSplitDividerColor = true;
+            SplitDividerColor = splitDivider;
+        }
+        // Automatic is the default and the only value that is not spelled out; anything
+        // unrecognized falls back to it, like Ghostty's enum parsing.
+        DragHandle = (Last("drag-handle") ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "always" => "always",
+            "never" => "never",
+            _ => "auto",
+        };
         Compact = GetBool("compact", false);
         SidebarWidthLeft = ParseSidebarWidth(Last("sidebar-width-left"), SidebarWidthLeft);
         SidebarWidthRight = ParseSidebarWidth(Last("sidebar-width-right"), SidebarWidthRight);
@@ -746,6 +1095,13 @@ public sealed class Config
             ? value
             : fallback;
 
+    public bool TryGetInt(string key, out int value)
+    {
+        value = 0;
+        return _values.TryGetValue(key, out List<string>? list) && list.Count > 0 &&
+               int.TryParse(list[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
     public float GetFloat(string key, float fallback) =>
         _values.TryGetValue(key, out List<string>? list) && list.Count > 0 &&
         float.TryParse(list[^1], NumberStyles.Float, CultureInfo.InvariantCulture, out float value)
@@ -830,6 +1186,18 @@ public sealed class Config
     /// </summary>
     private string ResolveImagePath(string value)
     {
+        string directory = _configDirectory.Length > 0
+            ? _configDirectory
+            : Path.GetDirectoryName(ConfigFile()) ?? string.Empty;
+        return ResolvePath(value, directory);
+    }
+
+    /// <summary>
+    /// Expands "~" and makes a relative path absolute against <paramref name="directory"/>.
+    /// Returns an empty string when the value cannot be turned into a path.
+    /// </summary>
+    private static string ResolvePath(string value, string directory)
+    {
         string path = value.Trim();
         if (path.Length == 0) return string.Empty;
 
@@ -841,13 +1209,8 @@ public sealed class Config
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..]);
             }
 
-            if (!Path.IsPathRooted(path))
-            {
-                string directory = _configDirectory.Length > 0
-                    ? _configDirectory
-                    : Path.GetDirectoryName(ConfigFile()) ?? string.Empty;
-                if (directory.Length > 0) path = Path.Combine(directory, path);
-            }
+            if (!Path.IsPathRooted(path) && directory.Length > 0)
+                path = Path.Combine(directory, path);
 
             return Path.GetFullPath(path);
         }
@@ -1016,6 +1379,326 @@ public sealed class Config
         return text is "true" or "yes" or "on" or "1" or "clipboard" or "both";
     }
 
+    /// <summary>
+    /// "fullscreen" accepts false/true plus the macOS non-native variants; Windows always
+    /// uses the native fullscreen presenter, so every non-false value means "on".
+    /// </summary>
+    private static bool ParseFullscreen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        string text = value.Trim().ToLowerInvariant();
+        if (text is "false" or "no" or "off" or "0") return false;
+        return text is "true" or "yes" or "on" or "1" ||
+               text.StartsWith("non-native", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// "search-*" colors accept a color, "cell-foreground" or "cell-background". An
+    /// unset or invalid value falls back to Ghostty's golden/peach default.
+    /// </summary>
+    private static SearchColor ParseSearchColor(string? value)
+    {
+        string text = (value ?? string.Empty).Trim();
+        if (text.Length == 0) return default;
+
+        switch (text.ToLowerInvariant())
+        {
+            case "cell-foreground":
+                return new SearchColor(SearchColorKind.CellForeground, default);
+            case "cell-background":
+                return new SearchColor(SearchColorKind.CellBackground, default);
+        }
+
+        return TryParseColor(text, out Rgb color)
+            ? new SearchColor(SearchColorKind.Explicit, color)
+            : default;
+    }
+
+    private static string NormalizeMiddleClick(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "clipboard-paste" => "clipboard-paste",
+            "ignore" => "ignore",
+            _ => "primary-paste",
+        };
+    }
+
+    /// <summary>"confirm-close-surface": true (default), false, or always.</summary>
+    private static string NormalizeConfirmClose(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "false" => "false",
+            "always" => "always",
+            _ => "true",
+        };
+    }
+
+    /// <summary>
+    /// "shell-integration": none, detect, or a shell name. This build only injects into
+    /// PowerShell, so the Unix shell names are accepted but cannot be honored on Windows.
+    /// </summary>
+    private string NormalizeShellIntegration(string? value)
+    {
+        string text = (value ?? string.Empty).Trim().ToLowerInvariant();
+        switch (text)
+        {
+            case "":
+            case "detect":
+            case "auto":
+            case "true":
+                return "detect";
+            case "none":
+            case "false":
+                return "none";
+            case "pwsh":
+            case "powershell":
+                return "powershell";
+            case "bash":
+            case "elvish":
+            case "fish":
+            case "nushell":
+            case "zsh":
+                _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Notice, "shell-integration",
+                    text + " integration is not available on Windows"));
+                return text;
+            default:
+                return "detect";
+        }
+    }
+
+    /// <summary>
+    /// "shell-integration-features" is a comma/space separated list with "no-" negations.
+    /// "true" enables every feature and "false" disables every feature, like Ghostty.
+    /// </summary>
+    private void ApplyShellFeatures(string? value)
+    {
+        ShellFeatures = ShellIntegrationFeatures.Default;
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string token = raw.Trim().ToLowerInvariant();
+            if (token == "true")
+            {
+                ShellFeatures = ShellFeatures with
+                {
+                    Cursor = true, Title = true, Sudo = true,
+                    SshEnv = true, SshTerminfo = true, Path = true,
+                };
+                continue;
+            }
+            if (token == "false")
+            {
+                ShellFeatures = ShellFeatures with
+                {
+                    Cursor = false, CursorSteady = false, Title = false,
+                    Sudo = false, SshEnv = false, SshTerminfo = false, Path = false,
+                };
+                continue;
+            }
+
+            bool enable = true;
+            if (token.StartsWith("no-", StringComparison.Ordinal))
+            {
+                enable = false;
+                token = token[3..];
+            }
+
+            // "cursor:steady" asks for a steady bar instead of a blinking one.
+            bool steady = token.Contains(":steady", StringComparison.Ordinal);
+            int colon = token.IndexOf(':');
+            if (colon >= 0) token = token[..colon];
+
+            switch (token)
+            {
+                case "cursor":
+                    ShellFeatures = ShellFeatures with { Cursor = enable, CursorSteady = enable && steady };
+                    break;
+                case "title": ShellFeatures = ShellFeatures with { Title = enable }; break;
+                case "sudo": ShellFeatures = ShellFeatures with { Sudo = enable }; break;
+                case "ssh-env": ShellFeatures = ShellFeatures with { SshEnv = enable }; break;
+                case "ssh-terminfo": ShellFeatures = ShellFeatures with { SshTerminfo = enable }; break;
+                case "path": ShellFeatures = ShellFeatures with { Path = enable }; break;
+            }
+        }
+    }
+
+    /// <summary>"notify-on-command-finish": never (default), unfocused, or always.</summary>
+    private static string NormalizeNotifyMode(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            "always" => "always",
+            "unfocused" => "unfocused",
+            _ => "never",
+        };
+
+    /// <summary>
+    /// "notify-on-command-finish-action": a comma separated list of bell/notify with
+    /// "no-" negations. Ghostty enables the bell and leaves the desktop notification off.
+    /// </summary>
+    private static (bool Bell, bool Toast) ParseNotifyAction(string? value)
+    {
+        bool bell = true;
+        bool toast = false;
+        if (string.IsNullOrWhiteSpace(value)) return (bell, toast);
+
+        foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string token = raw.Trim().ToLowerInvariant();
+            bool enable = true;
+            if (token.StartsWith("no-", StringComparison.Ordinal))
+            {
+                enable = false;
+                token = token[3..];
+            }
+
+            switch (token)
+            {
+                case "bell": bell = enable; break;
+                case "notify": toast = enable; break;
+            }
+        }
+
+        return (bell, toast);
+    }
+
+    /// <summary>
+    /// "notify-on-command-finish-after" durations: numbers with unit suffixes, added
+    /// together ("1h30m", "45s", "500ms"). An unparsable value keeps the default.
+    /// </summary>
+    private static TimeSpan ParseDuration(string? value, TimeSpan fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+
+        double seconds = 0;
+        bool any = false;
+        int i = 0;
+        while (i < value.Length)
+        {
+            char ch = value[i];
+            if (char.IsWhiteSpace(ch) || ch == ',')
+            {
+                i++;
+                continue;
+            }
+            if (!char.IsDigit(ch) && ch != '.')
+            {
+                i++;
+                continue;
+            }
+
+            int numberStart = i;
+            while (i < value.Length && (char.IsDigit(value[i]) || value[i] == '.')) i++;
+            if (!double.TryParse(value[numberStart..i], NumberStyles.Float, CultureInfo.InvariantCulture, out double number))
+                break;
+
+            while (i < value.Length && char.IsWhiteSpace(value[i])) i++;
+            int unitStart = i;
+            while (i < value.Length && char.IsLetter(value[i])) i++;
+            string unit = value[unitStart..i].ToLowerInvariant();
+
+            double factor = unit switch
+            {
+                "ns" => 1e-9,
+                "us" or "\u00b5s" or "\u03bcs" => 1e-6,
+                "ms" => 1e-3,
+                "s" => 1,
+                "m" => 60,
+                "h" => 3600,
+                "d" => 86400,
+                "y" => 31536000,
+                _ => double.NaN,
+            };
+            if (double.IsNaN(factor)) continue;
+
+            seconds += number * factor;
+            any = true;
+        }
+
+        if (!any) return fallback;
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 0, TimeSpan.MaxValue.TotalSeconds));
+    }
+
+    /// <summary>
+    /// "bell-features" is a comma separated list of features with "no-" negations.
+    /// Ghostty's defaults are attention and title on, audio/system/border off.
+    /// </summary>
+    private void ApplyBellFeatures(string? value)
+    {
+        BellSystem = false;
+        BellAudio = false;
+        BellAttention = true;
+        BellTitle = true;
+        BellBorder = false;
+
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string token = raw.Trim().ToLowerInvariant();
+            bool enable = true;
+            if (token.StartsWith("no-", StringComparison.Ordinal))
+            {
+                enable = false;
+                token = token[3..];
+            }
+
+            switch (token)
+            {
+                case "system": BellSystem = enable; break;
+                case "audio": BellAudio = enable; break;
+                case "attention": BellAttention = enable; break;
+                case "title": BellTitle = enable; break;
+                case "border": BellBorder = enable; break;
+            }
+        }
+    }
+
+    private static string NormalizeShiftCapture(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "true" => "true",
+            "always" => "always",
+            "never" => "never",
+            _ => "false",
+        };
+    }
+
+    /// <summary>
+    /// "scroll-to-bottom" is a set of tokens; the default is `keystroke, no-output`.
+    /// Accepts keystroke / no-keystroke / output / no-output.
+    /// </summary>
+    private static (bool Keystroke, bool Output) ParseScrollToBottom(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return (true, false);
+
+        bool keystroke = true;
+        bool output = false;
+        foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            switch (raw.Trim().ToLowerInvariant())
+            {
+                case "keystroke":
+                    keystroke = true;
+                    break;
+                case "no-keystroke":
+                    keystroke = false;
+                    break;
+                case "output":
+                    output = true;
+                    break;
+                case "no-output":
+                    output = false;
+                    break;
+            }
+        }
+        return (keystroke, output);
+    }
+
     private static string NormalizeRightClick(string? value)
     {
         return value?.Trim().ToLowerInvariant() switch
@@ -1062,6 +1745,23 @@ public sealed class Config
             {
                 result.Add(new CodepointMap(Math.Min(start, end), Math.Max(start, end), replacement));
             }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Parses "font-family" entries in order: the first is the primary face, the rest are
+    /// fallbacks consulted per glyph. Blank entries are dropped so a cleared list stays empty.
+    /// </summary>
+    private List<string> ParseFamilies(string key)
+    {
+        var result = new List<string>();
+        foreach (string entry in All(key))
+        {
+            string family = entry.Trim();
+            if (family.Length == 0) continue;
+            if (result.Exists(f => string.Equals(f, family, StringComparison.OrdinalIgnoreCase))) continue;
+            result.Add(family);
         }
         return result;
     }
@@ -1263,10 +1963,17 @@ public sealed class Config
         if (string.IsNullOrEmpty(file)) return;
         EnsureDefault(file);
 
+        // The config file carries active settings only. Read it back without comments or
+        // blank lines so a save cannot reintroduce a commented template.
         var lines = new List<string>();
         try
         {
-            lines.AddRange(File.ReadAllText(file, Encoding.UTF8).Split('\n'));
+            foreach (string raw in File.ReadAllText(file, Encoding.UTF8).Split('\n'))
+            {
+                string line = raw.Trim(' ', '\t', '\r');
+                if (line.Length == 0 || line[0] == '#') continue;
+                lines.Add(line);
+            }
         }
         catch
         {
@@ -1277,12 +1984,9 @@ public sealed class Config
         bool replaced = false;
         for (int i = 0; i < lines.Count; i++)
         {
-            string trimmed = lines[i].Trim(' ', '\t', '\r');
-            // Commented template lines must not count as the active key.
-            if (trimmed.Length == 0 || trimmed[0] == '#') continue;
-            int separator = trimmed.IndexOf('=');
+            int separator = lines[i].IndexOf('=');
             if (separator < 0) continue;
-            if (trimmed[..separator].Trim(' ', '\t').ToLowerInvariant() == wanted)
+            if (lines[i][..separator].Trim(' ', '\t').ToLowerInvariant() == wanted)
             {
                 lines[i] = key + " = " + value;
                 replaced = true;
@@ -1300,7 +2004,10 @@ public sealed class Config
         }
     }
 
-    /// <summary>Writes a commented template when the file does not exist yet.</summary>
+    /// <summary>
+    /// Creates an empty config file when one does not exist yet. Every key falls back to its
+    /// default until the user sets it, so the file needs no commented template.
+    /// </summary>
     public static void EnsureDefault(string file)
     {
         if (File.Exists(file)) return;
@@ -1315,67 +2022,7 @@ public sealed class Config
             return;
         }
 
-        const string template =
-            "# Gui terminal configuration\n" +
-            "#\n" +
-            "# One 'key = value' per line; '#' starts a comment - same shape as ghostty.\n" +
-            "# Every ghostty.org/docs/config/reference option is accepted; options this\n" +
-            "# build cannot honor are reported in gui-startup.log.\n" +
-            "#\n" +
-            "# command            shell to run; default pwsh.exe, then powershell.exe, then %COMSPEC%\n" +
-            "# language           UI language; default follows the system (Simplified\n" +
-            "#                    Chinese -> zh-CN, otherwise English); needs a restart\n" +
-            "# working-directory  directory the shell starts in; default is your user profile\n" +
-            "# font-family        monospace font family; default JetBrainsMono Nerd Font\n" +
-            "# font-size          font size in points; default 12 (about 16 DIPs)\n" +
-            "# unfocused-split-opacity  default 0.7; 0.15 (very dim) to 1 (off)\n" +
-            "# unfocused-split-fill     empty (default; terminal background) or #RRGGBB\n" +
-            "# window-padding-x/y  padding in points; one value for both sides or\n" +
-            "#                    'left,right' / 'top,bottom'; default 2\n" +
-            "# scrollback-limit-bytes  scrollback budget in bytes, or 'unlimited'; default\n" +
-            "#                    50000000 (50 MB), 0 disables scrollback; the old\n" +
-            "#                    scrollback-limit name is still accepted\n" +
-            "# scrollback-limit-lines  row cap, or 'unlimited' (default); the byte cap and\n" +
-            "#                    this one both apply, whichever is reached first trims\n" +
-            "# scrollbar          system (default; only while there is scrollback) or never\n" +
-            "# tab-position       top (default), left or right\n" +
-            "# background-image   PNG/JPEG path; relative paths resolve next to this file\n" +
-            "# background-opacity window background opacity; 1 (default) is opaque\n" +
-            "# background-opacity-cells  true also fades explicit cell backgrounds\n" +
-            "# background-blur    false (default) or true for DWM acrylic blur behind the\n" +
-            "#                    window when background-opacity is below 1\n" +
-            "# compact            false (default; panes float as islands) or true (panes run\n" +
-            "#                    edge to edge with 1px split dividers)\n" +
-            "# sidebar-width-left   left rail width in DIPs; default 240\n" +
-            "# sidebar-width-right  right rail width in DIPs; default 240\n" +
-            "# theme              empty (default), Gui Dark, Gui Light, or a built-in theme\n" +
-            "#                    name such as Dracula or Catppuccin Mocha\n" +
-            "# window-theme       system (default), light or dark; window decorations\n" +
-            "#                    independently of the terminal theme\n" +
-            "# debug-tap          true to record the raw VT byte stream into the log\n" +
-            "# crash-dumps        true to ask Windows for a full crash dump\n" +
-            "\n" +
-            "# command = pwsh.exe\n" +
-            "# working-directory = C:\\Users\\you\n" +
-            "# font-family = JetBrainsMono Nerd Font\n" +
-            "# font-size = 13\n" +
-            "# unfocused-split-opacity = 0.7\n" +
-            "# unfocused-split-fill = #21252B\n" +
-            "# window-padding-x = 2,4\n" +
-            "# window-padding-y = 2\n" +
-            "# scrollback-limit-bytes = 50000000\n" +
-            "# scrollback-limit-lines = unlimited\n" +
-            "# scrollbar = system\n" +
-            "# compact = false\n" +
-            "# sidebar-width-left = 240\n" +
-            "# sidebar-width-right = 240\n" +
-            "# theme = Gui Dark\n" +
-            "# background-image = C:\\images\\background.png\n" +
-            "# background-image-fit = contain\n" +
-            "# background-opacity = 0.9\n" +
-            "# window-theme = system\n" +
-            "# debug-tap = false\n" +
-            "# crash-dumps = false\n";
+        const string template = "";
 
         try
         {
@@ -1466,6 +2113,29 @@ public sealed class Config
     private static bool TryParsePadding(string text, out int value) =>
         int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value) &&
         value >= 0;
+
+    /// <summary>
+    /// "clipboard-read" / "clipboard-write": ask (the default for reads), allow, or deny.
+    /// Anything unknown keeps the fallback so a typo cannot widen access.
+    /// </summary>
+    private static string ParseClipboardAccess(string? value, string fallback)
+    {
+        string text = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return text is "allow" or "deny" or "ask" ? text : fallback;
+    }
+
+    /// <summary>
+    /// Converts a window-padding value from Ghostty's points into the DIPs WinUI lays out in.
+    /// Ghostty scales with <c>floor(points * dpi / 72)</c> (src/Surface.zig scaledPadding);
+    /// a DIP is 1/96 inch, so <c>dpi = 96 * scale</c> and the resulting physical pixel count
+    /// is divided back by the scale. <paramref name="scale"/> is XamlRoot.RasterizationScale.
+    /// </summary>
+    internal static double PaddingDips(int points, double scale)
+    {
+        if (scale <= 0.0) scale = 1.0;
+        double dpi = 96.0 * scale;
+        return Math.Floor(points * dpi / 72.0) / scale;
+    }
 
     /// <summary>Sidebar widths keep a usable range; out-of-range values keep the default.</summary>
     private static double ParseSidebarWidth(string? value, double fallback)

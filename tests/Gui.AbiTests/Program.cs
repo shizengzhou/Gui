@@ -65,6 +65,9 @@ internal static class Program
             CheckConstants();
             CheckCoverage();
             CheckScrollbackSmoke();
+            CheckMouseSmoke();
+            CheckBellSmoke();
+            CheckSearchSmoke();
         }
         catch (Exception error)
         {
@@ -151,6 +154,28 @@ internal static class Program
             new FieldMap("Ptr", "ptr"), new FieldMap("Len", "len")),
         new(typeof(GhosttyNative.GhosttyBuffer), "GhosttyBuffer",
             new FieldMap("Ptr", "ptr"), new FieldMap("Cap", "cap"), new FieldMap("Len", "len")),
+        new(typeof(GhosttyNative.GhosttyClipboardContent), "GhosttyClipboardContent",
+            new FieldMap("Mime", "mime"), new FieldMap("Data", "data")),
+        new(typeof(GhosttyNative.GhosttyClipboardWrite), "GhosttyClipboardWrite",
+            new FieldMap("Size", "size"), new FieldMap("Location", "location"),
+            new FieldMap("Contents", "contents"), new FieldMap("ContentsLen", "contents_len"),
+            new FieldMap("Name", "name"), new FieldMap("Granted", "granted"),
+            new FieldMap("CanRemember", "can_remember"), new FieldMap("Ctx", "ctx"),
+            new FieldMap("Reply", "reply")),
+        new(typeof(GhosttyNative.GhosttyClipboardRead), "GhosttyClipboardRead",
+            new FieldMap("Size", "size"), new FieldMap("Location", "location"),
+            new FieldMap("Mimes", "mimes"), new FieldMap("MimesLen", "mimes_len"),
+            new FieldMap("List", "list"), new FieldMap("Name", "name"),
+            new FieldMap("Granted", "granted"), new FieldMap("CanRemember", "can_remember"),
+            new FieldMap("Ctx", "ctx"), new FieldMap("Reply", "reply")),
+        new(typeof(GhosttyNative.GhosttyClipboardWriteReply), "GhosttyClipboardWriteReply",
+            new FieldMap("Size", "size"), new FieldMap("Result", "result"),
+            new FieldMap("Remember", "remember")),
+        new(typeof(GhosttyNative.GhosttyClipboardReadReply), "GhosttyClipboardReadReply",
+            new FieldMap("Size", "size"), new FieldMap("Result", "result"),
+            new FieldMap("Contents", "contents"), new FieldMap("ContentsLen", "contents_len"),
+            new FieldMap("Available", "available"), new FieldMap("AvailableLen", "available_len"),
+            new FieldMap("Remember", "remember")),
         new(typeof(GhosttyNative.GhosttyStyleColor), "GhosttyStyleColor",
             new FieldMap("Tag", "tag"), new FieldMap("Value", "value")),
         new(typeof(GhosttyNative.GhosttyStyle), "GhosttyStyle",
@@ -169,6 +194,12 @@ internal static class Program
             new FieldMap("Len", "len")),
         new(typeof(GhosttyNative.GhosttyGridRef), "GhosttyGridRef",
             new FieldMap("Size", "size"), new FieldMap("Node", "node"),
+            new FieldMap("X", "x"), new FieldMap("Y", "y")),
+        new(typeof(GhosttyNative.GhosttyMousePosition), "GhosttyMousePosition",
+            new FieldMap("X", "x"), new FieldMap("Y", "y")),
+        new(typeof(GhosttyNative.GhosttySelectionBuffer), "GhosttySelectionBuffer",
+            new FieldMap("Ptr", "ptr"), new FieldMap("Cap", "cap"), new FieldMap("Len", "len")),
+        new(typeof(GhosttyNative.GhosttyPointCoordinate), "GhosttyPointCoordinate",
             new FieldMap("X", "x"), new FieldMap("Y", "y")),
         new(typeof(GhosttyNative.GhosttyPoint), "GhosttyPoint",
             new FieldMap("Tag", "tag"),
@@ -318,6 +349,7 @@ internal static class Program
     {
         new("SUCCESS", "GhosttyResult", "SUCCESS"),
         new("OUT_OF_SPACE", "GhosttyResult", "OUT_OF_SPACE"),
+        new("NO_VALUE", "GhosttyResult", "NO_VALUE"),
 
         new("OPT_USERDATA", "GhosttyTerminalOption", "USERDATA"),
         new("OPT_WRITE_PTY", "GhosttyTerminalOption", "WRITE_PTY"),
@@ -329,9 +361,23 @@ internal static class Program
         new("OPT_COLOR_PALETTE", "GhosttyTerminalOption", "COLOR_PALETTE"),
         new("OPT_SELECTION", "GhosttyTerminalOption", "SELECTION"),
         new("OPT_PWD_CHANGED", "GhosttyTerminalOption", "PWD_CHANGED"),
+        new("OPT_CLIPBOARD_WRITE", "GhosttyTerminalOption", "CLIPBOARD_WRITE"),
+        new("OPT_CLIPBOARD_READ", "GhosttyTerminalOption", "CLIPBOARD_READ"),
+        new("OPT_CLIPBOARD_WRITE_MAX_BYTES", "GhosttyTerminalOption", "CLIPBOARD_WRITE_MAX_BYTES"),
         new("OPT_SCROLLBACK_MAX_BYTES", "GhosttyTerminalOption", "SCROLLBACK_MAX_BYTES"),
         new("OPT_SCROLLBACK_MAX_LINES", "GhosttyTerminalOption", "SCROLLBACK_MAX_LINES"),
         new("OPT_RESIZE_WINDOW", "GhosttyTerminalOption", "RESIZE_WINDOW"),
+
+        new("CLIPBOARD_LOCATION_STANDARD", "GhosttyClipboardLocation", "STANDARD"),
+        new("CLIPBOARD_WRITE_SUCCESS", "GhosttyClipboardWriteResult", "SUCCESS"),
+        new("CLIPBOARD_WRITE_DENIED", "GhosttyClipboardWriteResult", "DENIED"),
+        new("CLIPBOARD_WRITE_UNSUPPORTED", "GhosttyClipboardWriteResult", "UNSUPPORTED"),
+        new("CLIPBOARD_WRITE_INVALID_DATA", "GhosttyClipboardWriteResult", "INVALID_DATA"),
+        new("CLIPBOARD_WRITE_IO_ERROR", "GhosttyClipboardWriteResult", "IO_ERROR"),
+        new("CLIPBOARD_READ_SUCCESS", "GhosttyClipboardReadResult", "SUCCESS"),
+        new("CLIPBOARD_READ_DENIED", "GhosttyClipboardReadResult", "DENIED"),
+        new("CLIPBOARD_READ_UNSUPPORTED", "GhosttyClipboardReadResult", "UNSUPPORTED"),
+        new("CLIPBOARD_READ_IO_ERROR", "GhosttyClipboardReadResult", "IO_ERROR"),
 
         new("TDATA_COLS", "GhosttyTerminalData", "COLS"),
         new("TDATA_ROWS", "GhosttyTerminalData", "ROWS"),
@@ -384,6 +430,38 @@ internal static class Program
         new("SCROLL_DELTA", "GhosttyTerminalScrollViewportTag", "DELTA"),
 
         new("POINT_VIEWPORT", "GhosttyPointTag", "VIEWPORT"),
+        new("POINT_SCREEN", "GhosttyPointTag", "SCREEN"),
+
+        new("SEARCH_STATUS_RUNNING", "GhosttySearchStatus", "RUNNING"),
+        new("SEARCH_STATUS_FEED_REQUIRED", "GhosttySearchStatus", "FEED_REQUIRED"),
+        new("SEARCH_STATUS_COMPLETE", "GhosttySearchStatus", "COMPLETE"),
+
+        new("SEARCH_DATA_STATUS", "GhosttySearchData", "STATUS"),
+        new("SEARCH_DATA_NEEDLE", "GhosttySearchData", "NEEDLE"),
+        new("SEARCH_DATA_TOTAL_MATCHES", "GhosttySearchData", "TOTAL_MATCHES"),
+        new("SEARCH_DATA_SELECTED_INDEX", "GhosttySearchData", "SELECTED_INDEX"),
+        new("SEARCH_DATA_SELECTED_MATCH", "GhosttySearchData", "SELECTED_MATCH"),
+        new("SEARCH_DATA_MATCHES", "GhosttySearchData", "MATCHES"),
+        new("SEARCH_DATA_VIEWPORT_MATCHES", "GhosttySearchData", "VIEWPORT_MATCHES"),
+        new("SEARCH_DATA_SELECT_SCROLL", "GhosttySearchData", "SELECT_SCROLL"),
+
+        new("SEARCH_OPT_NEEDLE", "GhosttySearchOption", "NEEDLE"),
+        new("SEARCH_OPT_SELECT_NEXT", "GhosttySearchOption", "SELECT_NEXT"),
+        new("SEARCH_OPT_SELECT_PREV", "GhosttySearchOption", "SELECT_PREV"),
+        new("SEARCH_OPT_SELECT_SCROLL", "GhosttySearchOption", "SELECT_SCROLL"),
+
+        new("SEARCH_SCROLL_IF_NEEDED", "GhosttySearchScroll", "IF_NEEDED"),
+        new("SEARCH_SCROLL_NONE", "GhosttySearchScroll", "NONE"),
+
+        new("MOUSE_ACTION_PRESS", "GhosttyMouseAction", "PRESS"),
+        new("MOUSE_ACTION_RELEASE", "GhosttyMouseAction", "RELEASE"),
+        new("MOUSE_ACTION_MOTION", "GhosttyMouseAction", "MOTION"),
+        new("MOUSE_BUTTON_LEFT", "GhosttyMouseButton", "LEFT"),
+        new("MOUSE_BUTTON_RIGHT", "GhosttyMouseButton", "RIGHT"),
+        new("MOUSE_BUTTON_MIDDLE", "GhosttyMouseButton", "MIDDLE"),
+        new("MOUSE_BUTTON_FOUR", "GhosttyMouseButton", "FOUR"),
+        new("MOUSE_BUTTON_FIVE", "GhosttyMouseButton", "FIVE"),
+
         new("KEY_ACTION_PRESS", "GhosttyKeyAction", "PRESS"),
         new("FORMAT_PLAIN", "GhosttyFormatterFormat", "PLAIN"),
 
@@ -472,6 +550,212 @@ internal static class Program
         Check("lf-only output wraps into more rows", lfOnly > LineCount + 1, $"kept {lfOnly}");
         Check("lf-only keeps its recorded row count", lfOnly == LfOnlyRows,
             $"kept {lfOnly}, expected {LfOnlyRows}");
+    }
+
+    // ---------------- mouse smoke ----------------
+
+    /// <summary>
+    /// Drives the mouse encoder through the same P/Invoke surface the app uses. The terminal
+    /// is put into SGR mouse tracking mode, so a left press must encode to `ESC [ &lt; 0 ;`.
+    /// </summary>
+    private static unsafe void CheckMouseSmoke()
+    {
+        Section("mouse encoder smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        IntPtr encoder = IntPtr.Zero;
+        IntPtr mouseEvent = IntPtr.Zero;
+        try
+        {
+            byte[] modes = Encoding.ASCII.GetBytes("\u001b[?1000h\u001b[?1006h");
+            fixed (byte* modePointer = modes)
+                GhosttyNative.ghostty_terminal_vt_write(terminal, modePointer, (nuint)modes.Length);
+
+            if (GhosttyNative.ghostty_mouse_encoder_new(IntPtr.Zero, out encoder) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_mouse_event_new(IntPtr.Zero, out mouseEvent) != GhosttyNative.SUCCESS)
+            {
+                Check("mouse encoder/event created", false);
+                return;
+            }
+
+            Check("encoder follows terminal modes",
+                GhosttyNative.ghostty_mouse_encoder_setopt_from_terminal(encoder, terminal)
+                == GhosttyNative.SUCCESS);
+
+            GhosttyNative.ghostty_mouse_event_set_action(mouseEvent, GhosttyNative.MOUSE_ACTION_PRESS);
+            GhosttyNative.ghostty_mouse_event_set_button(mouseEvent, GhosttyNative.MOUSE_BUTTON_LEFT);
+            GhosttyNative.ghostty_mouse_event_set_mods(mouseEvent, 0);
+            // The encoder's default 1x1 cell grid makes the position cell coordinates.
+            GhosttyNative.ghostty_mouse_event_set_position(mouseEvent,
+                new GhosttyNative.GhosttyMousePosition { X = 1, Y = 0 });
+
+            var buffer = new byte[128];
+            fixed (byte* output = buffer)
+            {
+                int result = GhosttyNative.ghostty_mouse_encoder_encode(
+                    encoder, mouseEvent, output, (nuint)buffer.Length, out nuint written);
+                string text = result == GhosttyNative.SUCCESS && written > 0
+                    ? Encoding.ASCII.GetString(buffer, 0, (int)written)
+                    : string.Empty;
+                Check("left press encodes SGR", text.StartsWith("\u001b[<0;", StringComparison.Ordinal),
+                    text.Length == 0 ? "no output" : text.Replace("\u001b", "ESC"));
+            }
+        }
+        finally
+        {
+            if (mouseEvent != IntPtr.Zero) GhosttyNative.ghostty_mouse_event_free(mouseEvent);
+            if (encoder != IntPtr.Zero) GhosttyNative.ghostty_mouse_encoder_free(encoder);
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>
+    /// Exercises the search API end to end: needle, scan, match count, selection, viewport
+    /// matches and grid-ref to viewport conversion (the find-bar highlight path).
+    /// </summary>
+    private static unsafe void CheckSearchSmoke()
+    {
+        Section("search smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        IntPtr search = IntPtr.Zero;
+        try
+        {
+            Check("search created",
+                GhosttyNative.ghostty_search_new(IntPtr.Zero, out search, terminal) == GhosttyNative.SUCCESS);
+
+            byte[] payload = Encoding.ASCII.GetBytes("hello world\r\nhello again\r\n");
+            fixed (byte* pointer = payload)
+                GhosttyNative.ghostty_terminal_vt_write(terminal, pointer, (nuint)payload.Length);
+
+            byte[] needle = Encoding.ASCII.GetBytes("hello");
+            fixed (byte* pointer = needle)
+            {
+                var value = new GhosttyNative.GhosttyString
+                {
+                    Ptr = (IntPtr)pointer,
+                    Len = (nuint)needle.Length,
+                };
+                Check("needle set",
+                    GhosttyNative.ghostty_search_set(search, GhosttyNative.SEARCH_OPT_NEEDLE, &value)
+                    == GhosttyNative.SUCCESS);
+            }
+
+            Check("search runs", GhosttyNative.ghostty_search_run(search) == GhosttyNative.SUCCESS);
+
+            ulong total = 0;
+            Check("two matches",
+                GhosttyNative.ghostty_search_get(search, GhosttyNative.SEARCH_DATA_TOTAL_MATCHES, &total)
+                == GhosttyNative.SUCCESS && total == 2, $"total {total}");
+
+            Check("select next",
+                GhosttyNative.ghostty_search_set(search, GhosttyNative.SEARCH_OPT_SELECT_NEXT, null)
+                == GhosttyNative.SUCCESS);
+
+            ulong index = 0;
+            Check("selected index",
+                GhosttyNative.ghostty_search_get(search, GhosttyNative.SEARCH_DATA_SELECTED_INDEX, &index)
+                == GhosttyNative.SUCCESS, $"index {index}");
+
+            var selected = new GhosttyNative.GhosttySelection
+            {
+                Size = (nuint)sizeof(GhosttyNative.GhosttySelection),
+            };
+            Check("selected match",
+                GhosttyNative.ghostty_search_get(search, GhosttyNative.SEARCH_DATA_SELECTED_MATCH, &selected)
+                == GhosttyNative.SUCCESS);
+
+            var query = new GhosttyNative.GhosttySelectionBuffer();
+            int queryResult = GhosttyNative.ghostty_search_get(
+                search, GhosttyNative.SEARCH_DATA_VIEWPORT_MATCHES, &query);
+            Check("viewport capacity reported",
+                queryResult == GhosttyNative.OUT_OF_SPACE && query.Len > 0,
+                $"result {queryResult} len {query.Len}");
+
+            if (query.Len > 0)
+            {
+                var items = new GhosttyNative.GhosttySelection[(int)query.Len];
+                fixed (GhosttyNative.GhosttySelection* pointer = items)
+                {
+                    var buffer = new GhosttyNative.GhosttySelectionBuffer
+                    {
+                        Ptr = (IntPtr)pointer,
+                        Cap = query.Len,
+                        Len = 0,
+                    };
+                    Check("viewport matches read",
+                        GhosttyNative.ghostty_search_get(
+                            search, GhosttyNative.SEARCH_DATA_VIEWPORT_MATCHES, &buffer)
+                        == GhosttyNative.SUCCESS && buffer.Len > 0,
+                        $"len {buffer.Len}");
+
+                    if (buffer.Len > 0)
+                    {
+                        var coordinate = new GhosttyNative.GhosttyPointCoordinate();
+                        Check("match grid ref converts to viewport",
+                            GhosttyNative.ghostty_terminal_point_from_grid_ref(
+                                terminal, in items[0].Start, GhosttyNative.POINT_VIEWPORT, &coordinate)
+                            == GhosttyNative.SUCCESS,
+                            $"x {coordinate.X} y {coordinate.Y}");
+                    }
+                }
+            }
+
+            Check("needle cleared",
+                GhosttyNative.ghostty_search_set(search, GhosttyNative.SEARCH_OPT_NEEDLE, null)
+                == GhosttyNative.SUCCESS);
+        }
+        finally
+        {
+            if (search != IntPtr.Zero) GhosttyNative.ghostty_search_free(search);
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>
+    /// Verifies the bell effect option: a BEL byte written into the terminal has to reach
+    /// the registered callback, which is what "bell-features" hangs off.
+    /// </summary>
+    private static unsafe void CheckBellSmoke()
+    {
+        Section("bell smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        int fired = 0;
+        GhosttyNative.NotifyFn callback = (_, _) => fired++;
+        try
+        {
+            IntPtr functionPointer = Marshal.GetFunctionPointerForDelegate(callback);
+            Check("bell callback registered",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_BELL, (void*)functionPointer)
+                == GhosttyNative.SUCCESS);
+
+            byte[] bell = { 0x07 };
+            fixed (byte* pointer = bell)
+                GhosttyNative.ghostty_terminal_vt_write(terminal, pointer, (nuint)bell.Length);
+
+            Check("BEL reaches the callback", fired == 1, $"fired {fired} time(s)");
+            GC.KeepAlive(callback);
+        }
+        finally
+        {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
     }
 
     /// <summary>

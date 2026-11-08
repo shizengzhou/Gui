@@ -214,7 +214,8 @@ internal sealed class ConPty : IDisposable
     {
         if (_disposed)
             return;
-        ResizePseudoConsole(_pseudoConsole, new COORD { X = cols, Y = rows });
+        int hr = ResizePseudoConsole(_pseudoConsole, new COORD { X = cols, Y = rows });
+        Diag.Debug("pty.resize", $"cols={cols} rows={rows} hr={hr}");
     }
 
     public string ExecutablePath()

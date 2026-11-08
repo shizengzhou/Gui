@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using Path = Microsoft.UI.Xaml.Shapes.Path;
 using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
@@ -45,6 +45,7 @@ public sealed partial class Workspace
     {
         public TerminalPane? Pane;
         public bool Vertical;   // true: children stacked top/bottom
+        public double Ratio = 0.5; // share of the first child, dragged via the divider
         public SplitNode? First;
         public SplitNode? Second;
     }
@@ -187,6 +188,10 @@ public sealed partial class Workspace
     private bool _headersQueued;
     private IntPtr _hwnd;
 
+    // "confirm-close-surface": the window close is cancelled once, then a dialog decides.
+    private bool _allowClose;
+    private bool _closePromptOpen;
+
     private Grid _paletteLayer = null!;
     private Border _palettePanel = null!;
     private TextBlock? _paletteBackRow;
@@ -222,6 +227,7 @@ public sealed partial class Workspace
     // update the Color of these instances, and every element that captured a brush
     // repaints with the new palette.
     private readonly List<(Func<Color> Color, SolidColorBrush Brush)> _themedBrushes = new();
+    private FontFamily? _defaultTitleFont;
 
     private readonly List<ChipSpring> _chipSprings = new();
     private DispatcherQueueTimer? _chipSpringTimer;
@@ -229,11 +235,22 @@ public sealed partial class Workspace
     private readonly List<Tab> _tabs = new();
     private int _active;
     private bool _sidebarCollapsed;
+    private bool _firstSurface = true;
 
     private readonly List<ExitAnimation> _exitAnimations = new();
     private ZoomTransition? _zoomTransition;
     private readonly List<TerminalPane> _closingPanes = new();
     private Tab? _relayouting;
+
+    /// <summary>True while this workspace applies a config reload (its own or a peer's).</summary>
+    private bool _applyingConfig;
+
+    /// <summary>
+    /// Language this window's chrome was last labelled in. It is tracked per window because
+    /// Strings.Current is process-wide: the window that reloads switches it first, so the
+    /// other windows would otherwise conclude that nothing changed.
+    /// </summary>
+    private Language _appliedLanguage;
 
     private bool _dragging;
     private PointInt32 _dragCursor;
@@ -271,6 +288,7 @@ public sealed partial class Workspace
         _placement = PlacementFrom(config.TabPosition);
         _sidebarWidth = Math.Max(MinSidebarWidth(), SidebarWidthFromConfig());
         _dispatcher = DispatcherQueue.GetForCurrentThread();
+        _appliedLanguage = Strings.Current;
     }
 
     /// <summary>The config value for the tab rail; anything unknown means the top.</summary>
@@ -314,6 +332,7 @@ public sealed partial class Workspace
             // IME timer because they may not exist yet.
             InputSite.Install(_hwnd);
             ApplyWindowTheme();
+            _appWindow.Closing += OnAppWindowClosing;
             _appWindow.Changed += (_, args) =>
             {
                 if (args.DidSizeChange) UpdateMaximizeIcon();
@@ -326,6 +345,29 @@ public sealed partial class Workspace
 
         NewTab();
         Activate(0);
+        UpdateStatus();
+        ApplyTabBarVisibility();
+    }
+
+    /// <summary>
+    /// The focused pane's current grid and cell size, used by "window-width" / "window-height"
+    /// to grow the window by whole cells without having to model the chrome.
+    /// </summary>
+    public bool ActiveGridMetrics(out int columns, out int rows, out double cellWidth, out double cellHeight)
+    {
+        columns = rows = 0;
+        cellWidth = cellHeight = 0;
+        if (_tabs.Count == 0 || _tabs[_active].Focused is not { } pane) return false;
+
+        CellMetrics metrics = pane.CellMetricsDip;
+        if (metrics.Width == 0 || metrics.Height == 0) return false;
+        if (!pane.LaidOut) return false;
+
+        columns = pane.Columns;
+        rows = pane.Rows;
+        cellWidth = metrics.Width;
+        cellHeight = metrics.Height;
+        return true;
     }
 
     /// <summary>
@@ -353,14 +395,62 @@ public sealed partial class Workspace
     /// </summary>
     public void ReloadConfig()
     {
+        if (_applyingConfig) return;
+        _applyingConfig = true;
+        try
+        {
+            ReloadConfigCore();
+        }
+        finally
+        {
+            _applyingConfig = false;
+        }
+
+        // Palette-saved settings (theme, tab rail, density) belong to the whole process: the
+        // other windows re-read the file so every window lands on the same state.
+        App.ReloadOtherWindows(this);
+        Diag.Log("config", "reloaded");
+    }
+
+    /// <summary>
+    /// Reload requested by another window. It must not bounce the reload back, or the two
+    /// windows would keep reloading each other.
+    /// </summary>
+    internal void ReloadFromPeer()
+    {
+        if (_applyingConfig) return;
+        _applyingConfig = true;
+        try
+        {
+            ReloadConfigCore();
+        }
+        finally
+        {
+            _applyingConfig = false;
+        }
+        Diag.Log("config", "reloaded (peer)");
+    }
+
+    private void ReloadConfigCore()
+    {
         Config fresh = Config.Load();
         _config.CopyFrom(fresh);
+
+        // Split panes keep their own copy of the config (their session command and working
+        // directory are per pane), so the reload has to be pushed into them before anything
+        // re-reads it. The pane that shares the live instance returns immediately.
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane => pane.SyncConfig(_config));
 
         // The language is switchable at runtime. It is selected before the theme and the tab
         // rail are refreshed so any chrome rebuild already uses the new strings; the pass at
         // the end then re-labels the elements that survive.
-        bool languageChanged = _config.Language != Strings.Current;
-        if (languageChanged) Strings.Use(_config.Language);
+        bool languageChanged = _config.Language != _appliedLanguage;
+        if (languageChanged)
+        {
+            Strings.Use(_config.Language);
+            _appliedLanguage = _config.Language;
+        }
 
         Theme.Light = fresh.LightTheme;
         Theme.WindowLight = fresh.WindowLight;
@@ -373,6 +463,7 @@ public sealed partial class Workspace
             {
                 pane.ApplyFont();
                 pane.ApplyScrollSettings();
+                pane.ApplyClipboardSettings();
             });
 
         // The chrome is rebuilt here, so a failure must not take the app down with it.
@@ -382,11 +473,10 @@ public sealed partial class Workspace
         // The density is a live setting like the others: an edit to `compact` has to reach the
         // island margin, the split gaps, the pane frames and the tab chips without a restart.
         Diag.Guard("ws.density", () => SetDensity(_config.Compact));
+        Diag.Guard("ws.titleFont", ApplyTitleFont);
 
         if (languageChanged)
             Diag.Guard("ws.language", ApplyLanguage);
-
-        Diag.Log("config", "reloaded");
     }
 
     /// <summary>
@@ -423,6 +513,9 @@ public sealed partial class Workspace
         _config.TabPosition = value;
 
         ApplyTabPlacement(placement);
+
+        // The rail is a process-wide setting: the other windows rebuild their chrome too.
+        if (!_applyingConfig) App.ReloadOtherWindows(this);
     }
 
     /// <summary>
@@ -457,6 +550,9 @@ public sealed partial class Workspace
         }
 
         if (_densityRow is not null) _densityRow.Title.Text = DensityLabel();
+
+        // Density is persisted and belongs to the whole process, like the tab rail.
+        if (!_applyingConfig) App.ReloadOtherWindows(this);
     }
 
     private string DensityLabel() => CompactDensity ? Strings.CompactOn : Strings.CompactOff;
@@ -512,48 +608,92 @@ public sealed partial class Workspace
 
         UpdateHeaders();
         UpdateImeSink();
+        ApplyTabBarVisibility();
         Diag.Log("tab", $"placement {_placement}");
+    }
+
+    /// <summary>
+    /// "window-show-tab-bar = never" hides the tab chips. The header itself stays so the
+    /// window can still be dragged and the caption buttons keep their place.
+    /// </summary>
+    private void ApplyTabBarVisibility()
+    {
+        if (_chipHost is not null)
+            _chipHost.Visibility = _config.ShowTabBar ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ---------------- theme brushes ----------------
 
-    private bool _backdropApplied;
+    private TerminalBackdrop? _backdrop;
+    private uint _backdropTint;
+    private float _backdropOpacity;
+    private bool _backdropAcrylic;
 
     /// <summary>
-    /// "background-opacity" needs something behind the panes. Like Windows Terminal, a
-    /// translucent background with "background-blur" on gets the DWM acrylic backdrop and
-    /// the layers between it and the terminal go transparent, so the wallpaper shows
-    /// through. With blur off (or without acrylic support) the simulated mica stays as the
-    /// app background and only the card becomes transparent.
+    /// "background-opacity" needs something behind the panes. Like Windows Terminal, the
+    /// translucency is a single window backdrop tinted with the terminal background: acrylic
+    /// when "background-blur" is on (or on Windows 10, which has no unblurred transparency),
+    /// a plain translucent brush on Windows 11 with blur off. Panes then stay transparent, so
+    /// the configured opacity is applied once instead of stacking on the system acrylic tint.
     /// </summary>
     private void ApplyBackgroundOpacity()
     {
         bool translucent = _config.BackgroundOpacity < 0.999f;
-        bool blur = translucent && _config.BackgroundBlur;
 
-        bool acrylic = false;
-        if (blur)
+        bool acrylicSupported = false;
+        if (translucent)
         {
             try
             {
-                acrylic = Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController.IsSupported();
+                acrylicSupported =
+                    Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController.IsSupported();
             }
             catch
             {
-                acrylic = false;
+                acrylicSupported = false;
             }
         }
 
-        bool wantBackdrop = blur && acrylic;
-        if (wantBackdrop != _backdropApplied)
+        // "background-blur" selects acrylic; without it Windows 11 can use a plain translucent
+        // brush. Windows 10 has no unblurred transparency, so it keeps acrylic there, exactly
+        // like Windows Terminal. TerminalBackdrop falls back to acrylic if the plain brush
+        // cannot be applied.
+        bool windows11 = Environment.OSVersion.Version.Build >= 22000;
+        bool acrylic = translucent && (_config.BackgroundBlur || !windows11);
+        bool plain = translucent && !acrylic;
+        bool wantBackdrop = translucent && _window is not null && (plain || acrylicSupported);
+
+        // Panes read this while they rebuild their surface: the backdrop owns the tint.
+        _config.SingleLayerTransparency = wantBackdrop;
+
+        Color tint = Theme.TermSurfaceBg();
+        if (wantBackdrop)
         {
-            _backdropApplied = wantBackdrop;
+            if (_backdrop is null || _backdropAcrylic != acrylic ||
+                _backdropOpacity != _config.BackgroundOpacity || _backdropTint != Rgba(tint))
+            {
+                _backdrop = new TerminalBackdrop(tint, _config.BackgroundOpacity, acrylic);
+                _backdropTint = Rgba(tint);
+                _backdropOpacity = _config.BackgroundOpacity;
+                _backdropAcrylic = acrylic;
+                try
+                {
+                    _window!.SystemBackdrop = _backdrop;
+                }
+                catch (Exception error)
+                {
+                    Diag.LogException("ws.backdrop", error);
+                    _backdrop = null;
+                    _config.SingleLayerTransparency = false;
+                }
+            }
+        }
+        else if (_backdrop is not null)
+        {
+            _backdrop = null;
             try
             {
-                if (_window is not null)
-                {
-                    _window.SystemBackdrop = wantBackdrop ? new DesktopAcrylicBackdrop() : null;
-                }
+                if (_window is not null) _window.SystemBackdrop = null;
             }
             catch (Exception error)
             {
@@ -561,10 +701,18 @@ public sealed partial class Workspace
             }
         }
 
-        _root.Background = wantBackdrop ? ClearBrush() : WindowMicaBrush();
+        // The backdrop is the window background: clear the mica and the scrim so it is not
+        // hidden, and let the panes stay transparent for the same reason.
+        bool active = _config.SingleLayerTransparency;
+        _root.Background = active ? ClearBrush() : WindowMicaBrush();
+        if (_shell is not null)
+            _shell.Background = active ? ClearBrush() : ScrimBrush();
         if (_contentCard is not null)
             _contentCard.Background = translucent ? ClearBrush() : CardFillBrush();
     }
+
+    private static uint Rgba(Color color) =>
+        ((uint)color.A << 24) | ((uint)color.R << 16) | ((uint)color.G << 8) | color.B;
 
     private SolidColorBrush ThemedBrush(Func<Color> color)
     {
@@ -638,6 +786,28 @@ public sealed partial class Workspace
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         };
+    }
+
+    /// <summary>
+    /// "window-title-font-family" applies to the tab titles this app draws in place of a
+    /// native title bar. An unset value keeps the system UI font.
+    /// </summary>
+    private FontFamily TitleFontFamily()
+    {
+        _defaultTitleFont ??= new TextBlock().FontFamily;
+        string name = _config.TitleFontFamily;
+        return string.IsNullOrWhiteSpace(name) ? _defaultTitleFont : new FontFamily(name);
+    }
+
+    private void ApplyTitleFont()
+    {
+        FontFamily font = TitleFontFamily();
+        foreach (Tab tab in _tabs)
+        {
+            tab.ChipText.FontFamily = font;
+            tab.ChipTipText.FontFamily = font;
+            PinChipTitleWidth(tab);
+        }
     }
 
     private static FontIcon Glyph(char code, double size, Brush brush)
@@ -913,6 +1083,9 @@ public sealed partial class Workspace
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
         };
+        // The terminal draws its own right-click menu; the TextBox's built-in
+        // copy/paste menu must not appear on top of it.
+        _imeSink.ContextRequested += (_, args) => args.Handled = true;
         _root.Children.Add(_imeSink);
 
         // The sink sits above the whole window at the cursor cell. A press on it never
@@ -938,6 +1111,7 @@ public sealed partial class Workspace
             if (_tabs.Count == 0) return;
             _tabs[_active].Focused?.EndSelectionFromImeSink(args);
         }), true);
+
 
         EnsureInputHandlers();
 
@@ -1223,15 +1397,17 @@ public sealed partial class Workspace
             };
             topTools.Children.Add(add);
 
-            Border search = ToolButton('\uE721', ChromeTextFaintBrush());
-            search.Width = 28;
-            Hoverable(search, ChromeChipHoverBrush);
-            search.PointerPressed += (_, args) =>
+            // The magnifier opens the command palette, like the rail's own search command;
+            // the per-pane find bar stays on Ctrl+Shift+F and the palette's Find row.
+            Border palette = ToolButton('\uE721', ChromeTextFaintBrush());
+            palette.Width = 28;
+            Hoverable(palette, ChromeChipHoverBrush);
+            palette.PointerPressed += (_, args) =>
             {
                 args.Handled = true;
                 ShowCommandPalette();
             };
-            topTools.Children.Add(search);
+            topTools.Children.Add(palette);
 
             Grid.SetColumn(topTools, 1);
             _headerInner.Children.Add(topTools);
@@ -1396,8 +1572,7 @@ public sealed partial class Workspace
         add.PointerPressed += (_, args) =>
         {
             args.Handled = true;
-            NewTab();
-            Activate(_tabs.Count - 1);
+            Activate(IndexOf(NewTab()));
         };
         tools.Children.Add(add);
 
@@ -1427,11 +1602,7 @@ public sealed partial class Workspace
             Text = "新建标签页",
             KeyboardAcceleratorTextOverride = "Ctrl+Shift+T",
         };
-        newTabItem.Click += (_, _) =>
-        {
-            NewTab();
-            Activate(_tabs.Count - 1);
-        };
+        newTabItem.Click += (_, _) => Activate(IndexOf(NewTab()));
         railMenu.Items.Add(newTabItem);
 
         var searchItem = new MenuFlyoutItem
@@ -1635,6 +1806,12 @@ public sealed partial class Workspace
 
     /// <summary>Gap between two split cells; compact mode makes them share an edge.</summary>
     private double SurfaceGap => CompactDensity ? 0.0 : 6.0;
+
+    /// <summary>Thickness of the band that resizes a split; it straddles the boundary.</summary>
+    private const double SplitterWidth = 10.0;
+
+    /// <summary>Smallest a pane may be dragged to, so both sides stay usable.</summary>
+    private const double SplitterMinExtent = 40.0;
 
     /// <summary>The gap under the top tab strip; compact mode drops it.</summary>
     private Thickness SurfaceMargin() =>
@@ -1849,6 +2026,7 @@ public sealed partial class Workspace
         chipGrid.Children.Add(iconSlot);
 
         tab.ChipText = Label(tab.Title, 12, ChromeTextBodyBrush());
+        tab.ChipText.FontFamily = TitleFontFamily();
         tab.ChipText.Margin = new Thickness(0, 0, 8, 0);
         Grid.SetColumn(tab.ChipText, 1);
         chipGrid.Children.Add(tab.ChipText);
@@ -1906,6 +2084,7 @@ public sealed partial class Workspace
         // followed by the italicized switch-to-tab key chord.
         tab.ChipTipText = new TextBlock
         {
+            FontFamily = TitleFontFamily(),
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
         };
@@ -1928,18 +2107,50 @@ public sealed partial class Workspace
         tab.ChipFocus.KeyDown += (_, args) => OnChipKeyDown(self, args);
 
         AutomationProperties.SetName(tab.ChipClose, Strings.CloseTab);
-        _chipHost.Children.Add(tab.ChipFocus);
+        int index = TabInsertIndex();
+        _chipHost.Children.Insert(index, tab.ChipFocus);
 
-        var pane = new TerminalPane(_config);
+        var pane = new TerminalPane(NewTabConfig(ActivePane()));
         WirePane(pane);
 
         tab.Focused = pane;
         tab.Root = new SplitNode { Pane = pane };
 
-        _tabs.Add(tab);
+        _tabs.Insert(index, tab);
         Relayout(tab);
         Diag.Debug("tab", "create done");
         return tab;
+    }
+
+    /// <summary>"window-new-tab-position": after the active tab (current) or at the end.</summary>
+    private int TabInsertIndex() =>
+        _config.NewTabPosition == "current" && _tabs.Count > 0 && _active >= 0 && _active < _tabs.Count
+            ? Math.Min(_active + 1, _tabs.Count)
+            : _tabs.Count;
+
+    private TerminalPane? ActivePane() =>
+        _tabs.Count > 0 && _active >= 0 && _active < _tabs.Count ? _tabs[_active].Focused : null;
+
+    /// <summary>
+    /// The config for a new tab. Tabs inherit the focused shell's directory and font size
+    /// (tab-inherit-working-directory / window-inherit-font-size), and the very first
+    /// surface can use "initial-command".
+    /// </summary>
+    private Config NewTabConfig(TerminalPane? source)
+    {
+        bool inheritDirectory = _config.TabInheritWorkingDirectory && source is not null;
+        bool inheritFont = _config.InheritFontSize && source is not null;
+        bool initialCommand = _firstSurface && _config.InitialCommand.Length > 0;
+        _firstSurface = false;
+
+        if (!inheritDirectory && !inheritFont && !initialCommand) return _config;
+
+        var config = new Config();
+        config.CopyFrom(_config);
+        if (inheritDirectory) config.WorkingDirectory = source!.WorkingDirectory();
+        if (inheritFont) config.FontSize = source!.CurrentFontSizePoints;
+        if (initialCommand) config.Command = _config.InitialCommand;
+        return config;
     }
 
     private void OnChipKeyDown(Tab self, KeyRoutedEventArgs args)
@@ -1993,11 +2204,7 @@ public sealed partial class Workspace
     /// </summary>
     private void RequestNewTab()
     {
-        void Create()
-        {
-            NewTab();
-            Activate(_tabs.Count - 1);
-        }
+        void Create() => Activate(IndexOf(NewTab()));
 
         if (_dispatcher is null)
         {
@@ -2602,6 +2809,14 @@ public sealed partial class Workspace
         ForEachPane(tab, pane => pane.SetSinglePane(singlePane));
         ForEachPane(tab, pane => pane.SetCompact(CompactDensity));
 
+        // Ghostty's split handle is the pane header itself. Dragging is enabled once a tab
+        // has two or more splits; "always" keeps it on a lone pane too, and "never" turns
+        // split dragging off entirely. A zoomed tab paints one pane and refuses the drag, so
+        // it must not advertise the move cursor either.
+        bool dragEnabled = !tab.Zoomed && _config.DragHandle != "never" &&
+                           (!singlePane || _config.DragHandle == "always");
+        ForEachPane(tab, pane => pane.SetDragEnabled(dragEnabled));
+
         if (tab.Zoomed && tab.Focused is not null)
         {
             tab.Surface.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -2636,30 +2851,45 @@ public sealed partial class Workspace
     }
 
     /// <summary>
-    /// Each split becomes a nested two-cell Grid, so the two halves share the parent cell
-    /// exactly and no empty cells are ever laid out.
+    /// Each split becomes a nested three-track Grid: first half, the gap (6 DIP, or compact
+    /// mode's 1 DIP divider), second half. Keeping the gap as its own track is what lets the
+    /// resize grip live exactly on the boundary — a star pair alone would put it in a fixed
+    /// middle that drifts away as the ratio changes.
     /// </summary>
     private FrameworkElement BuildNode(SplitNode node, IReadOnlyList<Grid> previous, List<Grid> grids)
     {
         if (node.Pane is not null) return node.Pane.Visual;
 
-        // Cozy keeps a 6 DIP gap between cells. Compact removes the gap and puts a 1 DIP
-        // divider in its place, so the split line is the same weight the pane border used to
-        // draw.
+        // Cozy keeps a 6 DIP gap between cells. Compact replaces it with a 1 DIP divider, so
+        // the split line is the same weight the pane border used to draw. The two stars carry
+        // the split's own ratio, which the divider drag edits.
         bool compact = CompactDensity;
-        var grid = new Grid { RowSpacing = SurfaceGap, ColumnSpacing = SurfaceGap };
+        double gap = compact ? 1.0 : SurfaceGap;
+        var grid = new Grid();
         grids.Add(grid);
         if (node.Vertical)
         {
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            if (compact) grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition
+            {
+                Height = new GridLength(node.Ratio, GridUnitType.Star),
+            });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(gap) });
+            grid.RowDefinitions.Add(new RowDefinition
+            {
+                Height = new GridLength(1.0 - node.Ratio, GridUnitType.Star),
+            });
         }
         else
         {
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            if (compact) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = new GridLength(node.Ratio, GridUnitType.Star),
+            });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(gap) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = new GridLength(1.0 - node.Ratio, GridUnitType.Star),
+            });
         }
 
         FrameworkElement first = BuildNode(node.First!, previous, grids);
@@ -2667,22 +2897,115 @@ public sealed partial class Workspace
         if (node.Vertical)
         {
             Grid.SetRow(first, 0);
-            Grid.SetRow(second, compact ? 2 : 1);
+            Grid.SetRow(second, 2);
         }
         else
         {
             Grid.SetColumn(first, 0);
-            Grid.SetColumn(second, compact ? 2 : 1);
+            Grid.SetColumn(second, 2);
         }
         AddChild(grid, first, previous);
         if (compact)
         {
-            var divider = new Border { Background = new SolidColorBrush(Theme.PaneStroke()) };
+            Color dividerColor = _config.HasSplitDividerColor
+                ? Color.FromArgb(255, _config.SplitDividerColor.R, _config.SplitDividerColor.G,
+                    _config.SplitDividerColor.B)
+                : Theme.PaneStroke();
+            var divider = new Border { Background = new SolidColorBrush(dividerColor) };
             if (node.Vertical) Grid.SetRow(divider, 1); else Grid.SetColumn(divider, 1);
             grid.Children.Add(divider);
         }
         AddChild(grid, second, previous);
+        // The resize grip goes in last so it sits above both halves and the divider.
+        grid.Children.Add(BuildSplitter(node, grid, gap));
         return grid;
+    }
+
+    /// <summary>
+    /// The invisible band that turns a split boundary into a resize handle. It fills the gap
+    /// track and reaches a few DIP into both panes with negative margins, so the pointer only
+    /// has to graze the line to grab it.
+    /// </summary>
+    private FrameworkElement BuildSplitter(SplitNode node, Grid grid, double gap)
+    {
+        var grip = new ResizeGrip(node.Vertical
+            ? InputSystemCursorShape.SizeNorthSouth
+            : InputSystemCursorShape.SizeWestEast)
+        {
+            Content = new Grid { Background = ClearBrush() },
+        };
+        double reach = Math.Max(0.0, (SplitterWidth - gap) / 2.0);
+        if (node.Vertical)
+        {
+            Grid.SetRow(grip, 1);
+            grip.HorizontalAlignment = HorizontalAlignment.Stretch;
+            grip.VerticalAlignment = VerticalAlignment.Stretch;
+            grip.Margin = new Thickness(0, -reach, 0, -reach);
+        }
+        else
+        {
+            Grid.SetColumn(grip, 1);
+            grip.HorizontalAlignment = HorizontalAlignment.Stretch;
+            grip.VerticalAlignment = VerticalAlignment.Stretch;
+            grip.Margin = new Thickness(-reach, 0, -reach, 0);
+        }
+
+        double grab = 0.0;
+        bool dragging = false;
+        // The line runs through the middle of the gap track, so the drag maths folds that
+        // track in on both sides of the conversion.
+
+        grip.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            Point point = args.GetCurrentPoint(grid).Position;
+            double extent = node.Vertical ? grid.ActualHeight : grid.ActualWidth;
+            // Keep the pointer's offset to the line, so grabbing the band off-centre does
+            // not snap the split under it.
+            grab = (node.Vertical ? point.Y : point.X) - (node.Ratio * (extent - gap) + gap / 2.0);
+            dragging = true;
+            grip.CapturePointer(args.Pointer);
+        };
+        grip.PointerMoved += (_, args) =>
+        {
+            if (!dragging) return;
+            args.Handled = true;
+
+            double extent = node.Vertical ? grid.ActualHeight : grid.ActualWidth;
+            if (extent - gap <= SplitterMinExtent * 2.0) return;
+
+            Point point = args.GetCurrentPoint(grid).Position;
+            double edge = (node.Vertical ? point.Y : point.X) - grab - gap / 2.0;
+            double margin = SplitterMinExtent / (extent - gap);
+            node.Ratio = Math.Clamp(edge / (extent - gap), margin, 1.0 - margin);
+            ApplySplitRatio(node, grid);
+        };
+        grip.PointerReleased += (_, args) =>
+        {
+            if (!dragging) return;
+            args.Handled = true;
+            dragging = false;
+            grip.ReleasePointerCapture(args.Pointer);
+        };
+        grip.PointerCaptureLost += (_, _) => dragging = false;
+        return grip;
+    }
+
+    /// <summary>Writes the node's ratio into the live grid, without rebuilding the tree.</summary>
+    private static void ApplySplitRatio(SplitNode node, Grid grid)
+    {
+        if (node.Vertical)
+        {
+            if (grid.RowDefinitions.Count < 2) return;
+            grid.RowDefinitions[0].Height = new GridLength(node.Ratio, GridUnitType.Star);
+            grid.RowDefinitions[^1].Height = new GridLength(1.0 - node.Ratio, GridUnitType.Star);
+        }
+        else
+        {
+            if (grid.ColumnDefinitions.Count < 2) return;
+            grid.ColumnDefinitions[0].Width = new GridLength(node.Ratio, GridUnitType.Star);
+            grid.ColumnDefinitions[^1].Width = new GridLength(1.0 - node.Ratio, GridUnitType.Star);
+        }
     }
 
     private static void VisitPanes(SplitNode node, Action<TerminalPane> fn)
@@ -2781,6 +3104,8 @@ public sealed partial class Workspace
     {
         pane.OnFocus = p =>
         {
+            // Hovering must not move the focus while a split is being dragged across panes.
+            if (_dragPane is not null) return;
             foreach (Tab tab in _tabs)
             {
                 if (!TabContainsPane(tab, p)) continue;
@@ -2841,8 +3166,21 @@ public sealed partial class Workspace
         };
         pane.OnSplitRight = _ => SplitFocused(false);
         pane.OnSplitDown = _ => SplitFocused(true);
+        pane.OnDragHandleStart = BeginPaneDrag;
+        pane.OnDragHandleMove = MovePaneDrag;
+        pane.OnDragHandleDrop = p => EndPaneDrag(p, true);
+        pane.OnDragHandleCancel = p => EndPaneDrag(p, false);
         pane.OnMaximize = _ => TogglePaneZoom();
         pane.OnClosePane = _ => CloseFocusedPane();
+        pane.OnBellAttention = _ => FlashWindow();
+        pane.OnCommandFinished = OnPaneCommandFinished;
+        pane.OnSearchFocusReleased = p =>
+        {
+            // Returning focus to the IME sink lets the find bar stay visible while the
+            // terminal resumes shell input, matching Ghostty's Esc behavior.
+            if (_tabs.Count > 0 && ReferenceEquals(_tabs[_active].Focused, p))
+                _imeSink.Focus(FocusState.Programmatic);
+        };
     }
 
     private void TogglePaneZoom()
@@ -2913,24 +3251,16 @@ public sealed partial class Workspace
         if (tab.Focused is null || tab.Root is null) return;
 
         // The split inherits the focused session: same shell command and the directory the
-        // shell is currently sitting in.
-        var childConfig = new Config
-        {
-            Command = _config.Command,
-            WorkingDirectory = _config.WorkingDirectory,
-            FontFamily = _config.FontFamily,
-            FontSize = _config.FontSize,
-            UnfocusedSplitOpacity = _config.UnfocusedSplitOpacity,
-            HasUnfocusedSplitFill = _config.HasUnfocusedSplitFill,
-            UnfocusedSplitFill = _config.UnfocusedSplitFill,
-            TabPosition = _config.TabPosition,
-            ThemeMode = _config.ThemeMode,
-            WindowThemeMode = _config.WindowThemeMode,
-        };
+        // shell is currently sitting in. Everything else (background opacity/blur, backdrop
+        // state, font features, adjustments, ...) comes from the live config, otherwise a
+        // new pane would render opaque while the others are translucent.
+        var childConfig = new Config();
+        childConfig.CopyFrom(_config);
 
         string command = tab.Focused.ShellCommand();
         if (command.Length > 0) childConfig.Command = command;
-        childConfig.WorkingDirectory = tab.Focused.WorkingDirectory();
+        if (_config.SplitInheritWorkingDirectory)
+            childConfig.WorkingDirectory = tab.Focused.WorkingDirectory();
 
         SplitNode? root = tab.Root;
         if (!SplitLeaf(ref root, tab.Focused, vertical, childConfig, out TerminalPane? created) || created is null)

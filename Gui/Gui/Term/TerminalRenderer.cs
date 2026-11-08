@@ -27,7 +27,7 @@ public sealed unsafe class TerminalRenderer
         "JetBrainsMonoNerdFont-BoldItalic.ttf",
     };
 
-    private readonly Dictionary<int, CanvasTextFormat> _formats = new();
+    private readonly Dictionary<(int Face, string Family), CanvasTextFormat> _formats = new();
     private readonly StringBuilder _text = new(64);
 
     /// <summary>Cached text layouts, keyed by the run text and the face it is drawn with.</summary>
@@ -45,6 +45,33 @@ public sealed unsafe class TerminalRenderer
     private CanvasFontSet? _systemFontSet;
     private readonly Dictionary<(string Family, ushort Weight, bool Italic), bool> _realFaces = new();
 
+    /// <summary>Resolved faces per family/weight/slant, used to test glyph coverage.</summary>
+    private readonly Dictionary<(string Family, ushort Weight, bool Italic), CanvasFontFace?> _faces = new();
+
+    /// <summary>Per-codepoint coverage answers for the configured families.</summary>
+    private readonly Dictionary<(string Family, ushort Weight, bool Italic, int Codepoint), bool> _coverage = new();
+
+    /// <summary>
+    /// Configured family chains per face (0 regular, 1 bold, 2 italic, 3 bold italic), primary
+    /// first. Ghostty lets "font-family" repeat and uses the later entries as fallbacks.
+    /// </summary>
+    private string[][] _familyChains =
+    {
+        new[] { "JetBrainsMono Nerd Font" },
+        new[] { "JetBrainsMono Nerd Font" },
+        new[] { "JetBrainsMono Nerd Font" },
+        new[] { "JetBrainsMono Nerd Font" },
+    };
+
+    /// <summary>The fallback families for each face, without its primary family.</summary>
+    private string[][] _fallbacks = { Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>() };
+
+    /// <summary>
+    /// Per-run split into the family each grapheme is drawn with. Null means the run is fully
+    /// covered by its primary face, so a single layout (and its ligatures) is used.
+    /// </summary>
+    private readonly Dictionary<(string Text, int Face), RunSegment[]?> _segments = new();
+
     /// <summary>"background-image": decoded once and redrawn every frame.</summary>
     private CanvasBitmap? _backgroundImage;
     private string _backgroundImagePath = string.Empty;
@@ -52,13 +79,14 @@ public sealed unsafe class TerminalRenderer
     /// <summary>Raised when an asynchronously loaded background image becomes available.</summary>
     public event Action? NeedsRedraw;
 
-    private readonly record struct LayoutKey(string Text, int Face);
+    /// <summary>One run of graphemes drawn with the same family, positioned on the grid.</summary>
+    private readonly record struct RunSegment(int Index, int Length, int Cell, string Family);
+
+    private readonly record struct LayoutKey(string Text, int Face, string Family);
 
     private CanvasTextFormat _baseFormat = CreateFormat("Consolas", 13f, false, 400);
     private string _fontFamily = "JetBrainsMono Nerd Font";
-    private string _fontFamilyBold = string.Empty;
-    private string _fontFamilyItalic = string.Empty;
-    private string _fontFamilyBoldItalic = string.Empty;
+    private string _resolvedFamily = "JetBrainsMono Nerd Font";
     private FaceStyle[] _faceStyles =
     {
         new(false, 400, false),
@@ -71,6 +99,8 @@ public sealed unsafe class TerminalRenderer
     private float _textOffsetY;
     private Config? _config;
     private CellMetrics _metrics = new(8, 16);
+    private float _cellAdvanceX = 8f;
+    private Dictionary<int, List<SearchSpan>> _searchByRow = new();
     private ushort _cursorX;
     private ushort _cursorY;
     private bool _cursorValid;
@@ -85,6 +115,35 @@ public sealed unsafe class TerminalRenderer
     }
 
     public CellMetrics CellMetrics => _metrics;
+
+    /// <summary>
+    /// The font's exact per-character advance in DIPs. CellMetrics rounds the width up for
+    /// column math, but drawing has to use the real advance: runs split at a search
+    /// highlight are positioned on the grid, and the rounded width would shift them right
+    /// of the continuously drawn text by one pixel per character.
+    /// </summary>
+    public float CellAdvanceX => _cellAdvanceX;
+
+    /// <summary>
+    /// Search highlights for the current viewport. They are applied per cell as a
+    /// background and text color override, so the glyphs stay crisp instead of being
+    /// covered by a translucent rectangle.
+    /// </summary>
+    public void SetSearchSpans(IReadOnlyList<SearchSpan>? spans)
+    {
+        _searchByRow.Clear();
+        if (spans is null) return;
+
+        foreach (SearchSpan span in spans)
+        {
+            if (!_searchByRow.TryGetValue(span.Row, out List<SearchSpan>? row))
+            {
+                row = new List<SearchSpan>(2);
+                _searchByRow[span.Row] = row;
+            }
+            row.Add(span);
+        }
+    }
 
     /// <summary>
     /// When true, text runs are drawn through a cached <see cref="CanvasTextLayout"/> so the
@@ -151,9 +210,6 @@ public sealed unsafe class TerminalRenderer
     public void ApplyConfig(Config config)
     {
         _config = config;
-        _fontFamilyBold = config.FontFamilyBold;
-        _fontFamilyItalic = config.FontFamilyItalic;
-        _fontFamilyBoldItalic = config.FontFamilyBoldItalic;
 
         // font-style names become a DirectWrite weight/slant per face; "false" disables the
         // style, in which case the regular face is used.
@@ -165,13 +221,39 @@ public sealed unsafe class TerminalRenderer
             FontStyleNames.Parse(config.FontStyleBoldItalic, true, true),
         };
 
-        string family = string.IsNullOrEmpty(config.FontFamily) ? "JetBrainsMono Nerd Font" : config.FontFamily;
-        float size = config.FontSizeDip;
-        _fontFamily = family;
-        _fontSize = size;
+        // "font-family" is repeatable in Ghostty: the first entry is the face, the rest are
+        // fallbacks for glyphs the earlier entries do not cover. The style-specific lists
+        // inherit the regular list when unset.
+        string[] regular = Chain(config.FontFamilies);
+        string[] bold = Chain(config.FontFamiliesBold, regular);
+        string[] italic = Chain(config.FontFamiliesItalic, regular);
+        string[] boldItalic = Chain(config.FontFamiliesBoldItalic, bold);
+        _familyChains = new[] { regular, bold, italic, boldItalic };
+
+        _fontFamily = regular[0];
+        _fontSize = config.FontSizeDip;
         BuildTypography();
         SetBackgroundImage(config.BackgroundImage);
-        Rebuild(0);
+        Rebuild();
+    }
+
+    private static readonly string[] DefaultFamilies = { "JetBrainsMono Nerd Font" };
+
+    private static readonly string[] DefaultFamilyCandidates =
+    {
+        "JetBrainsMono Nerd Font",
+        "Cascadia Mono",
+        "Cascadia Code",
+        "Consolas",
+        "Courier New",
+    };
+
+    private static string[] Chain(List<string> families, string[]? inherit = null)
+    {
+        if (families.Count == 0) return inherit ?? DefaultFamilies;
+        var chain = new string[families.Count];
+        for (int i = 0; i < families.Count; i++) chain[i] = families[i];
+        return chain;
     }
 
     /// <summary>
@@ -184,7 +266,8 @@ public sealed unsafe class TerminalRenderer
         if (string.IsNullOrEmpty(family)) family = "JetBrainsMono Nerd Font";
         if (family == _fontFamily) return;
         _fontFamily = family;
-        Rebuild(0);
+        _familyChains[0] = new[] { family };
+        Rebuild();
     }
 
     /// <summary>Font size in DIPs. Recomputes cell metrics.</summary>
@@ -193,7 +276,7 @@ public sealed unsafe class TerminalRenderer
         if (size < 6f || size > 96f) return;
         if (Math.Abs(size - _fontSize) < 0.01f) return;
         _fontSize = size;
-        Rebuild(0);
+        Rebuild();
     }
 
     /// <summary>
@@ -205,39 +288,57 @@ public sealed unsafe class TerminalRenderer
         float value = scale > 0 ? (float)scale : 1f;
         if (Math.Abs(value - _rasterizationScale) < 0.001f) return;
         _rasterizationScale = value;
-        Rebuild(0);
+        Rebuild();
     }
 
-    private void Rebuild(int attempt)
+    private void Rebuild()
     {
         // Layouts bake in the face, size and per-range overrides, so any metric change
         // invalidates all of them.
         InvalidateLayouts();
+        _segments.Clear();
+        _coverage.Clear();
+        _faces.Clear();
 
-        string[] candidates =
-        {
-            attempt == 0 ? _fontFamily : string.Empty,
-            "JetBrainsMono Nerd Font",
-            "Cascadia Mono",
-            "Cascadia Code",
-            "Consolas",
-            "Courier New",
-        };
+        _resolvedFamily = FirstMonospace(_familyChains[0]) ??
+                          FirstMonospace(DefaultFamilyCandidates) ?? "Consolas";
 
-        foreach (string candidate in candidates)
-        {
-            if (string.IsNullOrEmpty(candidate)) continue;
-            var probe = CreateFormat(candidate, _fontSize, false, 400);
-            if (!IsMonospace(probe)) continue;
-            _baseFormat = CreateBaseFormat(candidate);
-            _formats.Clear();
-            MeasureCell();
-            return;
-        }
-
-        _baseFormat = CreateBaseFormat("Consolas");
+        _baseFormat = CreateBaseFormat(_resolvedFamily);
         _formats.Clear();
+        BuildFallbacks();
         MeasureCell();
+    }
+
+    private string? FirstMonospace(string[] families)
+    {
+        foreach (string family in families)
+        {
+            if (string.IsNullOrEmpty(family)) continue;
+            var probe = CreateFormat(family, _fontSize, false, 400);
+            if (!IsMonospace(probe)) continue;
+            return family;
+        }
+        return null;
+    }
+
+    /// <summary>Drops the primary family from each chain, leaving the fallback order.</summary>
+    private void BuildFallbacks()
+    {
+        var result = new string[4][];
+        for (int face = 0; face < 4; face++)
+        {
+            string primary = FamilyFor(face);
+            var list = new List<string>();
+            foreach (string family in _familyChains[face])
+            {
+                if (string.IsNullOrEmpty(family)) continue;
+                if (string.Equals(family, primary, StringComparison.OrdinalIgnoreCase)) continue;
+                if (list.Exists(f => string.Equals(f, family, StringComparison.OrdinalIgnoreCase))) continue;
+                list.Add(family);
+            }
+            result[face] = list.ToArray();
+        }
+        _fallbacks = result;
     }
 
     /// <summary>The regular face for a family, honoring font-style, variations and synthesis.</summary>
@@ -271,6 +372,7 @@ public sealed unsafe class TerminalRenderer
             height = _config.CellHeightAdjust.Apply((float)height, _rasterizationScale);
         }
 
+        _cellAdvanceX = (float)advance;
         _metrics = new CellMetrics(
             (uint)Math.Max(1, Math.Ceiling(advance)),
             (uint)Math.Max(1, Math.Ceiling(height)));
@@ -282,26 +384,26 @@ public sealed unsafe class TerminalRenderer
         _textOffsetY = offset;
     }
 
-    private CanvasTextFormat FormatFor(bool bold, bool italic)
-    {
-        int key = (bold ? 1 : 0) | (italic ? 2 : 0);
-        if (_formats.TryGetValue(key, out CanvasTextFormat? cached)) return cached;
-        if (key == 0) return _baseFormat;
+    /// <summary>The format for a face, with the family it was drawn with.</summary>
+    private CanvasTextFormat FormatFor(bool bold, bool italic, string? family = null) =>
+        FormatFor((bold ? 1 : 0) | (italic ? 2 : 0), family);
 
-        string family = FamilyFor(key);
-        (ushort weight, bool slant, Windows.UI.Text.FontStretch stretch) = ResolveFace(key, family);
-        var format = CreateFormat(family, _fontSize, slant, weight, stretch);
-        _formats[key] = format;
+    private CanvasTextFormat FormatFor(int key, string? family = null)
+    {
+        string resolved = family ?? FamilyFor(key);
+        if (key == 0 && string.Equals(resolved, _resolvedFamily, StringComparison.Ordinal))
+            return _baseFormat;
+
+        var cacheKey = (key, resolved);
+        if (_formats.TryGetValue(cacheKey, out CanvasTextFormat? cached)) return cached;
+
+        (ushort weight, bool slant, Windows.UI.Text.FontStretch stretch) = ResolveFace(key, resolved);
+        var format = CreateFormat(resolved, _fontSize, slant, weight, stretch);
+        _formats[cacheKey] = format;
         return format;
     }
 
-    private string FamilyFor(int key) => key switch
-    {
-        1 => UseOr(_fontFamilyBold, _fontFamily),
-        2 => UseOr(_fontFamilyItalic, _fontFamily),
-        3 => UseOr(_fontFamilyBoldItalic, UseOr(_fontFamilyBold, _fontFamily)),
-        _ => _fontFamily,
-    };
+    private string FamilyFor(int key) => key == 0 ? _resolvedFamily : _familyChains[key][0];
 
     /// <summary>
     /// Resolves a face to the weight, slant and width DirectWrite takes. The "font-style"
@@ -454,8 +556,166 @@ public sealed unsafe class TerminalRenderer
         return false;
     }
 
-    private static string UseOr(string preferred, string fallback) =>
-        string.IsNullOrEmpty(preferred) ? fallback : preferred;
+    // ---------------- font fallback ----------------
+    //
+    // Ghostty treats every "font-family" entry after the first as a fallback: a glyph the
+    // earlier families do not have is drawn with the first one that does. DirectWrite's own
+    // system fallback still applies when no configured family covers the glyph.
+
+    /// <summary>The family a grapheme is drawn with on the given face.</summary>
+    private string FamilyForGrapheme(string grapheme, int face)
+    {
+        string primary = FamilyFor(face);
+        string[] fallbacks = _fallbacks[face];
+        if (fallbacks.Length == 0) return primary;
+
+        // An unknown primary (a family DirectWrite cannot resolve) keeps the single-layout
+        // path: DirectWrite's own fallback is better than probing every glyph.
+        if (!CoversGrapheme(primary, face, grapheme, assumeWhenUnknown: true))
+        {
+            foreach (string family in fallbacks)
+            {
+                if (CoversGrapheme(family, face, grapheme, assumeWhenUnknown: false)) return family;
+            }
+        }
+        return primary;
+    }
+
+    /// <summary>Whether the family has a glyph for every meaningful codepoint in the grapheme.</summary>
+    private bool CoversGrapheme(string family, int face, string grapheme, bool assumeWhenUnknown)
+    {
+        (ushort weight, bool italic, _) = ResolveFace(face, family);
+        if (FindFace(family, weight, italic) is null) return assumeWhenUnknown;
+
+        for (int i = 0; i < grapheme.Length; i += CharLength(grapheme, i))
+        {
+            int codepoint = CodepointAt(grapheme, i);
+            if (IsIgnorableForCoverage(codepoint)) continue;
+            if (!HasGlyph(family, weight, italic, codepoint)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Joiners and variation selectors do not need their own glyph in the fallback.</summary>
+    private static bool IsIgnorableForCoverage(int codepoint) =>
+        codepoint is 0x200C or 0x200D ||
+        codepoint is >= 0xFE00 and <= 0xFE0F ||
+        codepoint is >= 0xE0100 and <= 0xE01EF;
+
+    private bool HasGlyph(string family, ushort weight, bool italic, int codepoint)
+    {
+        var key = (family, weight, italic, codepoint);
+        if (_coverage.TryGetValue(key, out bool cached)) return cached;
+
+        if (_coverage.Count >= LayoutCacheCapacity) _coverage.Clear();
+
+        bool covered;
+        CanvasFontFace? face = FindFace(family, weight, italic);
+        if (face is null)
+        {
+            covered = false;
+        }
+        else
+        {
+            try
+            {
+                covered = face.HasCharacter((uint)codepoint);
+            }
+            catch
+            {
+                covered = true;
+            }
+        }
+
+        _coverage[key] = covered;
+        return covered;
+    }
+
+    /// <summary>The font face DirectWrite would use for a family, weight and slant.</summary>
+    private CanvasFontFace? FindFace(string family, ushort weight, bool italic)
+    {
+        var key = (family, weight, italic);
+        if (_faces.TryGetValue(key, out CanvasFontFace? cached)) return cached;
+
+        CanvasFontFace? face = null;
+        try
+        {
+            _systemFontSet ??= CanvasFontSet.GetSystemFontSet();
+            face = MatchFace(_systemFontSet, family, weight, italic) ??
+                   MatchFace(_systemFontSet, family, 400, false) ??
+                   MatchFace(_systemFontSet, family, 700, false);
+        }
+        catch
+        {
+            // Without the system collection every glyph is assumed covered.
+            face = null;
+        }
+
+        _faces[key] = face;
+        return face;
+    }
+
+    private static CanvasFontFace? MatchFace(CanvasFontSet set, string family, ushort weight, bool italic)
+    {
+        using CanvasFontSet matching = set.GetMatchingFonts(
+            family,
+            new Windows.UI.Text.FontWeight { Weight = weight },
+            Windows.UI.Text.FontStretch.Normal,
+            italic ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal);
+        foreach (CanvasFontFace face in matching.Fonts)
+        {
+            return face;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Splits a run into segments by the family chosen for each grapheme. Returns null when
+    /// the primary face covers everything, which keeps ligatures and shaper behavior intact.
+    /// </summary>
+    private RunSegment[]? SegmentsFor(string text, int face)
+    {
+        if (_fallbacks[face].Length == 0) return null;
+
+        var key = (text, face);
+        if (_segments.TryGetValue(key, out RunSegment[]? cached)) return cached;
+
+        string primary = FamilyFor(face);
+        var segments = new List<RunSegment>(4);
+        bool fallback = false;
+        int ordinal = 0;
+
+        TextElementEnumerator elements = StringInfo.GetTextElementEnumerator(text);
+        while (elements.MoveNext())
+        {
+            string grapheme = elements.GetTextElement();
+            if (grapheme.Length == 0) continue;
+
+            string family = FamilyForGrapheme(grapheme, face);
+            if (!string.Equals(family, primary, StringComparison.Ordinal)) fallback = true;
+
+            int index = elements.ElementIndex;
+            if (segments.Count > 0)
+            {
+                RunSegment last = segments[^1];
+                if (last.Index + last.Length == index &&
+                    string.Equals(last.Family, family, StringComparison.Ordinal))
+                {
+                    segments[^1] = last with { Length = last.Length + grapheme.Length };
+                    ordinal++;
+                    continue;
+                }
+            }
+
+            segments.Add(new RunSegment(index, grapheme.Length, ordinal, family));
+            ordinal++;
+        }
+
+        RunSegment[]? result = fallback ? segments.ToArray() : null;
+        if (_segments.Count >= LayoutCacheCapacity) _segments.Clear();
+        _segments[key] = result;
+        return result;
+    }
 
     // ---------------- text layout ----------------
     //
@@ -590,17 +850,18 @@ public sealed unsafe class TerminalRenderer
         return true;
     }
 
-    private CanvasTextLayout? GetLayout(string text, bool bold, bool italic)
+    private CanvasTextLayout? GetLayout(string text, bool bold, bool italic, string? family = null)
     {
         if (!UseTextLayout || text.Length == 0) return null;
 
-        var key = new LayoutKey(text, (bold ? 1 : 0) | (italic ? 2 : 0));
+        int face = (bold ? 1 : 0) | (italic ? 2 : 0);
+        var key = new LayoutKey(text, face, family ?? FamilyFor(face));
         if (_layouts.TryGetValue(key, out CanvasTextLayout? cached)) return cached;
 
         CanvasTextLayout layout;
         try
         {
-            layout = new CanvasTextLayout(CanvasDevice.GetSharedDevice(), text, FormatFor(bold, italic), 0f, 0f);
+            layout = new CanvasTextLayout(CanvasDevice.GetSharedDevice(), text, FormatFor(face, key.Family), 0f, 0f);
         }
         catch
         {
@@ -688,10 +949,10 @@ public sealed unsafe class TerminalRenderer
     /// layout could not be created.
     /// </summary>
     private void DrawTextRun(CanvasDrawingSession ds, string text, float x, float y, Color color,
-        bool bold, bool italic)
+        bool bold, bool italic, string? family = null)
     {
-        CanvasTextLayout? layout = GetLayout(text, bold, italic);
-        if (layout is null) ds.DrawText(text, x, y, color, FormatFor(bold, italic));
+        CanvasTextLayout? layout = GetLayout(text, bold, italic, family);
+        if (layout is null) ds.DrawText(text, x, y, color, FormatFor(bold, italic, family));
         else ds.DrawTextLayout(layout, x, y, color);
     }
 
@@ -871,7 +1132,7 @@ public sealed unsafe class TerminalRenderer
             _cursorY = cursor.ViewportY;
         }
 
-        float cellW = _metrics.Width;
+        float cellW = _cellAdvanceX;
         float cellH = _metrics.Height;
 
         IntPtr rows = IntPtr.Zero;
@@ -954,6 +1215,16 @@ public sealed unsafe class TerminalRenderer
                     {
                         Rgb selected = config.SelectionForeground;
                         textFg = Color.FromArgb(255, selected.R, selected.G, selected.B);
+                    }
+
+                    // Search highlights win over normal and selected cell colors. The selected
+                    // match gets its own pair, exactly like Ghostty's find bar.
+                    if (_searchByRow.TryGetValue(viewportY, out List<SearchSpan>? searchRow) &&
+                        FindSearchSpan(searchRow, col, out bool searchSelected))
+                    {
+                        Color cellBg = bg;
+                        bg = SearchBackgroundColor(searchSelected, cellBg);
+                        textFg = SearchForegroundColor(searchSelected, fg, cellBg);
                     }
 
                     var run = new Run
@@ -1062,21 +1333,32 @@ public sealed unsafe class TerminalRenderer
                         // its own em, which drifts off the grid, so each grapheme is placed.
                         if (!run.Wide)
                         {
-                            // "font-shaping-break = cursor" (the default) draws the cells on
-                            // either side of the cursor as two layouts so a ligature cannot
-                            // form across it.
-                            (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, viewportY);
-                            if (split > 0 && split < run.Text.Length)
+                            int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
+                            RunSegment[]? segments = SegmentsFor(run.Text, face);
+                            if (segments is not null)
                             {
-                                DrawTextRun(ds, run.Text[..split], run.Col * cellW, textY,
-                                    run.Fg, run.Bold, run.Italic);
-                                DrawTextRun(ds, run.Text[split..], (run.Col + splitCell) * cellW, textY,
-                                    run.Fg, run.Bold, run.Italic);
+                                // Some graphemes need a fallback family, so each segment is
+                                // placed on the grid instead of relying on the font advance.
+                                DrawSegmentRun(ds, run, segments, cellW, textY);
                             }
                             else
                             {
-                                DrawTextRun(ds, run.Text, run.Col * cellW, textY,
-                                    run.Fg, run.Bold, run.Italic);
+                                // "font-shaping-break = cursor" (the default) draws the cells on
+                                // either side of the cursor as two layouts so a ligature cannot
+                                // form across it.
+                                (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, viewportY);
+                                if (split > 0 && split < run.Text.Length)
+                                {
+                                    DrawTextRun(ds, run.Text[..split], run.Col * cellW, textY,
+                                        run.Fg, run.Bold, run.Italic);
+                                    DrawTextRun(ds, run.Text[split..], (run.Col + splitCell) * cellW, textY,
+                                        run.Fg, run.Bold, run.Italic);
+                                }
+                                else
+                                {
+                                    DrawTextRun(ds, run.Text, run.Col * cellW, textY,
+                                        run.Fg, run.Bold, run.Italic);
+                                }
                             }
                         }
                         else
@@ -1157,7 +1439,8 @@ public sealed unsafe class TerminalRenderer
                     if (cursorText.Length > 0)
                     {
                         Color text = CursorTextColor(defaultBg);
-                        DrawTextRun(ds, cursorText, (float)rect.X, top + _textOffsetY, text, false, false);
+                        DrawTextRun(ds, cursorText, (float)rect.X, top + _textOffsetY, text, false, false,
+                            FamilyForGrapheme(cursorText, 0));
                     }
                     break;
             }
@@ -1317,6 +1600,57 @@ public sealed unsafe class TerminalRenderer
         return fg;
     }
 
+    /// <summary>True when the column is in a search span; a selected match wins over others.</summary>
+    private static bool FindSearchSpan(List<SearchSpan> spans, int col, out bool selected)
+    {
+        selected = false;
+        bool found = false;
+        foreach (SearchSpan span in spans)
+        {
+            if (col < span.StartX || col > span.EndX) continue;
+            if (!span.Selected)
+            {
+                found = true;
+                continue;
+            }
+            selected = true;
+            return true;
+        }
+        return found;
+    }
+
+    private Color SearchBackgroundColor(bool selected, Color cellBg)
+    {
+        SearchColor setting = default;
+        if (_config is not null)
+            setting = selected ? _config.SearchSelectedBackground : _config.SearchBackground;
+
+        Color fallback = selected
+            ? Color.FromArgb(255, 0xF2, 0xA5, 0x7E)
+            : Color.FromArgb(255, 0xFF, 0xE0, 0x82);
+        return ResolveSearchColor(setting, cellBg, cellBg, fallback);
+    }
+
+    private Color SearchForegroundColor(bool selected, Color cellFg, Color cellBg)
+    {
+        SearchColor setting = default;
+        if (_config is not null)
+            setting = selected ? _config.SearchSelectedForeground : _config.SearchForeground;
+
+        return ResolveSearchColor(setting, cellFg, cellBg, Color.FromArgb(255, 0, 0, 0));
+    }
+
+    private static Color ResolveSearchColor(SearchColor setting, Color cellFg, Color cellBg, Color fallback)
+    {
+        return setting.Kind switch
+        {
+            SearchColorKind.Explicit => Color.FromArgb(255, setting.Value.R, setting.Value.G, setting.Value.B),
+            SearchColorKind.CellForeground => cellFg,
+            SearchColorKind.CellBackground => cellBg,
+            _ => fallback,
+        };
+    }
+
     private Color SelectionFillColor()
     {
         if (_config is { HasSelectionBackground: true })
@@ -1350,7 +1684,7 @@ public sealed unsafe class TerminalRenderer
             float x = col * cellW;
 
             ds.FillRectangle(new Rect(x, rowTop, cells * cellW, cellH), bg);
-            DrawTextRun(ds, grapheme, x, rowTop, fg, false, false);
+            DrawTextRun(ds, grapheme, x, rowTop, fg, false, false, FamilyForGrapheme(grapheme, 0));
             ds.FillRectangle(new Rect(x, rowTop + cellH - underline - 2, cells * cellW, underline), fg);
 
             col += cells;
@@ -1360,12 +1694,27 @@ public sealed unsafe class TerminalRenderer
     }
 
     /// <summary>
+    /// Draws a single-width run split by fallback family. Every segment starts on the cell its
+    /// first grapheme occupies, so a fallback font's advance cannot shift the rest of the run.
+    /// </summary>
+    private void DrawSegmentRun(CanvasDrawingSession ds, Run run, RunSegment[] segments,
+        float cellW, float textY)
+    {
+        foreach (RunSegment segment in segments)
+        {
+            DrawTextRun(ds, run.Text.Substring(segment.Index, segment.Length),
+                (run.Col + segment.Cell) * cellW, textY, run.Fg, run.Bold, run.Italic, segment.Family);
+        }
+    }
+
+    /// <summary>
     /// Draws a run that contains double-width glyphs, placing every grapheme on its own cell
     /// so a fallback font's advance cannot push the rest of the line off the grid.
     /// </summary>
     private void DrawWideRun(CanvasDrawingSession ds, Run run, float cellW, float rowTop)
     {
         int col = run.Col;
+        int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
 
         TextElementEnumerator elements = StringInfo.GetTextElementEnumerator(run.Text);
         while (elements.MoveNext())
@@ -1373,7 +1722,8 @@ public sealed unsafe class TerminalRenderer
             string grapheme = elements.GetTextElement();
             if (grapheme.Length == 0) continue;
 
-            DrawTextRun(ds, grapheme, col * cellW, rowTop, run.Fg, run.Bold, run.Italic);
+            DrawTextRun(ds, grapheme, col * cellW, rowTop, run.Fg, run.Bold, run.Italic,
+                FamilyForGrapheme(grapheme, face));
             col += WideText.IsWide(grapheme) ? 2 : 1;
         }
     }
