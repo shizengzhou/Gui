@@ -40,9 +40,7 @@ internal sealed class ImeHost : IDisposable
     private const int GCS_CURSORPOS = 0x0080;
     private const int GCS_RESULTSTR = 0x0800;
 
-    private const int IMN_CLOSECANDIDATE = 0x0004;
     private const int IMN_OPENCANDIDATE = 0x0005;
-    private const int IMN_SETCANDIDATEPOS = 0x0009;
 
     private const int CFS_POINT = 0x0002;
     private const int CFS_FORCE_POSITION = 0x0020;
@@ -69,6 +67,7 @@ internal sealed class ImeHost : IDisposable
 
     private IntPtr _compositionHwnd;
     private bool _composing;
+    private bool _positioning;
     private bool _disposed;
 
     /// <summary>True while the IME is building a composition for the terminal.</summary>
@@ -227,7 +226,10 @@ internal sealed class ImeHost : IDisposable
                     EnsureContext(hwnd);
                     long flags = lParam.ToInt64() & 0xFFFFFFFFL;
                     lParam = new IntPtr(flags & ~0x80000000L);
-                    Position(hwnd);
+                    // No repositioning here: the IME can call back into the window while the
+                    // composition window is being set, which recursed into this handler and
+                    // overflowed the stack when focus returned from another window. The real
+                    // composition start and every candidate open position it instead.
                 }
                 break;
 
@@ -255,8 +257,9 @@ internal sealed class ImeHost : IDisposable
                 break;
 
             case WM_IME_NOTIFY:
-                if (active && wParam.ToInt32() is IMN_OPENCANDIDATE or IMN_SETCANDIDATEPOS or IMN_CLOSECANDIDATE)
-                    Position(hwnd);
+                // IMN_SETCANDIDATEPOS is the IME reporting where it moved; calling
+                // ImmSetCandidateWindow from it makes the IME notify again.
+                if (active && wParam.ToInt32() == IMN_OPENCANDIDATE) Position(hwnd);
                 break;
 
             // The result string already reached the shell through WM_IME_COMPOSITION, so a
@@ -349,9 +352,24 @@ internal sealed class ImeHost : IDisposable
     /// <summary>
     /// Keeps the system composition window at the pane's cursor (it is hidden through
     /// WM_IME_SETCONTEXT, because the renderer paints the composition itself) and puts the
-    /// candidate list just below that cell.
+    /// candidate list just below that cell. The IME can synchronously call back into the
+    /// window from the ImmSet* calls, so a reentrant call is dropped instead of recursing.
     /// </summary>
     private void Position(IntPtr hwnd)
+    {
+        if (_positioning) return;
+        _positioning = true;
+        try
+        {
+            PositionCore(hwnd);
+        }
+        finally
+        {
+            _positioning = false;
+        }
+    }
+
+    private void PositionCore(IntPtr hwnd)
     {
         if (_caret() is not ImeCaret caret) return;
 
