@@ -27,8 +27,8 @@ namespace Gui.Term;
 
 /// <summary>
 /// One terminal surface: a focusable host control holding a Win2D canvas, with its own
-/// ConPTY session and renderer. The workspace owns focus and the IME sink, so keys and
-/// committed text are pushed in for the focused pane only.
+/// ConPTY session and renderer. The workspace owns focus and the keyboard anchor, so keys
+/// and committed text are pushed in for the focused pane only.
 /// </summary>
 public sealed class TerminalPane
 {
@@ -2022,20 +2022,20 @@ public sealed class TerminalPane
     }
 
     /// <summary>
-    /// Starts a selection for a press that landed on the IME sink. The sink is a sibling of
-    /// the shell in the window's visual tree, so its press never bubbles to this canvas.
-    /// Capturing here makes the normal move/release handlers take over the drag.
+    /// Starts a selection for a press that landed on the keyboard anchor. The anchor is a
+    /// sibling of the shell in the window's visual tree, so its press never bubbles to this
+    /// canvas. Capturing here makes the normal move/release handlers take over the drag.
     /// </summary>
-    public void BeginSelectionFromImeSink(PointerRoutedEventArgs args) => OnPointerPressed(_canvas, args);
+    public void BeginSelectionFromAnchor(PointerRoutedEventArgs args) => OnPointerPressed(_canvas, args);
 
     /// <summary>
-    /// The IME sink keeps the pointer capture (a canvas that never received the press cannot
-    /// take it), so move and release keep arriving at the sink and have to be forwarded too.
+    /// The anchor keeps the pointer capture (a canvas that never received the press cannot
+    /// take it), so move and release keep arriving at the anchor and have to be forwarded too.
     /// The handlers below are no-ops unless a selection is in progress.
     /// </summary>
-    public void MoveSelectionFromImeSink(PointerRoutedEventArgs args) => OnPointerMoved(_canvas, args);
+    public void MoveSelectionFromAnchor(PointerRoutedEventArgs args) => OnPointerMoved(_canvas, args);
 
-    public void EndSelectionFromImeSink(PointerRoutedEventArgs args) => OnPointerReleased(_canvas, args);
+    public void EndSelectionFromAnchor(PointerRoutedEventArgs args) => OnPointerReleased(_canvas, args);
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs args)
     {
@@ -2164,8 +2164,7 @@ public sealed class TerminalPane
         PointerPoint point = args.GetCurrentPoint(_canvas);
 
         // The right-click action runs on release, not press: a flyout opened during the
-        // press is light-dismissed by the release that follows it. This also makes the
-        // cursor-cell IME sink behave like the rest of the surface.
+        // press is light-dismissed by the release that follows it.
         if (point.Properties.PointerUpdateKind == PointerUpdateKind.RightButtonReleased)
         {
             args.Handled = true;

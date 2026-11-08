@@ -220,7 +220,8 @@ public sealed partial class Workspace
     private readonly List<FontIcon> _paletteWindowChecks = new();
     private readonly List<FontIcon> _paletteThemeChecks = new();
 
-    private TextBox _imeSink = null!;
+    private Control _inputAnchor = null!;
+    private ImeHost? _imeHost;
     private DispatcherQueueTimer? _imeTimer;
 
     // Every themed brush is created once and shared: switching the theme only has to
@@ -275,12 +276,7 @@ public sealed partial class Workspace
     private DispatcherQueueTimer? _dropTimer;
 
     private bool _inputHandlersInstalled;
-    private bool _composing;
-    private bool _imeCommitted;
-    private bool _imeDiscard;
     private TerminalPane? _imeCompositionPane;
-    private bool _keySeen;
-    private bool _swallowText;
 
     public Workspace(Config config)
     {
@@ -331,6 +327,11 @@ public sealed partial class Workspace
             // The beep for Alt chords comes from WinUI's input-site windows; retried by the
             // IME timer because they may not exist yet.
             InputSite.Install(_hwnd);
+            // IMM32 is hooked on the same input-site windows: they are what Windows gives
+            // focus and IME messages to.
+            _imeHost = new ImeHost(_hwnd, IsTerminalKeyboardFocus, CommitImeText,
+                ShowImeComposition, ImeCaretOnScreen);
+            _imeHost.Install();
             ApplyWindowTheme();
             _appWindow.Closing += OnAppWindowClosing;
             _appWindow.Changed += (_, args) =>
@@ -607,7 +608,7 @@ public sealed partial class Workspace
         if (_placement != TabPlacement.Top) SetSidebarCollapsed(_sidebarCollapsed);
 
         UpdateHeaders();
-        UpdateImeSink();
+        UpdateInputAnchor();
         ApplyTabBarVisibility();
         Diag.Log("tab", $"placement {_placement}");
     }
@@ -1071,104 +1072,44 @@ public sealed partial class Workspace
         _root.Children.Add(_shell);
         ApplyBackgroundOpacity();
 
-        // Shared IME host: invisible, but it must stay hit-testable to receive text.
-        _imeSink = new TextBox
+        // Keyboard anchor: invisible, but it is the element XAML routes keys and text to.
+        // It is a plain Control, not a TextBox, because text and IME composition are handled
+        // by ImeHost through WM_CHAR / WM_IME_*.
+        _inputAnchor = new ContentControl
         {
             Opacity = 0.0,
             Width = 8,
             Height = 16,
-            IsSpellCheckEnabled = false,
-            IsTextPredictionEnabled = false,
-            AcceptsReturn = false,
+            IsTabStop = true,
+            UseSystemFocusVisuals = false,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
         };
-        // The terminal draws its own right-click menu; the TextBox's built-in
-        // copy/paste menu must not appear on top of it.
-        _imeSink.ContextRequested += (_, args) => args.Handled = true;
-        _root.Children.Add(_imeSink);
+        _root.Children.Add(_inputAnchor);
 
-        // The sink sits above the whole window at the cursor cell. A press on it never
+        // The anchor sits above the whole window at the cursor cell. A press on it never
         // reaches the pane's canvas (the canvas is inside the shell, not an ancestor of the
-        // sink), so forward it to the focused pane and let selection start there. The sink
-        // keeps its hit-testability, which text and IME input depend on.
-        // TextBox consumes and handles its own pointer events, so a normal += handler would
-        // never run; handledEventsToo is required. It also keeps the pointer capture, so the
-        // whole drag (press, move, release) arrives here rather than at the pane's canvas.
-        _imeSink.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
+        // anchor), so forward it to the focused pane and let selection start there. A plain
+        // Control does not claim the pointer, but the handlers stay for when the anchor is
+        // hit-testable.
+        _inputAnchor.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
         {
             if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible) return;
             if (_tabs.Count == 0) return;
-            _tabs[_active].Focused?.BeginSelectionFromImeSink(args);
+            _tabs[_active].Focused?.BeginSelectionFromAnchor(args);
         }), true);
-        _imeSink.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, args) =>
+        _inputAnchor.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, args) =>
         {
             if (_tabs.Count == 0) return;
-            _tabs[_active].Focused?.MoveSelectionFromImeSink(args);
+            _tabs[_active].Focused?.MoveSelectionFromAnchor(args);
         }), true);
-        _imeSink.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) =>
+        _inputAnchor.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) =>
         {
             if (_tabs.Count == 0) return;
-            _tabs[_active].Focused?.EndSelectionFromImeSink(args);
+            _tabs[_active].Focused?.EndSelectionFromAnchor(args);
         }), true);
-
 
         EnsureInputHandlers();
-
-        // The sink is only ever written by the IME: plain typing arrives as TextChanged and
-        // must have been preceded by a key this window saw, while a composition commit lands
-        // in Text one dispatcher turn after TextCompositionEnded, and the keystrokes that
-        // produced it never reach PreviewKeyDown (the IME consumes them).
-        _imeSink.TextChanged += (_, _) =>
-        {
-            if (_composing || _imeCommitted) return;
-
-            // A cancelled composition may be finalized through TextChanged rather than
-            // TextCompositionEnded, so the discard flag has to cover both routes.
-            if (_imeDiscard)
-            {
-                _imeDiscard = false;
-                FlushIme(false);
-                return;
-            }
-
-            FlushIme(_keySeen && !_swallowText);
-        };
-        _imeSink.TextCompositionStarted += (_, _) =>
-        {
-            _imeDiscard = false;
-            _composing = true;
-            ShowImeComposition();
-        };
-        _imeSink.TextCompositionChanged += (_, _) => ShowImeComposition();
-        _imeSink.TextCompositionEnded += (_, _) =>
-        {
-            _composing = false;
-            _imeCommitted = true;
-            ShowImeComposition();
-
-            // At composition end Text still holds the raw composition string ("ni'hao"); the
-            // IME overwrites it with the characters the user picked on the next dispatcher
-            // turn, so the sink can only be drained then.
-            _dispatcher?.TryEnqueue(() =>
-            {
-                if (_composing) return;
-                _imeCommitted = false;
-                bool discard = _imeDiscard;
-                _imeDiscard = false;
-                Diag.Guard("ws.ime.commit", () => FlushIme(!discard));
-            });
-        };
-        _imeSink.LostFocus += (_, _) =>
-        {
-            // Focus leaving the sink (palette, tab chip, caption button) cancels the
-            // composition just like a click, so its raw pinyin must be dropped too.
-            if (_composing) _imeDiscard = true;
-            _composing = false;
-            _imeCommitted = false;
-            ShowImeComposition();
-        };
-        _imeSink.Paste += (_, args) => args.Handled = true;
 
         EnsureTimers();
 
@@ -1184,21 +1125,19 @@ public sealed partial class Workspace
         if (_inputHandlersInstalled) return;
         _inputHandlersInstalled = true;
 
-        // Keys are handled at the window root, not on the IME sink: the sink only owns text
-        // composition, and any other focus target (a tab chip, the palette, a caption
-        // button) would otherwise swallow the shortcuts.
+        // Keys are handled at the window root, not on the keyboard anchor: the anchor only
+        // gives XAML a focus target, and any other focus target (a tab chip, the palette, a
+        // caption button) would otherwise swallow the shortcuts.
         _root.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler((_, args) =>
         {
             if (OnKey(args)) args.Handled = true;
         }), true);
 
-        // Clicking away ends the composition but the IME finalizes it as the raw pinyin; a
-        // terminal discards that text instead of sending it to the shell.
+        // Clicking away ends the composition; a terminal discards the raw intermediate
+        // string instead of sending it to the shell.
         _root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) =>
         {
-            if (!_composing) return;
-            _imeDiscard = true;
-            ShowImeComposition();
+            if (_imeHost is { IsComposing: true }) _imeHost.CancelComposition();
         }), true);
 
         // A press outside the palette dismisses it. The palette layer covers the body only,
@@ -1251,8 +1190,9 @@ public sealed partial class Workspace
         _imeTimer.Interval = TimeSpan.FromMilliseconds(250);
         _imeTimer.Tick += (_, _) =>
         {
-            Diag.Guard("ws.ime", UpdateImeSink);
+            Diag.Guard("ws.ime", UpdateInputAnchor);
             InputSite.Install(_hwnd);
+            _imeHost?.Install();
         };
         _imeTimer.Start();
 
@@ -3179,7 +3119,7 @@ public sealed partial class Workspace
             // Returning focus to the IME sink lets the find bar stay visible while the
             // terminal resumes shell input, matching Ghostty's Esc behavior.
             if (_tabs.Count > 0 && ReferenceEquals(_tabs[_active].Focused, p))
-                _imeSink.Focus(FocusState.Programmatic);
+                FocusKeyboardAnchor();
         };
     }
 
@@ -3219,12 +3159,9 @@ public sealed partial class Workspace
     private void FocusPane(Tab tab, TerminalPane pane)
     {
         // A focus change wants to cancel the composition, not hand its raw pinyin to the
-        // newly focused shell. The IME finalizes it one dispatcher turn later, so mark it now.
-        if (_composing && tab.Focused is not null && !ReferenceEquals(tab.Focused, pane))
-        {
-            _imeDiscard = true;
-            ShowImeComposition();
-        }
+        // newly focused shell.
+        if (tab.Focused is not null && !ReferenceEquals(tab.Focused, pane))
+            _imeHost?.CancelComposition();
 
         tab.Focused = pane;
         ForEachPane(tab, candidate => candidate.SetFocused(ReferenceEquals(candidate, pane)));
@@ -3235,12 +3172,11 @@ public sealed partial class Workspace
         UpdateHeaders();
         if (!ReferenceEquals(tab, _tabs[_active])) return;
 
-        // The palette owns the keyboard while it is open; focusing the sink here would take
+        // The palette owns the keyboard while it is open; focusing the anchor here would take
         // it away from the search box and leave the palette deaf to typing and arrow keys.
         if (_paletteLayer is null || _paletteLayer.Visibility != Visibility.Visible)
-            _imeSink.Focus(FocusState.Programmatic);
-        UpdateImeSink();
-        ShowImeComposition();
+            FocusKeyboardAnchor();
+        UpdateInputAnchor();
         UpdateStatus();
     }
 

@@ -204,14 +204,18 @@ window under the pointer until they are committed. Palette rows that persist a p
 layout setting (tab rail, compact density) call `App.ReloadOtherWindows`, which re-reads the
 file in every other window; the `_applyingConfig` guard keeps a peer reload from bouncing back.
 
-All keyboard input goes through one shared, invisible `TextBox` (the IME sink): `PreviewKeyDown`
-runs the shortcut table and the key encoder, and `TextChanged` forwards printable text. The sink
-is repositioned every 250 ms onto the focused pane's cursor and must stay hit-testable — clearing
-`IsHitTestVisible` silently stops text and IME input. It sits above the shell and is exactly one
-cell wide, so a left press on the cursor cell would otherwise be swallowed (no selection could
-start there). `AddHandler(..., handledEventsToo: true)` on the sink forwards press, move and
-release to the focused pane; the sink keeps the pointer capture, so the whole drag arrives
-there rather than at the canvas.
+All keyboard input goes through one shared, invisible `ContentControl` (the keyboard anchor):
+`PreviewKeyDown` runs the shortcut table and the key encoder. Text and IME do not go through a
+TextBox: `Term/ImeHost.cs` subclasses the window's input-site HWNDs, turns `WM_CHAR` into shell
+text, and implements the `WM_IME_*` / IMM32 composition and candidate-window path. Note that
+WinUI 3 runs text input through TSF, so while the terminal has focus no `WM_IME_*` message
+actually reaches the window: ASCII typing works, CJK composition does not (a real TextBox is
+the only place the system composes; the find bar and palette still do). When such a TextBox has
+focus the host passes every message through to XAML. The anchor is repositioned every 250 ms
+onto the focused pane's cursor. It sits above the shell and is exactly one cell wide, so a left
+press on the cursor cell would otherwise be swallowed (no selection could start there).
+`AddHandler(..., handledEventsToo: true)` on the anchor forwards press, move and release to the
+focused pane.
 
 ## Configuration and theming
 

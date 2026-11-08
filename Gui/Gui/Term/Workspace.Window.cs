@@ -296,45 +296,100 @@ public sealed partial class Workspace
     }
 
     // ---------------- IME ----------------
-    private void UpdateImeSink()
+
+    /// <summary>
+    /// The anchor is the element XAML routes keys to, so it has to stay over the focused
+    /// cursor cell; it is also what a press there hits.
+    /// </summary>
+    private void UpdateInputAnchor()
     {
         if (_tabs.Count == 0) return;
 
         Tab tab = _tabs[_active];
         if (tab.Focused is null)
         {
-            _imeSink.Visibility = Visibility.Collapsed;
+            _inputAnchor.Visibility = Visibility.Collapsed;
             return;
         }
-        _imeSink.Visibility = Visibility.Visible;
+        _inputAnchor.Visibility = Visibility.Visible;
 
         if (!tab.Focused.CursorOrigin(out double cx, out double cy)) return;
 
         Point origin = tab.Focused.Visual.TransformToVisual(_root).TransformPoint(new Point(0, 0));
-        _imeSink.Margin = new Thickness(origin.X + cx, origin.Y + cy, 0, 0);
+        _inputAnchor.Margin = new Thickness(origin.X + cx, origin.Y + cy, 0, 0);
         CellMetrics metrics = tab.Focused.CellMetricsDip;
-        _imeSink.Width = Math.Max(1, metrics.Width);
-        _imeSink.Height = Math.Max(1, metrics.Height);
+        _inputAnchor.Width = Math.Max(1, metrics.Width);
+        _inputAnchor.Height = Math.Max(1, metrics.Height);
+    }
+
+    /// <summary>
+    /// Focuses the keyboard anchor and lets the IME host pick up the input-site window that
+    /// just got the focus, so composition starts against a live IMM context.
+    /// </summary>
+    private void FocusKeyboardAnchor()
+    {
+        if (!_inputAnchor.Focus(FocusState.Programmatic)) return;
+        _imeHost?.Activate();
+    }
+
+    /// <summary>True when the terminal, not a real text control, owns the keyboard.</summary>
+    private bool IsTerminalKeyboardFocus()
+    {
+        XamlRoot? root = _root.XamlRoot;
+        if (root is null) return false;
+        return ReferenceEquals(FocusManager.GetFocusedElement(root), _inputAnchor);
+    }
+
+    private void CommitImeText(string text)
+    {
+        if (text.Length == 0 || _tabs.Count == 0) return;
+        Diag.Guard("ws.ime.commit", () => _tabs[_active].Focused?.CommitText(text));
     }
 
     /// <summary>
     /// Mirrors the IME composition onto the focused pane so the letters being typed appear at
-    /// the cursor. The sink stays invisible; the pane paints the string over its own cells and
-    /// throws it away when the composition ends, since the buffer only ever sees the commit.
+    /// the cursor. The pane paints the string over its own cells and clears it when the
+    /// composition ends; the shell only ever sees the committed result.
     /// </summary>
-    private void ShowImeComposition()
+    private void ShowImeComposition(string text)
     {
         TerminalPane? pane = _tabs.Count > 0 ? _tabs[_active].Focused : null;
-
-        // At TextCompositionEnded the sink still holds the raw composition, so the flag -- not
-        // the text -- decides whether anything should be drawn.
-        string text = _composing && !_imeDiscard ? _imeSink.Text.TrimEnd(' ') : string.Empty;
+        text = text.TrimEnd(' ');
 
         if (_imeCompositionPane is not null && !ReferenceEquals(_imeCompositionPane, pane))
             _imeCompositionPane.SetImeComposition(string.Empty);
 
         _imeCompositionPane = text.Length > 0 ? pane : null;
         pane?.SetImeComposition(text);
+    }
+
+    /// <summary>
+    /// The caret cell in screen pixels, which is what IMM32 wants for the composition and
+    /// candidate windows; null when the cursor is not measurable yet.
+    /// </summary>
+    private ImeCaret? ImeCaretOnScreen()
+    {
+        if (_hwnd == IntPtr.Zero || _tabs.Count == 0) return null;
+
+        TerminalPane? pane = _tabs[_active].Focused;
+        if (pane is null || !pane.CursorOrigin(out double cx, out double cy)) return null;
+
+        Point origin = pane.Visual.TransformToVisual(_root).TransformPoint(new Point(cx, cy));
+        double scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+
+        var point = new POINT
+        {
+            X = (int)Math.Round(origin.X * scale),
+            Y = (int)Math.Round(origin.Y * scale),
+        };
+        if (!ClientToScreen(_hwnd, ref point)) return null;
+
+        CellMetrics metrics = pane.CellMetricsDip;
+        return new ImeCaret(
+            point.X,
+            point.Y,
+            Math.Max(1, (int)Math.Round(metrics.Width * scale)),
+            Math.Max(1, (int)Math.Round(metrics.Height * scale)));
     }
 
     private static bool IsDown(VirtualKey key)
@@ -370,18 +425,16 @@ public sealed partial class Workspace
         if (_tabs.Count > 0 && _tabs[_active].Focused is { SearchHasFocus: true })
             return false;
 
-        _keySeen = true;
-        _swallowText = false;
-
         // The IME consumes the keystrokes that build a composition, so any other key that
-        // reaches the window while composing is a shortcut (or a cancel). WinUI ends the
-        // composition and finalizes it as the raw pinyin; a terminal drops that, it does not
-        // type it. Enter/Esc/Space are the IME's own commit/cancel keys and stay on the
-        // normal path, so an IME that commits Latin text with Enter still works.
-        if (_composing && args.Key is not (VirtualKey.Enter or VirtualKey.Escape or VirtualKey.Space))
-            _imeDiscard = true;
-
-        if (_composing && args.Key is VirtualKey.Escape or VirtualKey.Enter) _composing = false;
+        // reaches the window while composing is a shortcut (or a cancel). A terminal drops
+        // the raw intermediate string instead of typing it. Enter/Esc/Space are the IME's own
+        // commit/cancel keys and stay on the normal path, so an IME that commits Latin text
+        // with Enter still works.
+        if (_imeHost is { IsComposing: true } &&
+            args.Key is not (VirtualKey.Enter or VirtualKey.Escape or VirtualKey.Space))
+        {
+            _imeHost.CancelComposition();
+        }
 
         int mods = CurrentMods();
         bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
@@ -489,13 +542,9 @@ public sealed partial class Workspace
             return true;
         }
 
-        // Plain Ctrl+V is swallowed so the focused text box cannot paste into itself; it
-        // does not reach the shell either.
-        if (ctrl && !shift && !alt && args.Key == VirtualKey.V)
-        {
-            _swallowText = true;
-            return true;
-        }
+        // Plain Ctrl+V is swallowed so it cannot paste into any focused text box; it does
+        // not reach the shell either.
+        if (ctrl && !shift && !alt && args.Key == VirtualKey.V) return true;
 
         // A focused tab chip keeps its roving navigation (arrows, Enter, Delete).
         if (IsChipFocused()) return false;
@@ -517,25 +566,12 @@ public sealed partial class Workspace
         return false;
     }
 
-    private void FlushIme(bool fromKeyboard)
-    {
-        string text = _imeSink.Text;
-        if (text.Length == 0) return;
-
-        _keySeen = false;
-        _swallowText = false;
-
-        _imeSink.Text = string.Empty;
-
-        if (!fromKeyboard) return;
-        if (_tabs.Count == 0) return;
-        _tabs[_active].Focused?.CommitText(text);
-    }
-
     // ---------------- shutdown ----------------
 
     public void Close()
     {
+        _imeHost?.Dispose();
+        _imeHost = null;
         InputSite.Release();
         _imeTimer?.Stop();
         _imeTimer = null;
@@ -563,6 +599,9 @@ public sealed partial class Workspace
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out POINT point);
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
 
     [DllImport("user32.dll")]
     private static extern uint GetDoubleClickTime();
