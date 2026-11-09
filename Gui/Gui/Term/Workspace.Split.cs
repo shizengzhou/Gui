@@ -513,6 +513,10 @@ public sealed partial class Workspace
     private static void PinChipTitleWidth(Tab tab)
     {
         FontWeight weight = tab.ChipText.FontWeight;
+        // MinWidth takes part in Measure, so measuring with the previous pin still applied
+        // would return at least that width and the chip could only ever grow: any long title
+        // (a path, a build step) would widen it permanently. Measure the bare text instead.
+        tab.ChipText.MinWidth = 0;
         tab.ChipText.FontWeight = FontWeights.SemiBold;
         tab.ChipText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double width = tab.ChipText.DesiredSize.Width;
