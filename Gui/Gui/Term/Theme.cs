@@ -162,6 +162,28 @@ public static class Theme
         CustomTheme ? Tint(WindowLight ? (byte)0x17 : (byte)0x1A, Terminal.Foreground)
                     : WindowLight ? Rgba(0x17, 0, 0, 0) : Rgba(0x1A, 255, 255, 255);
 
+    // --- icon-button glyphs ---------------------------------------------------
+    /// <summary>
+    /// Icon buttons keep the design's neutral greys: a bundled terminal theme must not tint
+    /// them through its foreground. Only the surface they sit on decides between the dark and
+    /// light greys, so changing "theme" leaves every icon button the same colour. The chrome
+    /// follows the window brightness; pane actions follow the terminal surface brightness.
+    /// </summary>
+    public static Color ChromeIconStrong() => NeutralStrong(WindowLight);
+    public static Color ChromeIconBody() => NeutralBody(WindowLight);
+    public static Color ChromeIconFaint() => NeutralFaint(WindowLight);
+    public static Color PaneIconStrong() => NeutralStrong(Light);
+    public static Color PaneIconFaint() => NeutralFaint(Light);
+
+    private static Color NeutralStrong(bool lightTheme) =>
+        lightTheme ? Rgba(255, 27, 28, 32) : Rgba(255, 245, 245, 247);
+
+    private static Color NeutralBody(bool lightTheme) =>
+        lightTheme ? Rgba(0xA8, 0, 0, 0) : Rgba(0xAD, 255, 255, 255);
+
+    private static Color NeutralFaint(bool lightTheme) =>
+        lightTheme ? Rgba(0x94, 0, 0, 0) : Rgba(0x80, 255, 255, 255);
+
     /// <summary>
     /// The strip stays transparent (the scrim shows through) whenever the window theme
     /// matches the app theme, preserving the design's original look.

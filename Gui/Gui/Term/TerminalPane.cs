@@ -97,6 +97,8 @@ public sealed class TerminalPane
     private Border? _searchField;
     private TextBox? _searchBox;
     private TextBlock? _searchCount;
+    private SolidColorBrush? _searchGlyphBrush;
+    private SolidColorBrush? _searchGlyphHoverBrush;
     private DispatcherQueueTimer? _searchTimer;
     private bool _searchActive;
     private bool _searchSelectPending;
@@ -404,8 +406,9 @@ public sealed class TerminalPane
         _scrollBar.SizeChanged += (_, _) => UpdateScrollbar();
 
         var faint = new SolidColorBrush(Theme.TextFaint());
-        var strong = new SolidColorBrush(Theme.TextStrong());
-
+        // Action glyphs stay neutral whatever terminal theme is selected; only the surface
+        // brightness decides between the dark and light grey.
+        var iconFaint = new SolidColorBrush(Theme.PaneIconFaint());
         // Header row: cwd on the left, pane actions on the right. It lives inside the same
         // frame as the surface so focus and rounded corners stay unified.
         var header = new DragHeader { Height = 32 };
@@ -467,16 +470,16 @@ public sealed class TerminalPane
         };
         _actionsInset = 0.0;
 
-        AddAction(SplitIcon(true, faint, 12.0), () => Strings.SplitRight, "alt+shift+plus",
+        AddAction(SplitIcon(true, iconFaint, 12.0), () => Strings.SplitRight, "alt+shift+plus",
             () => OnSplitRight?.Invoke(this));
-        AddAction(SplitIcon(false, faint, 12.0), () => Strings.SplitDown, "alt+shift+-",
+        AddAction(SplitIcon(false, iconFaint, 12.0), () => Strings.SplitDown, "alt+shift+-",
             () => OnSplitDown?.Invoke(this));
 
-        _zoomIcon = StyledIcon(faint, 12.0);
+        _zoomIcon = StyledIcon(iconFaint, 12.0);
         _zoomIcon.Data = ZoomGeometry(false, 12.0);
         _zoomButton = AddAction(_zoomIcon, () => Strings.ToggleZoom, "ctrl+shift+enter",
             () => OnMaximize?.Invoke(this));
-        _closeButton = AddAction(CloseIcon(faint, 11.0), () => Strings.ClosePane, "ctrl+shift+w",
+        _closeButton = AddAction(CloseIcon(iconFaint, 11.0), () => Strings.ClosePane, "ctrl+shift+w",
             () => OnClosePane?.Invoke(this));
 
         // The action buttons keep the arrow cursor: the header's move cursor stops at this
@@ -774,12 +777,12 @@ public sealed class TerminalPane
         button.PointerEntered += (_, _) =>
         {
             button.Background = new SolidColorBrush(Theme.ChipHover());
-            icon.Stroke = new SolidColorBrush(Theme.TextStrong());
+            icon.Stroke = new SolidColorBrush(Theme.PaneIconStrong());
         };
         button.PointerExited += (_, _) =>
         {
             button.Background = TransparentBrush();
-            icon.Stroke = new SolidColorBrush(Theme.TextFaint());
+            icon.Stroke = new SolidColorBrush(Theme.PaneIconFaint());
         };
         button.PointerPressed += (_, args) =>
         {
@@ -803,12 +806,18 @@ public sealed class TerminalPane
     /// <summary>Small icon button used by the find bar (previous, next, close).</summary>
     private Border SearchButton(char glyph, string tip, Action handler)
     {
+        // Shared brushes, so ApplyTheme can recolor every find-bar glyph in place: a new
+        // brush captured here would keep the old theme's colour after a theme switch and
+        // could disappear against the new field.
+        _searchGlyphBrush ??= new SolidColorBrush(Theme.TextFaint());
+        _searchGlyphHoverBrush ??= new SolidColorBrush(Theme.TextStrong());
+
         var icon = new FontIcon
         {
             Glyph = glyph.ToString(),
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
             FontSize = 11,
-            Foreground = new SolidColorBrush(Theme.TextFaint()),
+            Foreground = _searchGlyphBrush,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -825,12 +834,12 @@ public sealed class TerminalPane
         button.PointerEntered += (_, _) =>
         {
             button.Background = new SolidColorBrush(Theme.ChipHover());
-            icon.Foreground = new SolidColorBrush(Theme.TextStrong());
+            icon.Foreground = _searchGlyphHoverBrush;
         };
         button.PointerExited += (_, _) =>
         {
             button.Background = TransparentBrush();
-            icon.Foreground = new SolidColorBrush(Theme.TextFaint());
+            icon.Foreground = _searchGlyphBrush;
         };
         button.PointerPressed += (_, args) =>
         {
@@ -1718,9 +1727,14 @@ public sealed class TerminalPane
         if (_searchCount is not null)
             _searchCount.Foreground = new SolidColorBrush(Theme.TextFaint());
 
+        // The find-bar glyphs own shared brushes created when the bar was built; recolor
+        // them here or they keep the previous theme's colour and vanish on a theme switch.
+        if (_searchGlyphBrush is not null) _searchGlyphBrush.Color = Theme.TextFaint();
+        if (_searchGlyphHoverBrush is not null) _searchGlyphHoverBrush.Color = Theme.TextStrong();
+
         foreach (ActionVisual action in _actionVisuals)
         {
-            action.Icon.Stroke = new SolidColorBrush(Theme.TextFaint());
+            action.Icon.Stroke = new SolidColorBrush(Theme.PaneIconFaint());
             action.Button.Background = TransparentBrush();
             action.TipTitle.Foreground = new SolidColorBrush(Theme.TextStrong());
             action.TipKey.Foreground = new SolidColorBrush(Theme.TextFaint());
