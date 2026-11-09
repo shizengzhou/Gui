@@ -306,10 +306,14 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   (panes run edge to edge in a square content area, split only by 1 DIP dividers; the tab
   chips square off at the bottom and the rail's tool row lifts to the window edge). The
   command palette row toggles it live and persists the choice.
-- `theme` is `Gui Dark` (default), `Gui Light`, or any bundled Ghostty theme name; a custom
-  theme also drives the chrome through tonal steps off its background.
-- `window-theme` is `system` (default), `light`, or `dark` and constrains `theme`: only themes
-  whose background brightness matches the window are listed and usable.
+- `theme` is a comma-separated list whose entries may carry a `light:` or `dark:` prefix
+  (`light:Gui Light,dark:Gui Dark` is the default); an unprefixed name applies to both
+  appearances. The side selected by `window-theme` is painted and the theme list only offers
+  themes of that brightness; a bundled Ghostty theme also drives the chrome through tonal
+  steps off its background. In the command palette a light theme edits only the `light:` half
+  and a dark theme only the `dark:` half.
+- `window-theme` is `system` (default), `light`, or `dark` and chooses which half of `theme`
+  is active; it no longer forces a theme whose brightness matches.
 - The command palette (`Ctrl+Shift+P`) switches both live and persists the choice with
   `Config.SaveValue`.
 - `Ctrl+Shift+,` re-reads the file and applies it live: theme, window theme, font, split

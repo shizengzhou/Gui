@@ -169,7 +169,10 @@ public class ConfigTests : IDisposable
         Config config = Config.Load(Path.Combine(_dir, "does-not-exist"));
 
         Assert.Equal(12f, config.FontSize);
-        Assert.Equal(string.Empty, config.ThemeMode);
+        // The default theme is "light:Gui Light,dark:Gui Dark"; the appearance picks a side.
+        Assert.Equal(Config.LightThemeName, config.ThemeLightName);
+        Assert.Equal(Config.DarkThemeName, config.ThemeDarkName);
+        Assert.Equal(config.WindowLight ? Config.LightThemeName : Config.DarkThemeName, config.ThemeMode);
     }
 
     [Fact]
@@ -269,6 +272,9 @@ public class ConfigTests : IDisposable
             SidebarWidthLeft = 320.0,
             SidebarWidthRight = 410.0,
             ThemeMode = "light",
+            ThemeLightName = "Custom Light",
+            ThemeDarkName = "Custom Dark",
+            ThemeValue = "light:Custom Light,dark:Custom Dark",
             WindowThemeMode = "dark",
             LightTheme = true,
             WindowLight = false,
@@ -288,6 +294,9 @@ public class ConfigTests : IDisposable
         Assert.Equal(source.UnfocusedSplitFill, target.UnfocusedSplitFill);
         Assert.Equal(source.TabPosition, target.TabPosition);
         Assert.Equal(source.ThemeMode, target.ThemeMode);
+        Assert.Equal(source.ThemeLightName, target.ThemeLightName);
+        Assert.Equal(source.ThemeDarkName, target.ThemeDarkName);
+        Assert.Equal(source.ThemeValue, target.ThemeValue);
         Assert.Equal(source.WindowThemeMode, target.WindowThemeMode);
         Assert.Equal(source.LightTheme, target.LightTheme);
         Assert.Equal(source.WindowLight, target.WindowLight);
@@ -318,14 +327,54 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
-    public void AMismatchingThemeFallsBackToTheNamedPalette()
+    public void ThemeSupportsLightAndDarkHalves()
     {
-        // A light theme in a dark window cannot be used, so the dark design palette takes
-        // over -- and it carries its full name.
-        Config config = Config.Load(Write("theme = Gui Light\nwindow-theme = dark\n"));
+        Config light = Config.Load(Write("theme = light:Gui Light,dark:Gui Dark\nwindow-theme = light\n"));
+        Assert.Equal(Config.LightThemeName, light.ThemeLightName);
+        Assert.Equal(Config.DarkThemeName, light.ThemeDarkName);
+        Assert.Equal(Config.LightThemeName, light.ThemeMode);
+        Assert.True(light.LightTheme);
+        Assert.Equal("light:Gui Light,dark:Gui Dark", light.ThemeValue);
 
+        Config dark = Config.Load(Write("theme = light:Gui Light,dark:Gui Dark\nwindow-theme = dark\n"));
+        Assert.Equal(Config.DarkThemeName, dark.ThemeMode);
+        Assert.False(dark.LightTheme);
+    }
+
+    [Fact]
+    public void AMissingThemeHalfKeepsTheDefault()
+    {
+        Config config = Config.Load(Write("theme = light:Gui Light\nwindow-theme = dark\n"));
+
+        Assert.Equal(Config.LightThemeName, config.ThemeLightName);
+        Assert.Equal(Config.DarkThemeName, config.ThemeDarkName);
         Assert.Equal(Config.DarkThemeName, config.ThemeMode);
-        Assert.False(config.LightTheme);
+    }
+
+    [Fact]
+    public void AnUnprefixedThemeAppliesToBothAppearances()
+    {
+        Config light = Config.Load(Write("theme = Gui Light\nwindow-theme = light\n"));
+        Config dark = Config.Load(Write("theme = Gui Light\nwindow-theme = dark\n"));
+
+        Assert.Equal(Config.LightThemeName, light.ThemeMode);
+        // The window brightness no longer forces a matching palette.
+        Assert.Equal(Config.LightThemeName, dark.ThemeMode);
+        Assert.True(dark.LightTheme);
+        Assert.False(dark.WindowLight);
+    }
+
+    [Fact]
+    public void WithThemeSideReplacesOnlyThatHalf()
+    {
+        Config config = Config.Load(Write("theme = light:Gui Light,dark:Gui Dark\n"));
+
+        Assert.Equal("light:Gui Light,dark:Gui Dark",
+            config.WithThemeSide(false, Config.DarkThemeName));
+        Assert.Equal("light:Gui Light,dark:Gui Dark",
+            config.WithThemeSide(true, Config.LightThemeName));
+        Assert.Equal("light:Gui Dark,dark:Gui Dark",
+            config.WithThemeSide(true, Config.DarkThemeName));
     }
 
     [Fact]

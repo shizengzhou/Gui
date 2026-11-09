@@ -38,28 +38,23 @@ public sealed partial class Workspace
 
     // ---------------- theme switching ----------------
 
-    private void ApplyDesignTheme(bool lightMode)
+    /// <summary>
+    /// Commits a theme to the appearance it belongs to: a light theme replaces the "light:"
+    /// part of "theme", a dark theme the "dark:" part, leaving the other side alone. The
+    /// palette thus edits the configuration exactly the way the file is written.
+    /// </summary>
+    private void ApplyThemeChoice(string name, bool light)
     {
-        Theme.Light = lightMode;
-        Theme.Terminal = new TerminalTheme();
+        string value = _config.WithThemeSide(light, name);
+        Config.SaveValue("theme", value);
+        _config.SetTheme(value);
 
-        _config.ThemeMode = lightMode ? Config.LightThemeName : Config.DarkThemeName;
-        _config.LightTheme = lightMode;
-        _config.TerminalTheme = new TerminalTheme();
+        Theme.Light = _config.LightTheme;
+        Theme.WindowLight = _config.WindowLight;
+        Theme.Terminal = _config.TerminalTheme;
+        _themePreviewActive = false;
         RefreshTheme();
-    }
-
-    private void ApplyNamedTheme(string name)
-    {
-        if (!TerminalThemes.Load(name, out TerminalTheme loaded)) return;
-
-        Theme.Terminal = loaded;
-        Theme.Light = TerminalThemes.IsLight(loaded.Background);
-
-        _config.ThemeMode = name;
-        _config.LightTheme = Theme.Light;
-        _config.TerminalTheme = loaded;
-        RefreshTheme();
+        BroadcastTheme();
     }
 
     private void ApplyWindowThemeMode(string mode)
@@ -74,13 +69,10 @@ public sealed partial class Workspace
         }
         _config.WindowLight = Theme.WindowLight;
 
-        if (_config.LightTheme != Theme.WindowLight)
-        {
-            // Only themes matching the window brightness are usable: fall back to the
-            // default Gui Light / Gui Dark palette.
-            ApplyDesignTheme(Theme.WindowLight);
-            Config.SaveValue("theme", Theme.WindowLight ? Config.LightThemeName : Config.DarkThemeName);
-        }
+        // Switching the appearance also selects the other half of "theme".
+        _config.SetTheme(_config.ThemeValue);
+        Theme.Light = _config.LightTheme;
+        Theme.Terminal = _config.TerminalTheme;
         RefreshTheme();
     }
 
@@ -92,6 +84,9 @@ public sealed partial class Workspace
     internal void ApplyThemeFrom(Config source)
     {
         _config.ThemeMode = source.ThemeMode;
+        _config.ThemeLightName = source.ThemeLightName;
+        _config.ThemeDarkName = source.ThemeDarkName;
+        _config.ThemeValue = source.ThemeValue;
         _config.LightTheme = source.LightTheme;
         _config.WindowLight = source.WindowLight;
         _config.WindowThemeMode = source.WindowThemeMode;
@@ -282,7 +277,7 @@ public sealed partial class Workspace
         items.Add(item);
     }
 
-    private void AddOptionRow(List<PaletteItem> items, string text, string value, bool light, Action action)
+    private FontIcon AddOptionRow(List<PaletteItem> items, string text, string value, bool light, Action action)
     {
         Border row = PaletteRowBorder();
         row.BorderBrush = ClearBrush();
@@ -318,6 +313,7 @@ public sealed partial class Workspace
 
         if (ReferenceEquals(items, _paletteWindowItems)) _paletteWindowChecks.Add(check);
         else if (ReferenceEquals(items, _paletteThemeItems)) _paletteThemeChecks.Add(check);
+        return check;
     }
 
     /// <summary>Drops the rows and the selection a previous chrome build left behind.</summary>
@@ -542,13 +538,10 @@ public sealed partial class Workspace
         foreach ((string label, bool isLight) in themeOptions)
         {
             bool lightMode = isLight;
-            string value = lightMode ? Config.LightThemeName : Config.DarkThemeName;
-            AddOptionRow(_paletteThemeItems, label, value, lightMode, () =>
+            string themeName = label;
+            AddOptionRow(_paletteThemeItems, label, themeName, lightMode, () =>
             {
-                ApplyDesignTheme(lightMode);
-                Config.SaveValue("theme", value);
-                _themePreviewActive = false;
-                BroadcastTheme();
+                ApplyThemeChoice(themeName, lightMode);
             });
         }
 
@@ -738,30 +731,39 @@ public sealed partial class Workspace
         }
         if (_paletteThemeValue is not null)
         {
-            // Bundled themes show their own name; the design palettes are Gui Light/Dark.
-            _paletteThemeValue.Text = _config.TerminalTheme.Custom
-                ? _config.ThemeMode
-                : _config.LightTheme ? "Gui Light" : "Gui Dark";
+            // The value is the theme selected for the current appearance.
+            _paletteThemeValue.Text = _config.ThemeMode;
         }
 
         string[] windowValues = { "system", "light", "dark" };
         for (int i = 0; i < _paletteWindowChecks.Count && i < 3; i++)
             _paletteWindowChecks[i].Visibility = windowMode == windowValues[i] ? Visibility.Visible : Visibility.Collapsed;
 
-        bool customTheme = _config.TerminalTheme.Custom;
+        // Only the theme used by the current appearance is marked; the other half stays in
+        // the config but is not offered by the list.
         for (int i = 0; i < _paletteThemeChecks.Count && i < 2; i++)
         {
-            bool optionLight = i == 1;
+            string name = i == 0 ? Config.DarkThemeName : Config.LightThemeName;
             _paletteThemeChecks[i].Visibility =
-                !customTheme && optionLight == _config.LightTheme ? Visibility.Visible : Visibility.Collapsed;
+                ThemeNameEquals(_config.ThemeMode, name) ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        string wanted = _config.ThemeMode.ToLowerInvariant();
         foreach ((string name, FontIcon check) in _paletteThemeNameChecks)
+            check.Visibility =
+                ThemeNameEquals(_config.ThemeMode, name) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Compares the legacy "light"/"dark" spellings with their full names.</summary>
+    private static bool ThemeNameEquals(string configured, string name)
+    {
+        static string Canonical(string value)
         {
-            check.Visibility = customTheme && name.ToLowerInvariant() == wanted
-                ? Visibility.Visible : Visibility.Collapsed;
+            string key = value.Trim();
+            if (key.Equals("light", StringComparison.OrdinalIgnoreCase)) return Config.LightThemeName;
+            if (key.Equals("dark", StringComparison.OrdinalIgnoreCase)) return Config.DarkThemeName;
+            return key;
         }
+        return string.Equals(Canonical(configured), Canonical(name), StringComparison.OrdinalIgnoreCase);
     }
 
     private void PreviewThemeOption(string value)
@@ -797,25 +799,18 @@ public sealed partial class Workspace
 
     private void PreviewWindowThemeOption(string value)
     {
-        Theme.WindowLight = value switch
+        bool light = value switch
         {
             "light" => true,
             "dark" => false,
             _ => Config.SystemUsesLightTheme(),
         };
 
-        // Preview the palette that the mode allows: keep the committed theme when its
-        // brightness matches, otherwise show the default Gui Light/Dark.
-        if (_config.LightTheme == Theme.WindowLight)
-        {
-            Theme.Light = _config.LightTheme;
-            Theme.Terminal = _config.TerminalTheme;
-        }
-        else
-        {
-            Theme.Light = Theme.WindowLight;
-            Theme.Terminal = new TerminalTheme();
-        }
+        // Preview the half of "theme" that this appearance selects.
+        _config.ResolveThemeSide(light, out TerminalTheme theme, out bool themeIsLight, out _);
+        Theme.WindowLight = light;
+        Theme.Light = themeIsLight;
+        Theme.Terminal = theme;
         RefreshTheme();
         _themePreviewActive = true;
     }
@@ -886,13 +881,12 @@ public sealed partial class Workspace
             foreach ((string name, bool light) in TerminalThemes.Bundled())
             {
                 string themeName = name;
-                AddOptionRow(_paletteThemeItems, name, name, light, () =>
+                bool themeLight = light;
+                FontIcon check = AddOptionRow(_paletteThemeItems, name, name, light, () =>
                 {
-                    ApplyNamedTheme(themeName);
-                    Config.SaveValue("theme", themeName);
-                    _themePreviewActive = false;
-                    BroadcastTheme();
+                    ApplyThemeChoice(themeName, themeLight);
                 });
+                _paletteThemeNameChecks.Add((name, check));
             }
             // The bundled rows did not exist when the palette opened, so their check marks
             // (including the committed theme's) must be applied now.
@@ -901,7 +895,6 @@ public sealed partial class Workspace
 
         _paletteSubmenu = true;
         _paletteActiveSub = items;
-        if (ReferenceEquals(items, _paletteThemeItems)) _paletteAllowedLight = Theme.WindowLight;
 
         if (_paletteChipText is not null) _paletteChipText.Text = title;
         if (_paletteChip is not null) _paletteChip.Visibility = Visibility.Visible;
@@ -964,8 +957,10 @@ public sealed partial class Workspace
         {
             PaletteItem item = items[index];
             bool match = query.Length == 0 || item.Label.ToLowerInvariant().Contains(query);
-            // Only themes matching the window theme's brightness are selectable.
-            bool modeMatch = !ReferenceEquals(_paletteActiveSub, _paletteThemeItems) || item.Light == _paletteAllowedLight;
+            // Only themes matching the window brightness are offered: a light window edits
+            // the "light:" half of "theme", a dark window the "dark:" half.
+            bool modeMatch = !ReferenceEquals(_paletteActiveSub, _paletteThemeItems)
+                || item.Light == Theme.WindowLight;
             bool visible = match && modeMatch;
 
             item.Row.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;

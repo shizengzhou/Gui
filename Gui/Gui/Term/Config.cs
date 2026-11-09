@@ -108,6 +108,9 @@ public sealed class Config
     /// <summary>The built-in dark theme. Its config value and its name are the same string.</summary>
     public const string DarkThemeName = "Gui Dark";
 
+    /// <summary>Effective value of "theme" when the key is absent.</summary>
+    public const string DefaultTheme = "light:" + LightThemeName + ",dark:" + DarkThemeName;
+
     public string Command = string.Empty;          // empty: auto-detect pwsh/powershell/cmd
     public Language Language = Language.English;   // "language"; English is the default
     public string InitialCommand = string.Empty;   // empty: same as Command
@@ -149,7 +152,10 @@ public sealed class Config
     public bool Compact;                           // true: panes run edge to edge
     public double SidebarWidthLeft = 240.0;        // DIPs; restored width of a left rail
     public double SidebarWidthRight = 240.0;       // DIPs; restored width of a right rail
-    public string ThemeMode = string.Empty;        // empty, Gui Light, Gui Dark, or a bundled theme name
+    public string ThemeMode = string.Empty;        // active side's theme name
+    public string ThemeLightName = LightThemeName; // "theme" light: side
+    public string ThemeDarkName = DarkThemeName;   // "theme" dark: side
+    public string ThemeValue = DefaultTheme;       // canonical light:...,dark:... value
     public string WindowThemeMode = string.Empty;  // "system" (default), "light", "dark"
     public string TitleFontFamily = string.Empty;  // window-title-font-family; empty: system default
     public int WindowWidth;                        // window-width in cells; 0: runtime default
@@ -378,6 +384,9 @@ public sealed class Config
         SidebarWidthLeft = other.SidebarWidthLeft;
         SidebarWidthRight = other.SidebarWidthRight;
         ThemeMode = other.ThemeMode;
+        ThemeLightName = other.ThemeLightName;
+        ThemeDarkName = other.ThemeDarkName;
+        ThemeValue = other.ThemeValue;
         WindowThemeMode = other.WindowThemeMode;
         TitleFontFamily = other.TitleFontFamily;
         WindowWidth = other.WindowWidth;
@@ -505,12 +514,19 @@ public sealed class Config
     public static Config Load(string file)
     {
         var config = new Config();
+        bool present;
         try
         {
-            if (!File.Exists(file)) return config;
+            present = File.Exists(file);
         }
         catch
         {
+            present = false;
+        }
+        if (!present)
+        {
+            // Resolve even without a file so the theme and window defaults are populated.
+            config.Resolve();
             return config;
         }
 
@@ -946,61 +962,131 @@ public sealed class Config
         if (WorkingDirectory.Length == 0)
             WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        ResolveTheme();
         ResolveWindowTheme();
+        ResolveTheme();
     }
 
     /// <summary>
-    /// "theme" controls the terminal palette only. Empty, "Gui Dark" or "Gui Light" pick the
-    /// design's own palettes; anything else is a bundled Ghostty theme name
-    /// (Assets/Themes/light|dark). The old short names are still accepted.
+    /// "theme" is a comma-separated list whose entries may carry a "light:" or "dark:"
+    /// prefix; an unprefixed name applies to both appearances. The side selected by
+    /// "window-theme" is the one painted. An absent key means
+    /// "light:Gui Light,dark:Gui Dark", and an omitted side keeps that side's default.
     /// </summary>
     private void ResolveTheme()
     {
-        string themeName = (Last("theme") ?? string.Empty).Trim();
-        ThemeMode = themeName;
-        string themeKey = themeName.ToLowerInvariant();
-        bool designLight = themeKey is "light" or "gui light";
-        bool designDark = themeKey is "dark" or "gui dark";
+        string raw = (Last("theme") ?? string.Empty).Trim();
+        (string? lightName, string? darkName) = ParseThemeValue(raw);
 
-        LightTheme = designLight;
-        if (themeName.Length > 0 && !designLight && !designDark)
+        ThemeLightName = lightName ?? LightThemeName;
+        ThemeDarkName = darkName ?? DarkThemeName;
+        ThemeValue = "light:" + ThemeLightName + ",dark:" + ThemeDarkName;
+
+        TerminalTheme = ResolveThemeFor(WindowLight ? ThemeLightName : ThemeDarkName,
+            out bool light, out string canonical);
+        LightTheme = light;
+        ThemeMode = canonical;
+    }
+
+    /// <summary>Splits "light:X,dark:Y"; an unprefixed entry applies to both sides.</summary>
+    public static (string? Light, string? Dark) ParseThemeValue(string raw)
+    {
+        string? light = null;
+        string? dark = null;
+        foreach (string part in raw.Split(','))
         {
-            if (TerminalThemes.Load(themeName, out TerminalTheme loaded))
+            string entry = part.Trim();
+            if (entry.Length == 0) continue;
+
+            if (entry.StartsWith("light:", StringComparison.OrdinalIgnoreCase))
             {
-                TerminalTheme = loaded;
-                LightTheme = TerminalThemes.IsLight(loaded.Background);
+                string name = entry[6..].Trim();
+                if (name.Length > 0) light = name;
+            }
+            else if (entry.StartsWith("dark:", StringComparison.OrdinalIgnoreCase))
+            {
+                string name = entry[5..].Trim();
+                if (name.Length > 0) dark = name;
+            }
+            else
+            {
+                light = entry;
+                dark = entry;
             }
         }
+        return (light, dark);
+    }
 
-        // Explicit keys layer on top of the theme, exactly like Ghostty's precedence.
-        bool custom = TerminalTheme.Custom;
+    /// <summary>Resolves one appearance's theme; the palette previews use this too.</summary>
+    public void ResolveThemeSide(bool light, out TerminalTheme theme, out bool isLight, out string name)
+    {
+        theme = ResolveThemeFor(light ? ThemeLightName : ThemeDarkName, out isLight, out name);
+    }
+
+    /// <summary>The canonical "theme" value with one appearance's theme replaced.</summary>
+    public string WithThemeSide(bool light, string name) =>
+        "light:" + (light ? name : ThemeLightName) + ",dark:" + (light ? ThemeDarkName : name);
+
+    /// <summary>Replaces the runtime "theme" value and re-resolves both sides.</summary>
+    public void SetTheme(string value)
+    {
+        _values["theme"] = new List<string> { value };
+        ResolveTheme();
+    }
+
+    /// <summary>
+    /// Builds a palette from one theme name and layers the explicit
+    /// background/foreground/cursor/palette keys on top, like Ghostty's precedence.
+    /// </summary>
+    private TerminalTheme ResolveThemeFor(string name, out bool light, out string canonical)
+    {
+        name = name.Trim();
+        canonical = name;
+        var theme = new TerminalTheme();
+
+        string key = name.ToLowerInvariant();
+        bool designLight = key is "light" or "gui light";
+        bool designDark = key is "dark" or "gui dark";
+        light = designLight;
+
+        if (name.Length > 0 && !designLight && !designDark)
+        {
+            if (TerminalThemes.Load(name, out TerminalTheme loaded))
+            {
+                theme = loaded;
+                light = TerminalThemes.IsLight(loaded.Background);
+            }
+            else
+            {
+                // Unknown name: the design palette for this appearance is the fallback.
+                canonical = WindowLight ? LightThemeName : DarkThemeName;
+                light = WindowLight;
+            }
+        }
+        else if (designLight) canonical = LightThemeName;
+        else if (designDark) canonical = DarkThemeName;
+
+        bool custom = theme.Custom;
         bool haveBackground = TryGetColor("background", out Rgb explicitBackground);
         bool haveForeground = TryGetColor("foreground", out Rgb explicitForeground);
         bool haveCursor = TryGetColor("cursor-color", out Rgb cursor);
         var paletteEntries = All("palette");
 
         if (!haveBackground && !haveForeground && !haveCursor && paletteEntries.Count == 0)
-        {
-            // Nothing overrides the theme: no palette work is needed at all.
-            if (designLight) ThemeMode = LightThemeName;
-            else if (designDark) ThemeMode = DarkThemeName;
-            return;
-        }
+            return theme;
 
         var palette = new Rgb[256];
-        if (custom) Array.Copy(TerminalTheme.Palette, palette, 256);
+        if (custom) Array.Copy(theme.Palette, palette, 256);
         else GhosttyNative.PaletteDefault(palette);
 
         Rgb background = haveBackground ? explicitBackground
-            : custom ? TerminalTheme.Background : new Rgb(7, 9, 14);
+            : custom ? theme.Background : new Rgb(7, 9, 14);
         Rgb foreground = haveForeground ? explicitForeground
-            : custom ? TerminalTheme.Foreground : new Rgb(245, 245, 247);
+            : custom ? theme.Foreground : new Rgb(245, 245, 247);
 
         if (haveCursor)
         {
-            TerminalTheme.CursorSet = true;
-            TerminalTheme.Cursor = cursor;
+            theme.CursorSet = true;
+            theme.Cursor = cursor;
         }
 
         var paletteMask = new GhosttyNative.ColorPaletteMask();
@@ -1021,22 +1107,18 @@ public sealed class Config
             var generated = new Rgb[256];
             GhosttyNative.PaletteGenerate(palette, paletteMask, background, foreground,
                 GetBool("palette-harmonious", false), generated);
-            Array.Copy(generated, TerminalTheme.Palette, 256);
+            Array.Copy(generated, theme.Palette, 256);
         }
         else
         {
-            Array.Copy(palette, TerminalTheme.Palette, 256);
+            Array.Copy(palette, theme.Palette, 256);
         }
 
-        TerminalTheme.Background = background;
-        TerminalTheme.Foreground = foreground;
-        TerminalTheme.Custom = true;
-        LightTheme = TerminalThemes.IsLight(background);
-
-        // The built-in themes carry their full name, so the value in the config file and the
-        // name shown in the UI are the same string.
-        if (designLight) ThemeMode = LightThemeName;
-        else if (designDark) ThemeMode = DarkThemeName;
+        theme.Background = background;
+        theme.Foreground = foreground;
+        theme.Custom = true;
+        light = TerminalThemes.IsLight(background);
+        return theme;
     }
 
     /// <summary>
@@ -1058,16 +1140,6 @@ public sealed class Config
         {
             WindowThemeMode = "system";
             WindowLight = SystemUsesLightTheme();
-        }
-
-        // The window brightness constrains the usable themes: a light window only
-        // accepts light themes and a dark window only dark ones. A mismatching custom
-        // theme falls back to the default Gui Light / Gui Dark palette.
-        if (LightTheme != WindowLight)
-        {
-            ThemeMode = WindowLight ? LightThemeName : DarkThemeName;
-            LightTheme = WindowLight;
-            TerminalTheme = new TerminalTheme();
         }
     }
 
