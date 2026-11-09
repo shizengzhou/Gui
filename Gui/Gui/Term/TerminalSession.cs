@@ -84,6 +84,9 @@ public sealed unsafe class TerminalSession : IDisposable
     /// <summary>OSC 133 D: a command finished, with its exit code and runtime.</summary>
     public Action<int, TimeSpan>? OnCommandFinished;
 
+    /// <summary>OSC 9;4: the program reported a new progress state and percentage.</summary>
+    public Action<int, int>? OnProgress;
+
     /// <summary>True between the command's output start (C) and its finish (D).</summary>
     public bool CommandRunning => _marks.CommandRunning;
 
@@ -113,6 +116,7 @@ public sealed unsafe class TerminalSession : IDisposable
         _clipboardWrite = OnClipboardWrite;
         _clipboardRead = OnClipboardRead;
         _marks.CommandFinished = (exit, duration) => OnCommandFinished?.Invoke(exit, duration);
+        _marks.ProgressChanged = (state, value) => OnProgress?.Invoke(state, value);
 
         if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out _terminal, 80, 24) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_terminal_new failed");
@@ -165,26 +169,30 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     /// <summary>
-    /// Replaces the terminal's default colors for a theme switch. A theme with
-    /// Custom = false clears the defaults, restoring the built-in palette.
+    /// Replaces the terminal's default colors for a theme switch. The terminal's own colors —
+    /// not the renderer's — are what programs read back: OSC 10/11/4 queries and light/dark
+    /// detection answer from here, so the design themes hand over their real surface. A theme
+    /// that carries neither design nor custom colors clears them, restoring the library's
+    /// built-in palette.
     /// </summary>
     public void ApplyTheme(TerminalTheme theme)
     {
         if (_terminal == IntPtr.Zero) return;
 
-        if (theme.Custom)
+        Rgb background = theme.Background;
+        Rgb foreground = theme.Foreground;
+        Rgb cursor = theme.Cursor;
+
+        if (theme.Design)
         {
-            Rgb background = theme.Background;
-            Rgb foreground = theme.Foreground;
-            Rgb cursor = theme.Cursor;
+            bool light = Theme.PerceivedLuminance(background) > 0.5;
+            fixed (Rgb* palette = TerminalTheme.DesignPalette(light))
+                ApplyColors(background, foreground, theme.CursorSet, cursor, palette);
+        }
+        else if (theme.Custom)
+        {
             fixed (Rgb* palette = theme.Palette)
-            {
-                GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_BACKGROUND, &background);
-                GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_FOREGROUND, &foreground);
-                GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_CURSOR,
-                    theme.CursorSet ? &cursor : null);
-                GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_PALETTE, palette);
-            }
+                ApplyColors(background, foreground, theme.CursorSet, cursor, palette);
         }
         else
         {
@@ -198,6 +206,15 @@ public sealed unsafe class TerminalSession : IDisposable
         // their resolved colors and background tabs would paint the previous theme. Rebuild
         // the state so the next frame resolves every cell against the new palette.
         ResetRenderState();
+    }
+
+    private unsafe void ApplyColors(Rgb background, Rgb foreground, bool cursorSet, Rgb cursor, Rgb* palette)
+    {
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_BACKGROUND, &background);
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_FOREGROUND, &foreground);
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_CURSOR,
+            cursorSet ? &cursor : null);
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_PALETTE, palette);
     }
 
     /// <summary>Drops and recreates the render state so the next frame is fully re-resolved.</summary>

@@ -134,6 +134,11 @@ public sealed class TerminalPane
     private ushort _cols = 80;
     private ushort _rows = 24;
 
+    // "progress-style": OSC 9;4 progress drawn across the top of the terminal surface.
+    private readonly ProgressBar _progressBar;
+    private int _progressState;   // 0 none, 1 normal, 2 error, 3 indeterminate, 4 paused
+    private int _progressValue;
+
     public string Title = string.Empty;
 
     public Action<TerminalPane>? OnTitle;
@@ -213,6 +218,7 @@ public sealed class TerminalPane
         _config.CopyFrom(config);
         _config.Command = command;
         _config.WorkingDirectory = workingDirectory;
+        UpdateProgressBar();
     }
 
     public TerminalPane(Config config, byte[]? snapshot = null, string? restoreBanner = null,
@@ -422,6 +428,21 @@ public sealed class TerminalPane
         _scrollBar.PointerWheelChanged += OnPointerWheel;
         _scrollBar.SizeChanged += (_, _) => UpdateScrollbar();
 
+        // "progress-style": a hairline across the top of the surface, above the first row,
+        // inside the pane's padding. Ghostty draws its OSC 9;4 report in the same place.
+        _progressBar = new ProgressBar
+        {
+            Height = 2,
+            Minimum = 0,
+            Maximum = 100,
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = TransparentBrush(),
+            Foreground = new SolidColorBrush(Theme.Accent()),
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+
         var faint = new SolidColorBrush(Theme.TextFaint());
         // Action glyphs stay neutral whatever terminal theme is selected; only the surface
         // brightness decides between the dark and light grey.
@@ -539,6 +560,8 @@ public sealed class TerminalPane
         frameRoot.Children.Add(_canvas);
         Grid.SetRow(_scrollBar, 1);
         frameRoot.Children.Add(_scrollBar);
+        Grid.SetRow(_progressBar, 1);
+        frameRoot.Children.Add(_progressBar);
         Grid.SetRow(_dim, 1);
         frameRoot.Children.Add(_dim);
         Grid.SetRow(_linkPreview, 1);
@@ -1153,6 +1176,34 @@ public sealed class TerminalPane
     /// <summary>True while the injected shell integration reports a running command.</summary>
     public bool CommandRunning => _session.CommandRunning;
 
+    /// <summary>
+    /// OSC 9;4 report from the program: draw it as a bar along the top of the surface.
+    /// "progress-style = false" only hides the bar; the state is kept so re-enabling the
+    /// option shows the current progress again.
+    /// </summary>
+    private void OnProgressReported(int state, int value)
+    {
+        _progressState = state;
+        _progressValue = value;
+        UpdateProgressBar();
+    }
+
+    private void UpdateProgressBar()
+    {
+        // SyncConfig/ApplyTheme may run before the constructor reached the bar.
+        if (_progressBar is null) return;
+
+        bool show = _config.ProgressStyle && _progressState != 0;
+        _progressBar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) return;
+
+        // State 2 and 4 have their own colours in the control's template; state 3 pulses.
+        _progressBar.IsIndeterminate = _progressState == 3;
+        _progressBar.ShowError = _progressState == 2;
+        _progressBar.ShowPaused = _progressState == 4;
+        _progressBar.Value = _progressValue;
+    }
+
     // ---------------- lifecycle ----------------
 
     /// <summary>
@@ -1238,6 +1289,7 @@ public sealed class TerminalPane
         session.OnOutput = null;
         session.OnBell = null;
         session.OnCommandFinished = null;
+        session.OnProgress = null;
         session.OnExit = null;
         session.OnTitle = null;
         return session;
@@ -1290,6 +1342,7 @@ public sealed class TerminalPane
         };
         _session.OnBell = RingBell;
         _session.OnCommandFinished = (exit, duration) => OnCommandFinished?.Invoke(this, exit, duration);
+        _session.OnProgress = OnProgressReported;
         _session.OnExit = () =>
         {
             // wait-after-command keeps the surface (and its scrollback) open after the shell exits.
@@ -1331,6 +1384,7 @@ public sealed class TerminalPane
         _session.OnUpdate = null;
         _session.OnBell = null;
         _session.OnCommandFinished = null;
+        _session.OnProgress = null;
         _session.OnExit = null;
         _session.OnTitle = null;
         if (_sessionReleased) return;
@@ -1795,6 +1849,8 @@ public sealed class TerminalPane
     {
         _frame.Background = new SolidColorBrush(SurfaceColor());
         UpdateFrameBorder();
+        _progressBar.Foreground = new SolidColorBrush(Theme.Accent());
+        UpdateProgressBar();
         _dim.Background = new SolidColorBrush(DimFillColor());
         _canvas.ClearColor = CanvasClearColor();
         if (_linkPreview is not null)

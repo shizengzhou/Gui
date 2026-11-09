@@ -792,7 +792,7 @@ public sealed partial class Workspace
             return;
         }
 
-        if (design) Theme.Terminal = new TerminalTheme();
+        if (design) Theme.Terminal = TerminalTheme.CreateDesign(light);
         Theme.Light = light;
 
         RefreshTheme();

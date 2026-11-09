@@ -100,10 +100,11 @@ internal static class ShellIntegration
 }
 
 /// <summary>
-/// Incremental OSC 133 reader. The shell integration writes
+/// Incremental OSC reader. The shell integration writes
 /// <c>ESC ] 133 ; A|B|C|D[;exit] BEL</c> around prompts and commands; the parser keeps
 /// enough state to survive a sequence split across two PTY reads and reports when a
-/// command starts and finishes. Other OSC payloads are skipped.
+/// command starts and finishes. It also picks up <c>ESC ] 9 ; 4 ; state ; value ST</c>
+/// progress reports on the same pass. Other OSC payloads are skipped.
 /// </summary>
 internal sealed class ShellMarkParser
 {
@@ -129,6 +130,17 @@ internal sealed class ShellMarkParser
     /// <summary>Raised on the UI thread when a command closed with OSC 133 D.</summary>
     public Action<int, TimeSpan>? CommandFinished;
 
+    /// <summary>
+    /// Last OSC 9;4 progress: 0 none, 1 normal, 2 error, 3 indeterminate, 4 paused.
+    /// </summary>
+    public int ProgressState { get; private set; }
+
+    /// <summary>OSC 9;4 percentage, 0-100.</summary>
+    public int ProgressValue { get; private set; }
+
+    /// <summary>Raised when an OSC 9;4 report changes the state or the percentage.</summary>
+    public Action<int, int>? ProgressChanged;
+
     public void Reset()
     {
         _state = State.Ground;
@@ -136,6 +148,8 @@ internal sealed class ShellMarkParser
         _collect = false;
         _started = false;
         CommandRunning = false;
+        ProgressState = 0;
+        ProgressValue = 0;
     }
 
     public void Feed(ReadOnlySpan<byte> data)
@@ -174,7 +188,7 @@ internal sealed class ShellMarkParser
                     else if (_collect)
                     {
                         if (_payload.Length < MaxPayload) _payload.Append((char)value);
-                        else if (!IsTarget()) _collect = false;
+                        else if (!IsReport()) _collect = false;
                     }
                     break;
 
@@ -193,16 +207,55 @@ internal sealed class ShellMarkParser
         }
     }
 
-    private bool IsTarget() =>
-        _payload.Length >= 4 &&
-        _payload[0] == '1' && _payload[1] == '3' && _payload[2] == '3' && _payload[3] == ';';
+    /// <summary>OSC 133 marks and OSC 9;4 progress are the only payloads kept.</summary>
+    private bool IsReport()
+    {
+        if (_payload.Length < 4) return false;
+        if (_payload[0] == '1' && _payload[1] == '3' && _payload[2] == '3' && _payload[3] == ';')
+            return true;
+        return _payload[0] == '9' && _payload[1] == ';' && _payload[2] == '4' && _payload[3] == ';';
+    }
 
     private void Complete()
     {
-        if (IsTarget()) Parse();
+        if (IsReport())
+        {
+            // "9;4;" means progress; everything else that reaches here is an OSC 133 mark.
+            if (_payload[0] == '9') ParseProgress();
+            else Parse();
+        }
         _payload.Clear();
         _collect = false;
         _state = State.Ground;
+    }
+
+    /// <summary>
+    /// <c>9;4;state[;value]</c>: state 0 clears, 1 normal, 2 error, 3 indeterminate,
+    /// 4 paused. A missing or out-of-range value clamps instead of dropping the report.
+    /// </summary>
+    private void ParseProgress()
+    {
+        string body = _payload.ToString(4, _payload.Length - 4);
+        int separator = body.IndexOf(';');
+        int state;
+        int value = 0;
+        if (separator < 0)
+        {
+            if (!int.TryParse(body, out state)) return;
+        }
+        else
+        {
+            if (!int.TryParse(body[..separator], out state)) return;
+            int.TryParse(body[(separator + 1)..], out value);
+        }
+
+        if (state < 0 || state > 4) return;
+        value = Math.Clamp(value, 0, 100);
+        if (state == ProgressState && value == ProgressValue) return;
+
+        ProgressState = state;
+        ProgressValue = value;
+        ProgressChanged?.Invoke(state, value);
     }
 
     private void Parse()
@@ -216,6 +269,7 @@ internal sealed class ShellMarkParser
                 // A new prompt without a D means the previous command's end mark was lost.
                 CommandRunning = false;
                 _started = false;
+                ClearProgress();
                 break;
 
             case 'C':
@@ -237,7 +291,18 @@ internal sealed class ShellMarkParser
                     int.TryParse(body.AsSpan(separator + 1), out exit);
                 long elapsed = Environment.TickCount64 - _startedTicks;
                 CommandFinished?.Invoke(exit, TimeSpan.FromMilliseconds(Math.Max(0, elapsed)));
+                // The command owned the progress bar; its prompt is back.
+                ClearProgress();
                 break;
         }
+    }
+
+    /// <summary>Drops a bar a finished command left behind (the program did not do it itself).</summary>
+    private void ClearProgress()
+    {
+        if (ProgressState == 0 && ProgressValue == 0) return;
+        ProgressState = 0;
+        ProgressValue = 0;
+        ProgressChanged?.Invoke(0, 0);
     }
 }

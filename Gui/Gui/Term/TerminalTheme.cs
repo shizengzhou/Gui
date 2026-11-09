@@ -35,6 +35,16 @@ public struct Rgb : IEquatable<Rgb>
 public sealed class TerminalTheme
 {
     public bool Custom;
+
+    /// <summary>
+    /// The built-in "Gui Light" / "Gui Dark" design palette. <see cref="Custom"/> stays false
+    /// because the window chrome still follows the design tokens, but the terminal itself is
+    /// given these colors: programs query them with OSC 10/11 (and the palette with OSC 4) to
+    /// pick a light or dark UI, and a cleared palette would answer with the library's dark
+    /// defaults on a white surface.
+    /// </summary>
+    public bool Design;
+
     public Rgb Background = new(7, 9, 14);
     public Rgb Foreground = new(245, 245, 247);
     public bool CursorSet;
@@ -44,6 +54,66 @@ public sealed class TerminalTheme
     public bool SelectionForegroundSet;
     public Rgb SelectionForeground;
     public readonly Rgb[] Palette = new Rgb[256];
+
+    /// <summary>The surface and text colors of "Gui Light" (true) or "Gui Dark" (false).</summary>
+    public static TerminalTheme CreateDesign(bool light) => light
+        ? new TerminalTheme
+        {
+            Design = true,
+            Background = new Rgb(255, 255, 255),
+            Foreground = new Rgb(36, 41, 47),
+        }
+        : new TerminalTheme
+        {
+            Design = true,
+            Background = new Rgb(7, 9, 14),
+            Foreground = new Rgb(245, 245, 247),
+        };
+
+    private static readonly object DesignPaletteGate = new();
+    private static Rgb[]? _designLightPalette;
+    private static Rgb[]? _designDarkPalette;
+
+    /// <summary>
+    /// The 256-color design palette. 0-15 are the design's ANSI colors; 16-255 come from
+    /// libghostty-vt's generator so indexed colors stay consistent with the surface. Generated
+    /// on demand because it calls into the library, which only the app (not the logic tests)
+    /// has loaded.
+    /// </summary>
+    public static Rgb[] DesignPalette(bool light)
+    {
+        lock (DesignPaletteGate)
+        {
+            if (light)
+            {
+                if (_designLightPalette is not null) return _designLightPalette;
+
+                var source = new Rgb[256];
+                GhosttyNative.PaletteDefault(source);
+                var lightBase = new Rgb[16]
+                {
+                    new(36, 41, 47), new(207, 34, 46), new(17, 99, 41), new(154, 103, 0),
+                    new(9, 105, 218), new(130, 80, 223), new(27, 124, 131), new(110, 119, 129),
+                    new(87, 96, 106), new(168, 25, 35), new(26, 127, 55), new(191, 135, 0),
+                    new(33, 139, 255), new(164, 117, 249), new(49, 146, 170), new(36, 41, 47),
+                };
+                Array.Copy(lightBase, source, 16);
+
+                var generated = new Rgb[256];
+                GhosttyNative.PaletteGenerate(source, default, new Rgb(255, 255, 255),
+                    new Rgb(36, 41, 47), false, generated);
+                return _designLightPalette = generated;
+            }
+
+            if (_designDarkPalette is null)
+            {
+                var defaults = new Rgb[256];
+                GhosttyNative.PaletteDefault(defaults);
+                _designDarkPalette = defaults;
+            }
+            return _designDarkPalette;
+        }
+    }
 }
 
 /// <summary>Loads the bundled Ghostty themes shipped in Assets\Themes.</summary>

@@ -296,6 +296,9 @@ public sealed class Config
     public bool NotifyOnCommandFinishToast;        // notify-on-command-finish-action: notify
     public TimeSpan NotifyOnCommandFinishAfter = TimeSpan.FromSeconds(5);
 
+    /// <summary>"progress-style": draw OSC 9;4 progress in the tab bar (default on).</summary>
+    public bool ProgressStyle = true;
+
     // ---- process ----------------------------------------------------------
 
     public List<(string Name, string Value)> ExtraEnvironment = new();
@@ -503,6 +506,7 @@ public sealed class Config
         NotifyOnCommandFinishBell = other.NotifyOnCommandFinishBell;
         NotifyOnCommandFinishToast = other.NotifyOnCommandFinishToast;
         NotifyOnCommandFinishAfter = other.NotifyOnCommandFinishAfter;
+        ProgressStyle = other.ProgressStyle;
 
         _values.Clear();
         foreach (var pair in other._values)
@@ -934,6 +938,7 @@ public sealed class Config
             ParseNotifyAction(Last("notify-on-command-finish-action"));
         NotifyOnCommandFinishAfter =
             ParseDuration(Last("notify-on-command-finish-after"), TimeSpan.FromSeconds(5));
+        ProgressStyle = GetBool("progress-style", true);
 
         TabPosition = (Last("tab-position") ?? string.Empty).ToLowerInvariant();
         NewTabPosition =
@@ -1051,13 +1056,13 @@ public sealed class Config
     {
         name = name.Trim();
         canonical = name;
-        var theme = new TerminalTheme();
 
         string key = name.ToLowerInvariant();
         bool designLight = key is "light" or "gui light";
         bool designDark = key is "dark" or "gui dark";
         light = designLight;
 
+        TerminalTheme theme;
         if (name.Length > 0 && !designLight && !designDark)
         {
             if (TerminalThemes.Load(name, out TerminalTheme loaded))
@@ -1070,12 +1075,16 @@ public sealed class Config
                 // Unknown name: the design palette for this appearance is the fallback.
                 canonical = WindowLight ? LightThemeName : DarkThemeName;
                 light = WindowLight;
+                theme = TerminalTheme.CreateDesign(light);
             }
         }
-        else if (designLight) canonical = LightThemeName;
-        else if (designDark) canonical = DarkThemeName;
+        else
+        {
+            if (designLight) canonical = LightThemeName;
+            else if (designDark) canonical = DarkThemeName;
+            theme = TerminalTheme.CreateDesign(light);
+        }
 
-        bool custom = theme.Custom;
         bool haveBackground = TryGetColor("background", out Rgb explicitBackground);
         bool haveForeground = TryGetColor("foreground", out Rgb explicitForeground);
         bool haveCursor = TryGetColor("cursor-color", out Rgb cursor);
@@ -1085,13 +1094,10 @@ public sealed class Config
             return theme;
 
         var palette = new Rgb[256];
-        if (custom) Array.Copy(theme.Palette, palette, 256);
-        else GhosttyNative.PaletteDefault(palette);
+        Array.Copy(theme.Design ? TerminalTheme.DesignPalette(light) : theme.Palette, palette, 256);
 
-        Rgb background = haveBackground ? explicitBackground
-            : custom ? theme.Background : new Rgb(7, 9, 14);
-        Rgb foreground = haveForeground ? explicitForeground
-            : custom ? theme.Foreground : new Rgb(245, 245, 247);
+        Rgb background = haveBackground ? explicitBackground : theme.Background;
+        Rgb foreground = haveForeground ? explicitForeground : theme.Foreground;
 
         if (haveCursor)
         {
@@ -1127,6 +1133,7 @@ public sealed class Config
         theme.Background = background;
         theme.Foreground = foreground;
         theme.Custom = true;
+        theme.Design = false;
         light = TerminalThemes.IsLight(background);
         return theme;
     }

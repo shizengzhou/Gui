@@ -983,56 +983,6 @@ public sealed unsafe class TerminalRenderer
         return -1;
     }
 
-    // ---------------- palette remapping ----------------
-
-    private static Dictionary<int, Rgb>? _lightPalette;
-
-    /// <summary>
-    /// The VT reports cell colors resolved from its default (dark) palette. For the light
-    /// design theme, map each of those palette colors to the design's light palette so
-    /// ANSI output keeps its contrast on a white surface.
-    /// </summary>
-    private static Dictionary<int, Rgb> LightPalette
-    {
-        get
-        {
-            if (_lightPalette is not null) return _lightPalette;
-
-            var baseColors = new Rgb[256];
-            GhosttyNative.PaletteDefault(baseColors);
-
-            var source = new Rgb[256];
-            Array.Copy(baseColors, source, 256);
-            var lightBase = new Rgb[16]
-            {
-                new(36, 41, 47), new(207, 34, 46), new(17, 99, 41), new(154, 103, 0),
-                new(9, 105, 218), new(130, 80, 223), new(27, 124, 131), new(110, 119, 129),
-                new(87, 96, 106), new(168, 25, 35), new(26, 127, 55), new(191, 135, 0),
-                new(33, 139, 255), new(164, 117, 249), new(49, 146, 170), new(36, 41, 47),
-            };
-            Array.Copy(lightBase, source, 16);
-
-            var generated = new Rgb[256];
-            GhosttyNative.PaletteGenerate(source, default, new Rgb(255, 255, 255), new Rgb(36, 41, 47), false, generated);
-
-            var map = new Dictionary<int, Rgb>(256);
-            for (int i = 0; i < 256; i++)
-                map[baseColors[i].GetHashCode()] = generated[i];
-            _lightPalette = map;
-            return map;
-        }
-    }
-
-    private static Color ThemeColor(Rgb rgb)
-    {
-        if (Theme.Terminal.Custom || !Theme.Light)
-            return Color.FromArgb(255, rgb.R, rgb.G, rgb.B);
-
-        return LightPalette.TryGetValue(rgb.GetHashCode(), out Rgb mapped)
-            ? Color.FromArgb(255, mapped.R, mapped.G, mapped.B)
-            : Color.FromArgb(255, rgb.R, rgb.G, rgb.B);
-    }
-
     // ---------------- rendering ----------------
 
     private struct Run
@@ -1079,25 +1029,10 @@ public sealed unsafe class TerminalRenderer
         GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_COLOR_CURSOR, &cursorRgb);
         GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_COLOR_CURSOR_HAS_VALUE, &cursorHasValue);
 
-        if (!Theme.Terminal.Custom)
-        {
-            if (Theme.Light)
-            {
-                defaultBg = Color.FromArgb(255, 255, 255, 255);
-                defaultFg = Color.FromArgb(255, 36, 41, 47);
-            }
-            else
-            {
-                themeBg = new Rgb(7, 9, 14);
-                defaultBg = Color.FromArgb(255, 7, 9, 14);
-                defaultFg = Color.FromArgb(255, themeFg.R, themeFg.G, themeFg.B);
-            }
-        }
-        else
-        {
-            defaultBg = Color.FromArgb(255, themeBg.R, themeBg.G, themeBg.B);
-            defaultFg = Color.FromArgb(255, themeFg.R, themeFg.G, themeFg.B);
-        }
+        // The design themes set their real surface on the terminal, so the render state carries
+        // the same colors programs see: no per-cell fixups are needed here.
+        defaultBg = Color.FromArgb(255, themeBg.R, themeBg.G, themeBg.B);
+        defaultFg = Color.FromArgb(255, themeFg.R, themeFg.G, themeFg.B);
 
         // With "background-opacity" the pane's translucent surface lives in XAML (it also
         // covers the header and the padding), so the canvas starts fully transparent and
@@ -1182,11 +1117,11 @@ public sealed unsafe class TerminalRenderer
 
                     Color bg = defaultBg;
                     if (hasBg)
-                        bg = bgRgb == themeBg ? defaultBg : ThemeColor(bgRgb);
+                        bg = bgRgb == themeBg ? defaultBg : Color.FromArgb(255, bgRgb.R, bgRgb.G, bgRgb.B);
 
                     Color fg = defaultFg;
                     if (hasFg && fgRgb != themeFg)
-                        fg = ThemeColor(fgRgb);
+                        fg = Color.FromArgb(255, fgRgb.R, fgRgb.G, fgRgb.B);
 
                     if (style.Inverse != 0) (bg, fg) = (fg, bg);
 
@@ -1417,7 +1352,7 @@ public sealed unsafe class TerminalRenderer
             float top = cursor.ViewportY * cellH;
             var rect = new Rect(cursorCol * cellW, top, cellW, cellH);
 
-            Color color = cursorHasValue ? ThemeColor(cursorRgb) : defaultFg;
+            Color color = cursorHasValue ? Color.FromArgb(255, cursorRgb.R, cursorRgb.G, cursorRgb.B) : defaultFg;
             float opacity = _config?.CursorOpacity ?? 1.0f;
             color.A = (byte)Math.Clamp(Math.Round(255.0 * opacity), 0, 255);
 

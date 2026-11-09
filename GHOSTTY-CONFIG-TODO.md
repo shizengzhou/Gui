@@ -197,7 +197,7 @@
 - [ ] `async-backend` — 异步 IO 后端（auto/epoll/io_uring 等）
 - [ ] `app-notifications` — 应用内通知（toast）的控制项
 - [ ] `desktop-notifications` — 是否允许 OSC 桌面通知
-- [ ] `progress-style` — 是否支持 OSC 9;4 图形进度条
+- [x] `progress-style` — 是否支持 OSC 9;4 图形进度条；默认开启。解析 `ESC ] 9 ; 4 ; state ; value ST`（0 清除 / 1 进行中 / 2 失败 / 3 不确定 / 4 暂停，百分比夹到 0–100），像 Ghostty 一样在终端内容顶部画一条 2 DIP 的细条（普通态用主题强调色，失败/暂停用控件的红/黄色，不确定态脉冲）；命令结束（OSC 133 D）或新提示符（OSC 133 A）时自动清除遗留的进度条
 
 ## 11. 快速终端（9）
 

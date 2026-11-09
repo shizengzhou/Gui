@@ -315,6 +315,30 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void TheBuiltInThemesExposeTheirRealColorsToTheTerminal()
+    {
+        // Programs query OSC 10/11 to tell a light terminal from a dark one, so the design
+        // themes must carry their actual surface instead of an empty palette.
+        Config light = Config.Load(Write("theme = Gui Light\nwindow-theme = light\n"));
+        Assert.True(light.TerminalTheme.Design);
+        Assert.Equal(new Rgb(255, 255, 255), light.TerminalTheme.Background);
+        Assert.Equal(new Rgb(36, 41, 47), light.TerminalTheme.Foreground);
+
+        Config dark = Config.Load(Write("theme = Gui Dark\nwindow-theme = dark\n"));
+        Assert.True(dark.TerminalTheme.Design);
+        Assert.Equal(new Rgb(7, 9, 14), dark.TerminalTheme.Background);
+        Assert.Equal(new Rgb(245, 245, 247), dark.TerminalTheme.Foreground);
+    }
+
+    [Fact]
+    public void ProgressStyleDefaultsOnAndCanBeDisabled()
+    {
+        Assert.True(Config.Load(Write("")).ProgressStyle);
+        Assert.False(Config.Load(Write("progress-style = false\n")).ProgressStyle);
+        Assert.True(Config.Load(Write("progress-style = true\n")).ProgressStyle);
+    }
+
+    [Fact]
     public void TheOldShortThemeNamesStillWork()
     {
         Config light = Config.Load(Write("theme = light\nwindow-theme = light\n"));

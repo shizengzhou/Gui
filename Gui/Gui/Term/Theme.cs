@@ -100,7 +100,9 @@ public static class Theme
     /// </summary>
     public static Rgb TermSurfaceRgb()
     {
-        if (Terminal.Custom) return Terminal.Background;
+        // Both the bundled themes and the design palettes carry their real surface; only the
+        // placeholder theme (before the config is applied) falls back to the design defaults.
+        if (Terminal.Custom || Terminal.Design) return Terminal.Background;
         return Light ? new Rgb(255, 255, 255) : new Rgb(7, 9, 14);
     }
 

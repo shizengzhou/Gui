@@ -103,4 +103,53 @@ public class ShellIntegrationTests
         Feed(parser, "\u001b]133;A\u0007");
         Assert.False(parser.CommandRunning);
     }
+
+    [Fact]
+    public void ProgressReportsSetTheStateAndThePercentage()
+    {
+        var parser = new ShellMarkParser();
+        (int State, int Value)? last = null;
+        parser.ProgressChanged = (state, value) => last = (state, value);
+
+        Feed(parser, "\u001b]9;4;1;42\u0007");
+        Assert.Equal(1, parser.ProgressState);
+        Assert.Equal(42, parser.ProgressValue);
+        Assert.Equal((1, 42), last);
+
+        // Indeterminate has no percentage; ST terminates the sequence like BEL.
+        Feed(parser, "\u001b]9;4;3\u001b\\");
+        Assert.Equal(3, parser.ProgressState);
+        Assert.Equal(0, parser.ProgressValue);
+
+        Feed(parser, "\u001b]9;4;0\u0007");
+        Assert.Equal(0, parser.ProgressState);
+        Assert.Equal((0, 0), last);
+    }
+
+    [Fact]
+    public void ProgressReportsSurviveSplitReadsAndClampTheValue()
+    {
+        var parser = new ShellMarkParser();
+        Feed(parser, "\u001b]9;4;2");
+        Feed(parser, ";140\u0007");
+
+        Assert.Equal(2, parser.ProgressState);
+        Assert.Equal(100, parser.ProgressValue);
+    }
+
+    [Fact]
+    public void ProgressIgnoresUnknownStatesAndClearsWhenTheCommandEnds()
+    {
+        var parser = new ShellMarkParser();
+        Feed(parser, "\u001b]9;4;9;50\u0007");
+        Assert.Equal(0, parser.ProgressState);
+
+        Feed(parser, "\u001b]133;C\u0007");
+        Feed(parser, "\u001b]9;4;1;50\u0007");
+        Assert.Equal(1, parser.ProgressState);
+
+        Feed(parser, "\u001b]133;D;0\u0007");
+        Assert.Equal(0, parser.ProgressState);
+        Assert.Equal(0, parser.ProgressValue);
+    }
 }
