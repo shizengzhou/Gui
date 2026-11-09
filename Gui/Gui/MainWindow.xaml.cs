@@ -26,6 +26,16 @@ public sealed partial class MainWindow : Window
     /// <summary>A tab handed over by "move tab to new window" before the workspace exists.</summary>
     private readonly Term.Workspace.MovedTab? _movedTab;
 
+    /// <summary>Session this window rebuilds instead of starting a fresh shell.</summary>
+    private readonly Term.WindowState? _restore;
+
+    /// <summary>
+    /// State captured while the window is closing, for "window-save-state": AppWindow's
+    /// geometry cannot be read once the window is gone, and the app persists this snapshot
+    /// after the Closed event.
+    /// </summary>
+    internal Term.WindowState? Snapshot { get; private set; }
+
     /// <summary>The workspace, so app-wide broadcasts can reach this window.</summary>
     internal Term.Workspace? Workspace => _workspace;
 
@@ -33,17 +43,22 @@ public sealed partial class MainWindow : Window
     private const int CascadeStep = 28;
     private static int _windowCount;
 
-    internal MainWindow(string? workingDirectory = null, Term.Workspace.MovedTab? movedTab = null)
+    internal MainWindow(string? workingDirectory = null, Term.Workspace.MovedTab? movedTab = null,
+        Term.WindowState? restore = null)
     {
         InitializeComponent();
 
         _inheritedDirectory = workingDirectory;
         _movedTab = movedTab;
+        _restore = restore;
 
         // Size the window before it is shown. Doing this after Loaded (or on Activated)
         // means WinUI first displays the default-sized window and the resize lands a frame
         // later, which reads as the window growing on startup.
-        SizeAndCenter();
+        if (_restore is null) SizeAndCenter();
+        else RestoreGeometry(_restore);
+
+        AppWindow.Closing += (_, _) => Snapshot = CaptureState();
     }
 
     private void OnTerminalLoaded(object sender, RoutedEventArgs args)
@@ -54,7 +69,7 @@ public sealed partial class MainWindow : Window
         {
             var config = Term.Config.Load();
             if (_inheritedDirectory is not null) config.WorkingDirectory = _inheritedDirectory;
-            _workspace = new Term.Workspace(config, _movedTab);
+            _workspace = new Term.Workspace(config, _movedTab, _restore);
             _workspace.Attach(RootGrid, this);
             ApplyStartupWindow(config, _workspace);
             Closed += (_, _) => _workspace?.Close();
@@ -73,17 +88,22 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            if (config.Fullscreen)
+            // A restored window keeps the geometry saved when it closed; the startup-only
+            // positions and sizes in the config apply to fresh windows only.
+            if (_restore is null)
             {
-                AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
-            }
-            else if (config.Maximize && AppWindow.Presenter is OverlappedPresenter presenter)
-            {
-                presenter.Maximize();
-            }
-            else
-            {
-                ApplyInitialGeometry(config, workspace);
+                if (config.Fullscreen)
+                {
+                    AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+                }
+                else if (config.Maximize && AppWindow.Presenter is OverlappedPresenter presenter)
+                {
+                    presenter.Maximize();
+                }
+                else
+                {
+                    ApplyInitialGeometry(config, workspace);
+                }
             }
 
             if (config.WindowTitle.Length > 0) AppWindow.Title = config.WindowTitle;
@@ -194,6 +214,93 @@ public sealed partial class MainWindow : Window
         catch (Exception error)
         {
             Diag.LogException("MainWindow.SizeAndCenter", error);
+        }
+    }
+
+    /// <summary>"window-save-state": the window's geometry plus every tab and split.</summary>
+    internal Term.WindowState? CaptureState()
+    {
+        // "never" also skips capturing: encoding a snapshot writes a file, and nothing would
+        // reference it afterwards.
+        if (_workspace is null || !_workspace.SavesWindowState) return null;
+
+        try
+        {
+            var tabs = _workspace.CaptureTabs(out int activeTab);
+            if (tabs.Count == 0) return null;
+
+            IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            double scale = hwnd == IntPtr.Zero ? 1.0 : GetDpiForWindow(hwnd) / 96.0;
+            SizeInt32 size = AppWindow.Size;
+            PointInt32 position = AppWindow.Position;
+            bool maximized = AppWindow.Presenter is OverlappedPresenter presenter &&
+                             presenter.State == OverlappedPresenterState.Maximized;
+            bool fullScreen = AppWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen;
+
+            return new Term.WindowState
+            {
+                X = position.X,
+                Y = position.Y,
+                Width = size.Width,
+                Height = size.Height,
+                Scale = scale,
+                Maximized = maximized,
+                FullScreen = fullScreen,
+                SavedAt = DateTime.Now,
+                ActiveTab = activeTab,
+                Tabs = tabs,
+            };
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("MainWindow.CaptureState", error);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reapplies a saved frame before the window is shown. Size is rescaled when the monitor
+    /// DPI changed; the position is clamped into the nearest work area so a window saved on a
+    /// monitor that no longer exists still opens on screen.
+    /// </summary>
+    private void RestoreGeometry(Term.WindowState state)
+    {
+        try
+        {
+            IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            double currentScale = hwnd == IntPtr.Zero ? 1.0 : GetDpiForWindow(hwnd) / 96.0;
+            double savedScale = state.Scale > 0.01 ? state.Scale : 1.0;
+
+            int width = (int)Math.Round(state.Width * currentScale / savedScale);
+            int height = (int)Math.Round(state.Height * currentScale / savedScale);
+            if (width <= 0 || height <= 0)
+            {
+                SizeAndCenter();
+                return;
+            }
+
+            DisplayArea area = DisplayArea.GetFromPoint(
+                new PointInt32(state.X, state.Y), DisplayAreaFallback.Primary);
+            RectInt32 work = area.WorkArea;
+
+            width = Math.Clamp(width, 400, Math.Max(400, work.Width));
+            height = Math.Clamp(height, 240, Math.Max(240, work.Height));
+            int x = Math.Clamp(state.X, work.X, Math.Max(work.X, work.X + work.Width - width));
+            int y = Math.Clamp(state.Y, work.Y, Math.Max(work.Y, work.Y + work.Height - height));
+
+            AppWindow.Resize(new SizeInt32(width, height));
+            AppWindow.Move(new PointInt32(x, y));
+
+            if (state.FullScreen) AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+            else if (state.Maximized && AppWindow.Presenter is OverlappedPresenter presenter)
+                presenter.Maximize();
+
+            Diag.Log("MainWindow.RestoreGeometry", $"{width}x{height} at {x},{y}");
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("MainWindow.RestoreGeometry", error);
+            SizeAndCenter();
         }
     }
 

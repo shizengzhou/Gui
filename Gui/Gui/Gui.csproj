@@ -43,6 +43,12 @@
     <Content Include="native\$(Platform)\ghostty-vt.dll" Link="ghostty-vt.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Windows Terminal's ConPTY (MIT, see ConPTY-LICENSE.txt). Gui prefers it over the
+         system implementation when both files sit next to Gui.exe; see ConPty's static
+         constructor. Copying the whole folder keeps the licence beside the binaries. -->
+    <Content Include="native\$(Platform)\conpty\*" Link="%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <!-- Bundled fonts and Ghostty themes, loaded from the exe directory. -->
     <Content Include="Assets\\**\\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
@@ -104,6 +110,17 @@
        into the same folder; it brings the same .NET runtime the app already ships. No
        Restore call: the RID's runtime pack is already in the NuGet cache, and restoring
        here would rewrite the CLI's obj state and break later framework-dependent builds. -->
+  <!-- Unpackaged WinUI 3 keeps its compiled XAML in Gui.pri and the .xbf files, but the
+       Publish target does not copy them, so a published Gui.exe dies at startup with
+       XamlParseException (0x802B000A) in MainWindow's LoadComponent. Copy them over from
+       the build output; PublishDir stays freely configurable via a publish profile. -->
+  <Target Name="CopyXamlResourcesToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_XamlResource Include="$(OutDir)*.xbf;$(OutDir)Gui.pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_XamlResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
   <Target Name="PublishCliSelfContained" AfterTargets="CopyCliOutputToPublish"
           Condition="'$(SelfContained)' == 'true'">
     <PropertyGroup>

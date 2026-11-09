@@ -37,6 +37,15 @@ public sealed class TerminalPane
     private TerminalSession _session;
     private readonly TerminalRenderer _renderer = new();
 
+    /// <summary>Divider written above the new shell when this pane came from a snapshot.</summary>
+    private readonly string? _restoreBanner;
+
+    /// <summary>
+    /// Session file this pane was restored from. A pane in a background tab has not started
+    /// (and has no terminal content yet), so a save reuses this file instead of losing it.
+    /// </summary>
+    public string? RestoredSnapshotName { get; }
+
     private readonly ContentControl _host;
     private readonly Border _frame;
     private readonly CanvasControl _canvas;
@@ -206,12 +215,15 @@ public sealed class TerminalPane
         _config.WorkingDirectory = workingDirectory;
     }
 
-    public TerminalPane(Config config)
+    public TerminalPane(Config config, byte[]? snapshot = null, string? restoreBanner = null,
+        string? restoredSnapshot = null)
     {
         _config = config;
+        _restoreBanner = restoreBanner;
+        RestoredSnapshotName = restoredSnapshot;
         if (config.FontSize > 0) _fontSizeDip = config.FontSizeDip;
 
-        _session = new TerminalSession();
+        _session = new TerminalSession(snapshot);
         _session.SetScrollbackLimit(config.ScrollbackLimit);
         _session.SetScrollbackLimitLines(config.ScrollbackLimitLines);
         _dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -623,6 +635,10 @@ public sealed class TerminalPane
         }
 
         ApplyFocusState();
+
+        // A background tab's shell is started only when the tab is opened, but its chip still
+        // needs the shell icon, so resolve it from the configured command right away.
+        UpdateShellIcon();
     }
 
     public FrameworkElement Visual => _host;
@@ -1160,6 +1176,13 @@ public sealed class TerminalPane
 
         // Policies have to be in place before the shell can print an OSC 52 sequence.
         ApplyClipboardSettings();
+
+        // A restored pane already holds the saved output; the divider goes below it and the
+        // new shell inherits that cursor (TerminalSession.Start), so its prompt lands under
+        // the history with nothing replayed from this side.
+        if (_session.Restored)
+            _session.PrepareRestored(_cols, _rows, PhysicalCellMetrics(), _restoreBanner ?? string.Empty);
+
         _session.Start(_config.Command, _config.WorkingDirectory, _cols, _rows, PhysicalCellMetrics(),
             _config.ExtraEnvironment, _config.TermVariable, _config.Input,
             _config.ShellIntegration, _config.ShellFeatures);
@@ -1816,9 +1839,15 @@ public sealed class TerminalPane
         Redraw();
     }
 
+    /// <summary>
+    /// Resolves the shell's icon. A pane in a background tab has no process yet, so the
+    /// configured command answers instead; the icon does not have to wait for the shell to
+    /// start (a restored window would otherwise show a placeholder until each tab is opened).
+    /// </summary>
     private void UpdateShellIcon()
     {
         string executable = _session.ShellExecutable();
+        if (executable.Length == 0) executable = TerminalSession.PreferredShellPath(_config.Command);
         if (executable == _shellIconPath) return;
 
         _shellIconPath = executable;
@@ -1828,8 +1857,8 @@ public sealed class TerminalPane
     private async Task LoadShellIconAsync(string executable)
     {
         ImageSource? source = await ShellIcon.GetAsync(executable);
-        // Drop a late result for a shell that has since changed.
-        if (!_ready || source is null || _session.ShellExecutable() != executable) return;
+        // Drop a late result: the pane is gone, the shell changed, or extraction failed.
+        if (_sessionReleased || source is null || _shellIconPath != executable) return;
 
         _shellIconSource = source;
         _shellIcon.Source = source;
@@ -1847,8 +1876,21 @@ public sealed class TerminalPane
         return _session.ShellExecutable();
     }
 
+    /// <summary>
+    /// The command exactly as configured (possibly empty, meaning "use the default shell").
+    /// The resolved executable must not be persisted: pinning an absolute packaged path would
+    /// change how the shell is launched and which icon it resolves to.
+    /// </summary>
+    internal string ConfiguredCommand() => _config.Command;
+
     public string WorkingDirectory() =>
         _session.CurrentDirectory(out string directory) ? directory : _workingDirectory;
+
+    /// <summary>Terminal state for "window-save-state"; null when it cannot be encoded.</summary>
+    internal byte[]? Snapshot() => _session.Snapshot();
+
+    /// <summary>True once the shell has started and the pane owns a live terminal.</summary>
+    internal bool Started => _ready;
 
     private void UpdateLocation()
     {

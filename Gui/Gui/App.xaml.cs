@@ -17,6 +17,17 @@ public partial class App : Application
     /// </summary>
     private readonly List<Window> _windows = new();
 
+    /// <summary>The config read at startup; "window-save-state" and language live here.</summary>
+    private readonly Term.Config _config;
+
+    /// <summary>
+    /// Windows are laid out (and so marked dirty) while a restored pane is still printing its
+    /// saved output. Saving during that window would overwrite the session with a blank one,
+    /// so the first seconds after launch are ignored. Closing a window always saves.
+    /// </summary>
+    private const long LaunchGraceMilliseconds = 6000;
+    private readonly long _launchTicks = Environment.TickCount64;
+
     public App()
     {
         InitializeComponent();
@@ -24,6 +35,7 @@ public partial class App : Application
         Diag.InstallHandlers();
 
         Term.Config config = Term.Config.Load();
+        _config = config;
         LogConfigDiagnostics(config);
         Strings.Use(config.Language);
         Term.Theme.Light = config.LightTheme;
@@ -65,7 +77,19 @@ public partial class App : Application
     {
         try
         {
-            ShowWindow(null);
+            // "window-save-state": reopen exactly what was on screen when the last window
+            // closed. A missing or unreadable file falls back to one fresh window.
+            List<Term.WindowState>? restored =
+                _config.WindowSaveState == "never" ? null : Term.WindowStateStore.Load();
+            if (restored is { Count: > 0 })
+            {
+                Diag.Log("window-state", $"launch: restoring {restored.Count} window(s)");
+                foreach (Term.WindowState state in restored) ShowWindow(null, null, state);
+            }
+            else
+            {
+                ShowWindow(null);
+            }
             Diag.Log("App.OnLaunched", "activated");
         }
         catch (Exception error)
@@ -86,12 +110,107 @@ public partial class App : Application
         if (Current is App app) app.ShowWindow(workingDirectory, movedTab);
     }
 
-    private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null)
+    private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null,
+        Term.WindowState? restore = null)
     {
-        var window = new MainWindow(workingDirectory, movedTab);
+        var window = new MainWindow(workingDirectory, movedTab, restore);
         _windows.Add(window);
-        window.Closed += (_, _) => _windows.Remove(window);
+        window.Closed += (_, _) => OnWindowClosed(window);
         window.Activate();
+        MarkSessionDirty();
+    }
+
+    /// <summary>
+    /// Persists "window-save-state" after a window goes away. Closing the last window is how
+    /// the app exits, so that window's own snapshot is what the next launch reopens; closing
+    /// one of several windows instead saves the remaining ones.
+    /// </summary>
+    private void OnWindowClosed(Window window)
+    {
+        var closed = window as MainWindow;
+        _windows.Remove(window);
+
+        // Re-read the config: "window-save-state" may have been changed and reloaded while
+        // the app was running (Ctrl+Shift+,), and the startup snapshot would be stale.
+        if (Term.Config.Load().WindowSaveState == "never")
+        {
+            Diag.Log("window-state", "close: skipped, window-save-state = never");
+            return;
+        }
+
+        var states = new List<Term.WindowState>(_windows.Count + 1);
+        foreach (Window other in _windows)
+        {
+            if (other is MainWindow main && main.CaptureState() is { } state) states.Add(state);
+        }
+
+        // The closing window is normally captured from AppWindow.Closing; a close that never
+        // raised it (a forced shutdown, or the workspace already torn down) still gets one
+        // chance here while the workspace is alive.
+        if (states.Count == 0)
+        {
+            Term.WindowState? last = closed?.Snapshot ?? closed?.CaptureState();
+            if (last is not null) states.Add(last);
+        }
+
+        // Nothing usable (window never finished loading): keep the previous session file.
+        if (states.Count == 0)
+        {
+            Diag.Log("window-state", "close: no capturable window, previous session kept");
+            return;
+        }
+
+        Term.WindowStateStore.Save(states);
+        Diag.Log("window-state", $"close: saved {states.Count} window(s)");
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _sessionTimer;
+
+    /// <summary>
+    /// Debounced session save for anything that changes the layout while the app stays open:
+    /// opening or closing a tab or split, zooming, moving a tab to another window. Without it a
+    /// crash, a forced kill or an unusual exit path would lose the session, because the last
+    /// write only happens when a window closes.
+    /// </summary>
+    internal static void MarkSessionDirty()
+    {
+        if (Current is App app &&
+            Environment.TickCount64 - app._launchTicks >= LaunchGraceMilliseconds)
+            app.ScheduleSessionSave();
+    }
+
+    private void ScheduleSessionSave()
+    {
+        if (_sessionTimer is null)
+        {
+            Microsoft.UI.Dispatching.DispatcherQueue? queue =
+                Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            if (queue is null) return;
+
+            Microsoft.UI.Dispatching.DispatcherQueueTimer timer = queue.CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(2);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) => SaveSessionNow();
+            _sessionTimer = timer;
+        }
+
+        _sessionTimer.Stop();
+        _sessionTimer.Start();
+    }
+
+    private void SaveSessionNow()
+    {
+        if (_windows.Count == 0) return;
+        if (Term.Config.Load().WindowSaveState == "never") return;
+
+        var states = new List<Term.WindowState>(_windows.Count);
+        foreach (Window window in _windows)
+        {
+            if (window is MainWindow main && main.CaptureState() is { } state) states.Add(state);
+        }
+        if (states.Count == 0) return;
+
+        Term.WindowStateStore.Save(states);
     }
 
     /// <summary>

@@ -4,6 +4,7 @@ using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -276,6 +277,9 @@ public sealed partial class Workspace
     /// <summary>A tab handed over by another window before this one was attached.</summary>
     private MovedTab? _initialTab;
 
+    /// <summary>A session restored from the previous run ("window-save-state").</summary>
+    private readonly WindowState? _restore;
+
     /// <summary>
     /// The tab whose chip is showing the inline rename editor. While it is set the window's
     /// preview key handler must stay out of the way: the editor owns the keyboard.
@@ -322,10 +326,11 @@ public sealed partial class Workspace
     private bool _inputHandlersInstalled;
     private TerminalPane? _imeCompositionPane;
 
-    internal Workspace(Config config, MovedTab? initialTab = null)
+    internal Workspace(Config config, MovedTab? initialTab = null, WindowState? restore = null)
     {
         _config = config;
         _initialTab = initialTab;
+        _restore = restore;
         _placement = PlacementFrom(config.TabPosition);
         _sidebarWidth = Math.Max(MinSidebarWidth(), SidebarWidthFromConfig());
         _dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -389,11 +394,21 @@ public sealed partial class Workspace
             _initialTab = null;
             NewTabFrom(moved);
         }
+        else if (_restore is { Tabs.Count: > 0 } restore)
+        {
+            foreach (TabState tab in restore.Tabs) RestoreTab(tab);
+            // The saved panes carry their own directories; later tabs must not treat
+            // "initial-command" as still pending.
+            _firstSurface = false;
+            if (_tabs.Count == 0) NewTab();
+        }
         else
         {
             NewTab();
         }
-        Activate(0);
+        Activate(_restore is { } state && _tabs.Count > 0
+            ? Math.Clamp(state.ActiveTab, 0, _tabs.Count - 1)
+            : 0);
         UpdateStatus();
         ApplyTabBarVisibility();
     }
@@ -2106,6 +2121,7 @@ public sealed partial class Workspace
         }
 
         Activate(TabSelection.AfterClose(_active, index, _tabs.Count));
+        App.MarkSessionDirty();
     }
 
     private static MovedSplit CaptureSplit(SplitNode node)
@@ -2261,6 +2277,159 @@ public sealed partial class Workspace
         WirePane(pane);
         pane.AdoptSession(session);
         return new SplitNode { Pane = pane };
+    }
+
+    /// <summary>True unless "window-save-state = never" turns session persistence off.</summary>
+    internal bool SavesWindowState => _config.WindowSaveState != "never";
+
+    // ---------------- window-save-state ----------------
+
+    /// <summary>
+    /// Snapshots every tab for the session file. Pane directories come from the shell's
+    /// OSC 7 report, so a restored session reopens where the shells were sitting.
+    /// </summary>
+    internal List<TabState> CaptureTabs(out int activeTab)
+    {
+        activeTab = _tabs.Count == 0 ? 0 : Math.Clamp(_active, 0, _tabs.Count - 1);
+        var tabs = new List<TabState>(_tabs.Count);
+        foreach (Tab tab in _tabs)
+        {
+            string? focused = null;
+            SplitState? root = CaptureSplit(tab.Root, tab.Focused, string.Empty, ref focused);
+            if (root is null) continue;
+            tabs.Add(new TabState
+            {
+                Title = tab.Title,
+                TitleOverride = tab.TitleOverride,
+                Zoomed = tab.Zoomed,
+                Focused = focused ?? string.Empty,
+                Root = root,
+            });
+        }
+        return tabs;
+    }
+
+    private static SplitState? CaptureSplit(SplitNode? node, TerminalPane? focused,
+        string path, ref string? focusedPath)
+    {
+        if (node is null) return null;
+
+        if (node.Pane is { } pane)
+        {
+            if (ReferenceEquals(pane, focused)) focusedPath = path;
+            string? snapshot = pane.Snapshot() is { Length: > 0 } bytes
+                ? WindowStateStore.WriteSnapshot(bytes)
+                // A pane whose tab was never opened has no content to encode yet; keep the
+                // file it was restored from so its session is not lost on the next launch.
+                : pane.Started ? null : pane.RestoredSnapshotName;
+            return new SplitState
+            {
+                Pane = new PaneState
+                {
+                    Directory = pane.WorkingDirectory(),
+                    Command = pane.ConfiguredCommand(),
+                    AutoCommand = pane.ConfiguredCommand().Length == 0,
+                    Title = pane.Title,
+                    Snapshot = snapshot,
+                },
+            };
+        }
+
+        if (node.First is null || node.Second is null) return null;
+        SplitState? first = CaptureSplit(node.First, focused, path + "L", ref focusedPath);
+        SplitState? second = CaptureSplit(node.Second, focused, path + "R", ref focusedPath);
+        if (first is null || second is null) return first ?? second;
+
+        return new SplitState
+        {
+            Vertical = node.Vertical,
+            Ratio = node.Ratio,
+            First = first,
+            Second = second,
+        };
+    }
+
+    /// <summary>Rebuilds one saved tab: fresh shells in the saved directories, same split tree.</summary>
+    private void RestoreTab(TabState state)
+    {
+        SplitNode? root = state.Root is null ? null : RestoreSplit(state.Root);
+        if (root is null) return;
+
+        TerminalPane? focused = PaneAtPath(root, state.Focused) ?? FirstPane(root);
+        if (focused is null) return;
+
+        Tab tab = AddTab(
+            state.Title.Length > 0 ? state.Title : ShellDisplayName(_config.Command),
+            state.TitleOverride, focused, root);
+        if (!state.Zoomed) return;
+        tab.Zoomed = true;
+        Relayout(tab);
+    }
+
+    private SplitNode? RestoreSplit(SplitState source)
+    {
+        if (source.Pane is { } saved)
+        {
+            var config = new Config();
+            config.CopyFrom(_config);
+            if (!saved.AutoCommand && saved.Command.Length > 0) config.Command = saved.Command;
+
+            // A directory that no longer exists (removed drive, deleted folder) falls back
+            // to the configured start directory instead of dropping the pane.
+            string directory = saved.Directory;
+            if (directory.Length == 0 || !Directory.Exists(directory))
+                directory = _config.WorkingDirectory;
+            if (directory.Length > 0) config.WorkingDirectory = directory;
+
+            byte[]? snapshot = WindowStateStore.ReadSnapshot(saved.Snapshot);
+            var pane = new TerminalPane(config, snapshot, snapshot is null ? null : RestoreBanner(),
+                saved.Snapshot);
+            if (saved.Title.Length > 0) pane.Title = saved.Title;
+            WirePane(pane);
+            return new SplitNode { Pane = pane };
+        }
+
+        if (source.First is null || source.Second is null) return null;
+        SplitNode? first = RestoreSplit(source.First);
+        SplitNode? second = RestoreSplit(source.Second);
+        if (first is null || second is null) return first ?? second;
+
+        double ratio = source.Ratio;
+        if (double.IsNaN(ratio) || ratio <= 0.0 || ratio >= 1.0) ratio = 0.5;
+        return new SplitNode
+        {
+            Vertical = source.Vertical,
+            Ratio = ratio,
+            First = first,
+            Second = second,
+        };
+    }
+
+    /// <summary>The pane a saved "L/R" path points at, or null when the path no longer fits.</summary>
+    private static TerminalPane? PaneAtPath(SplitNode root, string path)
+    {
+        SplitNode node = root;
+        foreach (char step in path)
+        {
+            SplitNode? next = step switch
+            {
+                'L' => node.First,
+                'R' => node.Second,
+                _ => null,
+            };
+            if (next is null) return null;
+            node = next;
+        }
+        return node.Pane ?? FirstPane(node);
+    }
+
+    /// <summary>The dim divider written above a restored pane's new shell.</summary>
+    private string RestoreBanner()
+    {
+        DateTime saved = _restore?.SavedAt ?? DateTime.Now;
+        if (saved == default) saved = DateTime.Now;
+        string when = saved.ToString("ddd MMM d HH:mm", CultureInfo.InvariantCulture);
+        return $"── restored · session ended {when} ──";
     }
 
     private Tab AddTab(string title, string? titleOverride, TerminalPane focused, SplitNode root)
@@ -3178,6 +3347,11 @@ public sealed partial class Workspace
         {
             _relayouting = null;
         }
+
+        // Every structural change runs through here (tab created, split added or removed,
+        // zoom toggled), so the session file stays current even if the app never exits
+        // cleanly.
+        App.MarkSessionDirty();
     }
 
     private void RebuildLayout(Tab tab)

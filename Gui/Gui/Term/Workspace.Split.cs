@@ -411,6 +411,7 @@ public sealed partial class Workspace
         // closed index would jump the selection forward (close the tab next to the active
         // one and the tab after it took over).
         Activate(TabSelection.AfterClose(previous, index, _tabs.Count));
+        App.MarkSessionDirty();
     }
 
     // ---------------- headers ----------------

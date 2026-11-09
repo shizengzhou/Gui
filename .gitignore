@@ -1,6 +1,7 @@
 # Build output
 [Bb]in/
 [Oo]bj/
+dist/
 *.user
 *.userosscache
 *.sln.docstates
@@ -51,6 +52,7 @@ _ref/
 # Agent worktrees and scratch output
 .codebuddy/
 .screenshots/
+.probe/
 
 # OS junk
 Thumbs.db

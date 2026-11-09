@@ -31,6 +31,13 @@ internal static class ShellIcon
     private static readonly object Gate = new();
     private static readonly Dictionary<string, IconPixels?> PixelCache = new();
 
+    /// <summary>
+    /// Extraction in flight per executable. Two panes of the same shell ask at the same time,
+    /// so the second caller must await the first one's result instead of reading a
+    /// "not extracted yet" null and giving up on the icon.
+    /// </summary>
+    private static readonly Dictionary<string, Task<IconPixels?>> Pending = new();
+
     // ImageSource instances are UI-thread affine, so this cache has no lock.
     private static readonly Dictionary<string, ImageSource?> SourceCache = new();
 
@@ -41,22 +48,32 @@ internal static class ShellIcon
         string key = executable.ToLowerInvariant();
         if (SourceCache.TryGetValue(key, out ImageSource? cached)) return cached;
 
-        IconPixels? pixels;
+        Task<IconPixels?> extraction;
+        bool owner = false;
         lock (Gate)
         {
-            if (!PixelCache.TryGetValue(key, out pixels))
+            if (!PixelCache.TryGetValue(key, out IconPixels? known))
             {
-                pixels = null;
-                PixelCache[key] = null; // placeholder; replaced below
+                if (!Pending.TryGetValue(key, out extraction!))
+                {
+                    extraction = Task.Run(() => Extract(executable));
+                    Pending[key] = extraction;
+                    owner = true;
+                }
+            }
+            else
+            {
+                extraction = Task.FromResult(known);
             }
         }
 
-        if (pixels is null)
+        IconPixels? pixels = await extraction;
+        if (owner)
         {
-            pixels = await Task.Run(() => Extract(executable));
             lock (Gate)
             {
                 PixelCache[key] = pixels;
+                Pending.Remove(key);
             }
         }
         if (pixels is null) return null;
@@ -112,32 +129,58 @@ internal static class ShellIcon
 
     private static IconPixels? Extract(string executable)
     {
-        var info = new SHFILEINFO();
-        if (SHGetFileInfo(executable, FILE_ATTRIBUTE_NORMAL, ref info, (uint)Marshal.SizeOf<SHFILEINFO>(),
-                SHGFI_ICON | SHGFI_LARGEICON) == IntPtr.Zero || info.hIcon == IntPtr.Zero)
+        IntPtr icon = IntPtr.Zero;
+        IntPtr small = IntPtr.Zero;
+
+        // ExtractIconEx reads the image's own resources and is the reliable path for packaged
+        // executables; SHGetFileInfo can answer with an empty handle in some shells.
+        if (ExtractIconEx(executable, 0, out IntPtr large, out small, 1) > 0 && large != IntPtr.Zero)
         {
+            icon = large;
+            if (small != IntPtr.Zero) DestroyIcon(small);
+        }
+        else
+        {
+            var info = new SHFILEINFO();
+            if (SHGetFileInfo(executable, FILE_ATTRIBUTE_NORMAL, ref info, (uint)Marshal.SizeOf<SHFILEINFO>(),
+                    SHGFI_ICON | SHGFI_LARGEICON) != IntPtr.Zero && info.hIcon != IntPtr.Zero)
+            {
+                icon = info.hIcon;
+            }
+        }
+        if (icon == IntPtr.Zero)
+        {
+            Diag.Warn("shell-icon", $"no icon handle for '{executable}'");
             return null;
         }
 
-        IntPtr icon = info.hIcon;
         IntPtr colorBitmap = IntPtr.Zero;
         IntPtr maskBitmap = IntPtr.Zero;
         IntPtr dc = IntPtr.Zero;
         try
         {
             if (!GetIconInfo(icon, out ICONINFO iconInfo) || iconInfo.hbmColor == IntPtr.Zero)
+            {
+                Diag.Warn("shell-icon", "GetIconInfo returned no color bitmap");
                 return null;
+            }
             colorBitmap = iconInfo.hbmColor;
             maskBitmap = iconInfo.hbmMask;
 
             var bitmap = new BITMAP();
             if (GetObject(colorBitmap, Marshal.SizeOf<BITMAP>(), ref bitmap) == 0)
+            {
+                Diag.Warn("shell-icon", "GetObject failed on the icon bitmap");
                 return null;
+            }
 
             int width = bitmap.bmWidth;
             int height = bitmap.bmHeight;
             if (width <= 0 || height <= 0 || width > 512 || height > 512)
+            {
+                Diag.Warn("shell-icon", $"unexpected icon size {width}x{height}");
                 return null;
+            }
 
             var pixels = new byte[width * height * 4];
             var header = new BITMAPINFO
@@ -156,7 +199,10 @@ internal static class ShellIcon
             dc = CreateCompatibleDC(IntPtr.Zero);
             if (dc == IntPtr.Zero) return null;
             if (GetDIBits(dc, colorBitmap, 0, (uint)height, pixels, ref header, DIB_RGB_COLORS) == 0)
+            {
+                Diag.Warn("shell-icon", "GetDIBits failed");
                 return null;
+            }
 
             bool anyAlpha = false;
             for (int i = 3; i < pixels.Length; i += 4)
@@ -259,6 +305,9 @@ internal static class ShellIcon
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr SHGetFileInfo(string path, uint attributes, ref SHFILEINFO info, uint infoSize, uint flags);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint ExtractIconEx(string file, int index, out IntPtr large, out IntPtr small, uint count);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

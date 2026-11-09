@@ -156,7 +156,7 @@
 - [x] `window-width` — 初始窗口宽度（单元格）；同上，10×4 以下的取值被忽略
 - [x] `window-position-x` — 初始窗口 X 位置（像素）；与 `window-position-y` 成对生效，见 `MainWindow.ApplyInitialGeometry()`
 - [x] `window-position-y` — 初始窗口 Y 位置（像素）；同上
-- [ ] `window-save-state` — 保存并恢复窗口状态
+- [x] `window-save-state` — 保存并恢复窗口状态；Windows 上只有 `always` / `never`（默认 `always`，`default` 及其他取值按 `always`）。关闭窗口时把窗口位置/大小/DPI/最大化/全屏、标签页、分屏树与比例、焦点窗格、zoom 以及每个窗格的工作目录、命令、标题写入 `%APPDATA%\gui\window-state.json`；每个窗格的终端快照（libghostty-vt snapshot：屏幕与回滚缓冲）单独写到 `%APPDATA%\gui\session\*.snap`，JSON 与快照都用临时文件原子替换，未引用的旧快照在保存后清理。恢复时按原样重建窗口/标签/分屏，再把快照转成 VT 文本写回新终端：先按真实网格尺寸调整，再写旧输出、`── restored · session ended <时间> ──` 分隔线，然后用 `CreatePseudoConsole(..., PSEUDOCONSOLE_INHERIT_CURSOR)` 启动 shell——conhost 会以 DSR 询问光标位置，终端按历史之后的光标回答，新提示符因此画在分隔线下方，PSReadLine 的绝对定位也保持正确（与 Kero 的 kerod 同一做法）；之前写下的分隔线行会在写入前剔除，避免层层嵌套。后台标签页的会话在重开时不会丢失（未启动的窗格沿用其快照文件）。运行中的程序无法恢复，目录失效时回退 `working-directory`
 - [ ] `window-step-resize` — 按单元格尺寸步进调整窗口
 - [x] `window-new-tab-position` — 新标签页插入位置（current 紧跟当前页 / end 末尾）
 - [x] `window-show-tab-bar` — never 隐藏标签条；always / auto 保持现有显示（标题栏仍保留拖拽区）

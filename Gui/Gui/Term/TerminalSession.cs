@@ -69,6 +69,9 @@ public sealed unsafe class TerminalSession : IDisposable
     // OSC 133 marks emitted by the injected shell integration. UI-thread only.
     private readonly ShellMarkParser _marks = new();
 
+    /// <summary>The saved screen and scrollback, written once the pane's real grid is known.</summary>
+    private string _restoreText = string.Empty;
+
     /// <summary>Marshals work onto the UI thread. Must not block; called from the reader thread.</summary>
     public Action<Action>? Post;
 
@@ -89,7 +92,19 @@ public sealed unsafe class TerminalSession : IDisposable
 
     public bool Running => _pty is not null;
 
-    public TerminalSession()
+    /// <summary>True when the terminal came from a saved snapshot rather than a blank screen.</summary>
+    internal bool Restored { get; private set; }
+
+    public TerminalSession() : this(null)
+    {
+    }
+
+    /// <summary>
+    /// A session whose terminal is rebuilt from a saved snapshot ("window-save-state"): the
+    /// screen and scrollback come back, then the shell starts fresh on top. A snapshot that
+    /// cannot be read falls back to an empty terminal.
+    /// </summary>
+    public TerminalSession(byte[]? snapshot)
     {
         _writePty = OnWritePty;
         _titleChanged = OnTitleChanged;
@@ -101,6 +116,7 @@ public sealed unsafe class TerminalSession : IDisposable
 
         if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out _terminal, 80, 24) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_terminal_new failed");
+        if (snapshot is not null) Restored = BuildRestoreText(snapshot);
         if (GhosttyNative.ghostty_search_new(IntPtr.Zero, out _search, _terminal) != GhosttyNative.SUCCESS)
             _search = IntPtr.Zero;
         if (GhosttyNative.ghostty_render_state_new(IntPtr.Zero, out _renderState) != GhosttyNative.SUCCESS)
@@ -215,7 +231,10 @@ public sealed unsafe class TerminalSession : IDisposable
         try
         {
             Diag.Debug("pty.start", $"cols={cols} rows={rows} exec={executable}");
-            _pty = ConPty.Start(command, (short)cols, (short)rows, workingDirectory, environment, term);
+            // A restored terminal already holds the saved output and the divider, so the
+            // console takes the terminal's cursor as its own and the prompt lands below.
+            _pty = ConPty.Start(command, (short)cols, (short)rows, workingDirectory, environment, term,
+                inheritCursor: Restored);
         }
         catch (Exception error)
         {
@@ -279,6 +298,91 @@ public sealed unsafe class TerminalSession : IDisposable
         _marks.Feed(bytes);
         OnOutput?.Invoke();
         OnUpdate?.Invoke();
+    }
+
+    // ---------------- window-save-state: startup of a restored pane ----------------
+
+    /// <summary>
+    /// Removes the dividers a previous restore left in the saved buffer. Everything else is
+    /// kept, so the scrollback survives any number of restarts, while the divider itself is
+    /// not repeated: the pane writes one new divider above the new shell. The marker matches
+    /// the banner built by Workspace.RestoreBanner.
+    /// </summary>
+    private static string WithoutDividers(string text)
+    {
+        const string marker = "── restored · session ended";
+        if (text.IndexOf(marker, StringComparison.Ordinal) < 0) return text;
+
+        var kept = new StringBuilder(text.Length);
+        foreach (string line in text.Split('\n'))
+        {
+            if (line.Contains(marker, StringComparison.Ordinal)) continue;
+            kept.Append(line).Append('\n');
+        }
+        return kept.ToString();
+    }
+
+    /// <summary>Re-encodes a saved snapshot as VT text that recreates its screen and scrollback.</summary>
+    private static string? FormatSnapshotAsVt(byte[] snapshot)
+    {
+        if (snapshot.Length == 0) return null;
+
+        IntPtr terminal = IntPtr.Zero;
+        IntPtr decoder = IntPtr.Zero;
+        IntPtr formatter = IntPtr.Zero;
+        try
+        {
+            unsafe
+            {
+                fixed (byte* data = snapshot)
+                {
+                    if (GhosttyNative.ghostty_snapshot_decoder_new_buf(
+                            IntPtr.Zero, out decoder, data, (nuint)snapshot.Length) != GhosttyNative.SUCCESS)
+                        return null;
+                }
+            }
+
+            if (GhosttyNative.ghostty_snapshot_decoder_decode(decoder, out terminal) != GhosttyNative.SUCCESS ||
+                terminal == IntPtr.Zero)
+                return null;
+
+            var options = new GhosttyNative.GhosttyFormatterTerminalOptions
+            {
+                Size = (nuint)Marshal.SizeOf<GhosttyNative.GhosttyFormatterTerminalOptions>(),
+                Emit = GhosttyNative.FORMAT_VT,
+                Extra = new GhosttyNative.GhosttyFormatterTerminalExtra
+                {
+                    Size = (nuint)Marshal.SizeOf<GhosttyNative.GhosttyFormatterTerminalExtra>(),
+                },
+            };
+            if (GhosttyNative.ghostty_formatter_terminal_new(IntPtr.Zero, out formatter, terminal, options) != 0)
+                return null;
+
+            unsafe
+            {
+                GhosttyNative.ghostty_formatter_format_buf(formatter, null, 0, out nuint needed);
+                if (needed == 0) return null;
+
+                var buffer = new byte[(int)needed];
+                fixed (byte* p = buffer)
+                {
+                    if (GhosttyNative.ghostty_formatter_format_buf(formatter, p, (nuint)buffer.Length, out nuint written) != 0)
+                        return null;
+                    return Encoding.UTF8.GetString(buffer, 0, (int)written);
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Session.formatSnapshot", error);
+            return null;
+        }
+        finally
+        {
+            if (formatter != IntPtr.Zero) GhosttyNative.ghostty_formatter_free(formatter);
+            if (terminal != IntPtr.Zero) GhosttyNative.ghostty_terminal_free(terminal);
+            if (decoder != IntPtr.Zero) GhosttyNative.ghostty_snapshot_decoder_free(decoder);
+        }
     }
 
     public void Stop()
@@ -1155,6 +1259,13 @@ public sealed unsafe class TerminalSession : IDisposable
 
     // ---------------- shell resolution ----------------
 
+    /// <summary>
+    /// The executable a pane will run, resolved without starting it: the configured command
+    /// when there is one, the default shell otherwise.
+    /// </summary>
+    internal static string PreferredShellPath(string command) =>
+        string.IsNullOrEmpty(command) ? DefaultShellPath() : ExecutableToken(command);
+
     public static string DefaultShellPath()
     {
         var buffer = new StringBuilder(1024);
@@ -1260,6 +1371,98 @@ public sealed unsafe class TerminalSession : IDisposable
             ch >= '0' && ch <= '9' ? ch - '0' :
             ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 :
             ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+    }
+
+    // ---------------- window-save-state ----------------
+
+    /// <summary>
+    /// Reads a saved snapshot into VT text: the screen and scrollback it held. The dividers
+    /// of earlier restores are dropped so they cannot pile up. The text is written only once
+    /// the pane knows its real grid size (see <see cref="PrepareRestored"/>); at the 80x24
+    /// seed most of it would scroll away before the shell starts.
+    /// </summary>
+    private bool BuildRestoreText(byte[] snapshot)
+    {
+        string? text = FormatSnapshotAsVt(snapshot);
+        if (text is null) return false;
+
+        _restoreText = WithoutDividers(text).TrimEnd('\r', '\n');
+        return _restoreText.Length > 0;
+    }
+
+    /// <summary>
+    /// Encodes the whole terminal (screen and scrollback) for "window-save-state". Null when
+    /// the library cannot encode it, for example a half-written escape sequence that was never
+    /// tracked; the pane then simply restores empty.
+    /// </summary>
+    internal unsafe byte[]? Snapshot()
+    {
+        // A runaway scrollback must not turn a window close into a multi-hundred-megabyte
+        // write; the terminal's own scrollback limit keeps this well below the cap normally.
+        const int maxBytes = 128 * 1024 * 1024;
+
+        if (_terminal == IntPtr.Zero || _disposed) return null;
+
+        try
+        {
+            int result = GhosttyNative.ghostty_snapshot_encode_alloc(
+                _terminal, IntPtr.Zero, out IntPtr data, out nuint length);
+            if (result != GhosttyNative.SUCCESS)
+            {
+                Diag.Warn("window-state", $"snapshot encode failed result={result}");
+                return null;
+            }
+            if (data == IntPtr.Zero || length == 0) return null;
+
+            try
+            {
+                if (length > (nuint)maxBytes) return null;
+                var bytes = new byte[(int)length];
+                Marshal.Copy(data, bytes, 0, bytes.Length);
+                return bytes;
+            }
+            finally
+            {
+                GhosttyNative.ghostty_free(IntPtr.Zero, data, length);
+            }
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Session.snapshot", error);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Finishes a restored terminal before the new shell starts: leaves the alternate screen,
+    /// clears mouse/paste modes a previous program may have left behind, takes the real grid
+    /// size, writes the saved output, then the divider. The cursor ends on the line the new
+    /// shell's prompt starts on, which the console inherits.
+    /// </summary>
+    internal void PrepareRestored(ushort cols, ushort rows, CellMetrics metrics, string banner)
+    {
+        if (!Restored || _terminal == IntPtr.Zero) return;
+
+        WriteVt("\x1b[?1049l" +                               // alternate screen off
+                "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" + // mouse reporting off
+                "\x1b[?2004l" +                               // bracketed paste off
+                "\x1b[?25h\x1b[?7h\x1b[0m");                 // cursor visible, wrap on, default SGR
+        // The saved output is written at the real grid, not the 80x24 seed, so it fills the
+        // pane instead of scrolling away before the shell starts.
+        Resize(cols, rows, metrics);
+        if (_restoreText.Length > 0) WriteVt(_restoreText);
+        ScrollToBottom();
+        if (banner.Length > 0) WriteVt("\r\n\x1b[2m" + banner + "\x1b[0m\r\n");
+        OnUpdate?.Invoke();
+        Diag.Debug("restore", $"restored {_restoreText.Length} chars into {cols}x{rows}");
+    }
+
+    private unsafe void WriteVt(string text)
+    {
+        if (_terminal == IntPtr.Zero || text.Length == 0) return;
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        fixed (byte* data = bytes)
+            GhosttyNative.ghostty_terminal_vt_write(_terminal, data, (nuint)bytes.Length);
     }
 
     public void Dispose()

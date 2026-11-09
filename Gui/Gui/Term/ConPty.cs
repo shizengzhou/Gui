@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -16,6 +17,71 @@ internal sealed class ConPty : IDisposable
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const int PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016;
+
+    /// <summary>
+    /// CreatePseudoConsole flag: the console asks the terminal where its cursor is (DSR) and
+    /// starts there. A restored pane relies on it, so the new shell draws under the history
+    /// instead of at the top of the screen.
+    /// </summary>
+    private const uint PSEUDOCONSOLE_INHERIT_CURSOR = 0x0001;
+
+    private delegate int CreatePseudoConsoleFn(COORD size, IntPtr input, IntPtr output, uint flags,
+        out IntPtr pseudoConsole);
+
+    private delegate int ResizePseudoConsoleFn(IntPtr pseudoConsole, COORD size);
+    private delegate void ClosePseudoConsoleFn(IntPtr pseudoConsole);
+
+    // The ConPTY entry points: a conpty.dll shipped next to the app wins, the system's own
+    // kernel32 implementation is the fallback. The bundled one keeps PTY behaviour (cursor
+    // inheritance, repaint, VT input details) tied to what we ship instead of the installed
+    // Windows build; it needs its OpenConsole.exe beside it.
+    private static readonly CreatePseudoConsoleFn? BundledCreate;
+    private static readonly ResizePseudoConsoleFn? BundledResize;
+    private static readonly ClosePseudoConsoleFn? BundledClose;
+
+    static ConPty()
+    {
+        try
+        {
+            string directory = AppContext.BaseDirectory;
+            string library = Path.Combine(directory, "conpty.dll");
+            if (!File.Exists(library) || !File.Exists(Path.Combine(directory, "OpenConsole.exe"))) return;
+
+            IntPtr module = NativeLibrary.Load(library);
+            if (!NativeLibrary.TryGetExport(module, "CreatePseudoConsole", out IntPtr create) ||
+                !NativeLibrary.TryGetExport(module, "ResizePseudoConsole", out IntPtr resize) ||
+                !NativeLibrary.TryGetExport(module, "ClosePseudoConsole", out IntPtr close))
+            {
+                Diag.Warn("pty.conpty", "conpty.dll is missing an export; using the system ConPTY");
+                return;
+            }
+
+            BundledCreate = Marshal.GetDelegateForFunctionPointer<CreatePseudoConsoleFn>(create);
+            BundledResize = Marshal.GetDelegateForFunctionPointer<ResizePseudoConsoleFn>(resize);
+            BundledClose = Marshal.GetDelegateForFunctionPointer<ClosePseudoConsoleFn>(close);
+            Diag.Log("pty.conpty", $"using bundled conpty.dll from '{directory}'");
+        }
+        catch (Exception error)
+        {
+            Diag.Warn("pty.conpty", $"bundled ConPTY unusable ({error.Message}); using the system one");
+        }
+    }
+
+    private static int CreatePseudoConsole(COORD size, IntPtr input, IntPtr output, uint flags,
+        out IntPtr pseudoConsole)
+    {
+        if (BundledCreate is not null) return BundledCreate(size, input, output, flags, out pseudoConsole);
+        return SystemCreatePseudoConsole(size, input, output, flags, out pseudoConsole);
+    }
+
+    private static int ResizePseudoConsole(IntPtr pseudoConsole, COORD size) =>
+        BundledResize is not null ? BundledResize(pseudoConsole, size) : SystemResizePseudoConsole(pseudoConsole, size);
+
+    private static void ClosePseudoConsole(IntPtr pseudoConsole)
+    {
+        if (BundledClose is not null) BundledClose(pseudoConsole);
+        else SystemClosePseudoConsole(pseudoConsole);
+    }
 
     private readonly IntPtr _pseudoConsole;
     private readonly IntPtr _inputWrite;
@@ -56,7 +122,8 @@ internal sealed class ConPty : IDisposable
     public void BeginRead() => _reader.Start();
 
     public static ConPty Start(string commandLine, short cols, short rows, string? workingDirectory = null,
-        IReadOnlyList<(string Name, string Value)>? environment = null, string term = "")
+        IReadOnlyList<(string Name, string Value)>? environment = null, string term = "",
+        bool inheritCursor = false)
     {
         // The console host duplicates these handles into its own process, and
         // CreatePseudoConsole expects inheritable pipes (see the ConPTY sample).
@@ -71,7 +138,8 @@ internal sealed class ConPty : IDisposable
         }
 
         var size = new COORD { X = cols, Y = rows };
-        int hr = CreatePseudoConsole(size, inRead, outWrite, 0, out IntPtr hpc);
+        uint flags = inheritCursor ? PSEUDOCONSOLE_INHERIT_CURSOR : 0;
+        int hr = CreatePseudoConsole(size, inRead, outWrite, flags, out IntPtr hpc);
         if (hr != 0)
         {
             CloseHandle(inRead);
@@ -303,14 +371,15 @@ internal sealed class ConPty : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreatePipe(out IntPtr readPipe, out IntPtr writePipe, ref SECURITY_ATTRIBUTES securityAttributes, int size);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern int CreatePseudoConsole(COORD size, IntPtr input, IntPtr output, uint flags, out IntPtr pseudoConsole);
+    [DllImport("kernel32.dll", EntryPoint = "CreatePseudoConsole", SetLastError = true)]
+    private static extern int SystemCreatePseudoConsole(COORD size, IntPtr input, IntPtr output, uint flags,
+        out IntPtr pseudoConsole);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern int ResizePseudoConsole(IntPtr pseudoConsole, COORD size);
+    [DllImport("kernel32.dll", EntryPoint = "ResizePseudoConsole", SetLastError = true)]
+    private static extern int SystemResizePseudoConsole(IntPtr pseudoConsole, COORD size);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern void ClosePseudoConsole(IntPtr pseudoConsole);
+    [DllImport("kernel32.dll", EntryPoint = "ClosePseudoConsole", SetLastError = true)]
+    private static extern void SystemClosePseudoConsole(IntPtr pseudoConsole);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

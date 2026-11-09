@@ -68,6 +68,7 @@ internal static class Program
             CheckMouseSmoke();
             CheckBellSmoke();
             CheckSearchSmoke();
+            CheckSnapshotSmoke();
         }
         catch (Exception error)
         {
@@ -464,11 +465,16 @@ internal static class Program
 
         new("KEY_ACTION_PRESS", "GhosttyKeyAction", "PRESS"),
         new("FORMAT_PLAIN", "GhosttyFormatterFormat", "PLAIN"),
+        new("FORMAT_VT", "GhosttyFormatterFormat", "VT"),
 
         new("CURSOR_BAR", "GhosttyRenderStateCursorVisualStyle", "BAR"),
         new("CURSOR_BLOCK", "GhosttyRenderStateCursorVisualStyle", "BLOCK"),
         new("CURSOR_UNDERLINE", "GhosttyRenderStateCursorVisualStyle", "UNDERLINE"),
         new("CURSOR_BLOCK_HOLLOW", "GhosttyRenderStateCursorVisualStyle", "BLOCK_HOLLOW"),
+
+        new("SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES", "GhosttySnapshotDecoderOption", "MAX_CONTINUATION_BYTES"),
+        new("SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION", "GhosttySnapshotDecoderOption", "RETAIN_CONTINUATION"),
+        new("SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY", "GhosttySnapshotDecoderOption", "COMPRESS_HISTORY"),
     };
 
     /// <summary>GhosttyMods is a u16 bitmask alias, not an enum, so it has no manifest values.</summary>
@@ -787,6 +793,80 @@ internal static class Program
         }
         finally
         {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>
+    /// Drives the snapshot encoder/decoder through the same P/Invoke surface the app uses for
+    /// "window-save-state": history written before the encode must come back after the decode.
+    /// </summary>
+    private static unsafe void CheckSnapshotSmoke()
+    {
+        Section("snapshot smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 40, 8) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        IntPtr buffer = IntPtr.Zero;
+        IntPtr decoder = IntPtr.Zero;
+        IntPtr restored = IntPtr.Zero;
+        nuint length = 0;
+        try
+        {
+            var text = new StringBuilder();
+            for (int i = 0; i < 50; i++) text.Append("line ").Append(i).Append("\r\n");
+            byte[] payload = Encoding.ASCII.GetBytes(text.ToString());
+            fixed (byte* pointer = payload)
+                GhosttyNative.ghostty_terminal_vt_write(terminal, pointer, (nuint)payload.Length);
+
+            GhosttyNative.GhosttyTerminalScrollbar before;
+            if (GhosttyNative.ghostty_terminal_get(terminal, GhosttyNative.TDATA_SCROLLBAR, &before) != GhosttyNative.SUCCESS)
+                throw new InvalidOperationException("ghostty_terminal_get(SCROLLBAR) failed");
+
+            int encode = GhosttyNative.ghostty_snapshot_encode_alloc(
+                terminal, IntPtr.Zero, out buffer, out length);
+            Check("encode succeeds", encode == GhosttyNative.SUCCESS && length > 0,
+                $"result={encode} bytes={length}");
+
+            if (encode == GhosttyNative.SUCCESS && buffer != IntPtr.Zero && length > 0)
+            {
+                if (GhosttyNative.ghostty_snapshot_decoder_new_buf(
+                        IntPtr.Zero, out decoder, (byte*)buffer, length) != GhosttyNative.SUCCESS)
+                    throw new InvalidOperationException("snapshot decoder could not be created");
+
+                bool compress = true;
+                Check("decoder accepts compress_history",
+                    GhosttyNative.ghostty_snapshot_decoder_set(
+                        decoder, GhosttyNative.SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY, &compress) ==
+                    GhosttyNative.SUCCESS);
+
+                int decode = GhosttyNative.ghostty_snapshot_decoder_decode(decoder, out restored);
+                Check("decode succeeds", decode == GhosttyNative.SUCCESS && restored != IntPtr.Zero,
+                    $"result={decode}");
+
+                if (restored != IntPtr.Zero)
+                {
+                    ushort cols = 0, rows = 0;
+                    GhosttyNative.ghostty_terminal_get(restored, GhosttyNative.TDATA_COLS, &cols);
+                    GhosttyNative.ghostty_terminal_get(restored, GhosttyNative.TDATA_ROWS, &rows);
+                    Check("restored grid matches", cols == 40 && rows == 8, $"{cols}x{rows}");
+
+                    GhosttyNative.GhosttyTerminalScrollbar after;
+                    if (GhosttyNative.ghostty_terminal_get(restored, GhosttyNative.TDATA_SCROLLBAR, &after) == GhosttyNative.SUCCESS)
+                        Check("scrollback comes back", after.Total == before.Total,
+                            $"{after.Total} of {before.Total}");
+                }
+            }
+        }
+        finally
+        {
+            if (restored != IntPtr.Zero) GhosttyNative.ghostty_terminal_free(restored);
+            if (decoder != IntPtr.Zero) GhosttyNative.ghostty_snapshot_decoder_free(decoder);
+            if (buffer != IntPtr.Zero) GhosttyNative.ghostty_free(IntPtr.Zero, buffer, length);
             GhosttyNative.ghostty_terminal_free(terminal);
         }
     }

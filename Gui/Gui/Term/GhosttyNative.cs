@@ -153,6 +153,7 @@ internal static unsafe class GhosttyNative
 
     // ---- GhosttyFormatterFormat ----
     internal const int FORMAT_PLAIN = 0;
+    internal const int FORMAT_VT = 1;
 
     // ---- GhosttyRenderStateCursorVisualStyle ----
     internal const int CURSOR_BAR = 0;
@@ -461,6 +462,34 @@ internal static unsafe class GhosttyNative
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_cell_get(ulong cell, int data, void* output);
+
+    // ---- snapshots ----
+    // The shipped ghostty-vt.dll is built from an older snapshot header than the reference
+    // checkout: its decoder options start at zero (the ABI manifest has MAX_CONTINUATION_BYTES
+    // at 0), so do not shift these to match a newer header without rebuilding the DLL.
+    internal const int SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES = 0;
+    internal const int SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION = 1;
+    internal const int SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY = 2;
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_snapshot_encode_alloc(
+        IntPtr terminal, IntPtr allocator, out IntPtr buffer, out nuint length);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern void ghostty_free(IntPtr allocator, IntPtr buffer, nuint length);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_snapshot_decoder_new_buf(
+        IntPtr allocator, out IntPtr decoder, byte* ptr, nuint len);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_snapshot_decoder_set(IntPtr decoder, int option, void* value);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_snapshot_decoder_decode(IntPtr decoder, out IntPtr terminal);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern void ghostty_snapshot_decoder_free(IntPtr decoder);
 
     // ---- mouse ----
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]

@@ -37,6 +37,7 @@
     <Compile Include="../../Gui/Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />
     <Compile Include="../../Gui/Gui/Term/Theme.cs" Link="Theme.cs" />
     <Compile Include="../../Gui/Gui/Term/WideText.cs" Link="WideText.cs" />
+    <Compile Include="../../Gui/Gui/Term/WindowState.cs" Link="WindowState.cs" />
     <Compile Include="../../Gui/Gui/Term/WordSelection.cs" Link="WordSelection.cs" />
   </ItemGroup>
 </Project>

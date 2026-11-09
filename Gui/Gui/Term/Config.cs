@@ -163,6 +163,7 @@ public sealed class Config
     public bool HasWindowPosition;                 // both window-position-x and -y were set
     public int WindowPositionX;
     public int WindowPositionY;
+    public string WindowSaveState = "always";      // "always" or "never"
     public bool PaddingBalance;                    // window-padding-balance
     public string ConfirmCloseSurface = "true";    // "true", "false", "always"
     public int ClickRepeatInterval;                // milliseconds; 0 = Ghostty's 500ms default
@@ -394,6 +395,7 @@ public sealed class Config
         HasWindowPosition = other.HasWindowPosition;
         WindowPositionX = other.WindowPositionX;
         WindowPositionY = other.WindowPositionY;
+        WindowSaveState = other.WindowSaveState;
         PaddingBalance = other.PaddingBalance;
         ConfirmCloseSurface = other.ConfirmCloseSurface;
         ClickRepeatInterval = other.ClickRepeatInterval;
@@ -908,6 +910,14 @@ public sealed class Config
             WindowPositionX = positionX;
             WindowPositionY = positionY;
         }
+
+        // Windows has no system-provided save policy to defer to, so Ghostty's "default"
+        // (and anything unrecognized) behaves like "always": quit and reopen restores the
+        // session. Only "never" opts out.
+        WindowSaveState =
+            (Last("window-save-state") ?? string.Empty).Trim().ToLowerInvariant() == "never"
+                ? "never"
+                : "always";
 
         ApplyBellFeatures(Last("bell-features"));
         BellAudioPath = ResolveImagePath(Last("bell-audio-path") ?? string.Empty);
