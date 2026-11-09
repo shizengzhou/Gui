@@ -1210,11 +1210,19 @@ public sealed unsafe class TerminalRenderer
                     Color textFg = DefaultFgFor(style, fg, bg, hasFg);
 
                     // "selection-foreground" replaces the text color inside the selection.
-                    if (hasSelection && _config is { HasSelectionForeground: true } config &&
-                        col >= selection.StartX && col <= selection.EndX)
+                    // The main config wins; otherwise a bundled theme's own selection color.
+                    if (hasSelection && col >= selection.StartX && col <= selection.EndX)
                     {
-                        Rgb selected = config.SelectionForeground;
-                        textFg = Color.FromArgb(255, selected.R, selected.G, selected.B);
+                        if (_config is { HasSelectionForeground: true } config)
+                        {
+                            Rgb selected = config.SelectionForeground;
+                            textFg = Color.FromArgb(255, selected.R, selected.G, selected.B);
+                        }
+                        else if (Theme.Terminal is { Custom: true, SelectionForegroundSet: true } themeSelection)
+                        {
+                            Rgb selected = themeSelection.SelectionForeground;
+                            textFg = Color.FromArgb(255, selected.R, selected.G, selected.B);
+                        }
                     }
 
                     // Search highlights win over normal and selected cell colors. The selected
@@ -1656,6 +1664,14 @@ public sealed unsafe class TerminalRenderer
         if (_config is { HasSelectionBackground: true })
         {
             Rgb rgb = _config.SelectionBackground;
+            return Color.FromArgb(255, rgb.R, rgb.G, rgb.B);
+        }
+
+        // A bundled theme can carry its own selection color; the design palettes fall back
+        // to the translucent veil below.
+        if (Theme.Terminal is { Custom: true, SelectionBackgroundSet: true } terminal)
+        {
+            Rgb rgb = terminal.SelectionBackground;
             return Color.FromArgb(255, rgb.R, rgb.G, rgb.B);
         }
 

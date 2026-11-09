@@ -39,7 +39,9 @@ public sealed class TerminalTheme
     public Rgb Foreground = new(245, 245, 247);
     public bool CursorSet;
     public Rgb Cursor;
+    public bool SelectionBackgroundSet;
     public Rgb SelectionBackground;
+    public bool SelectionForegroundSet;
     public Rgb SelectionForeground;
     public readonly Rgb[] Palette = new Rgb[256];
 }
@@ -186,10 +188,10 @@ public static class TerminalThemes
                     result.CursorSet = ParseColor(value, out result.Cursor);
                     break;
                 case "selection-background":
-                    ParseColor(value, out result.SelectionBackground);
+                    result.SelectionBackgroundSet = ParseColor(value, out result.SelectionBackground);
                     break;
                 case "selection-foreground":
-                    ParseColor(value, out result.SelectionForeground);
+                    result.SelectionForegroundSet = ParseColor(value, out result.SelectionForeground);
                     break;
                 case "palette":
                 {
