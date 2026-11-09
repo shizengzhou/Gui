@@ -2021,7 +2021,13 @@ public sealed partial class Workspace
         closeRight.Click += (_, _) => CloseTabsToTheRight(tab);
         menu.Items.Add(closeRight);
 
-        var moveToWindow = new MenuFlyoutItem { Text = Strings.MoveTabToNewWindow };
+        var moveToWindow = new MenuFlyoutItem
+        {
+            Text = Strings.MoveTabToNewWindow,
+            // A window with a single tab has nothing to split off; moving it would just
+            // recreate the same window.
+            IsEnabled = _tabs.Count > 1,
+        };
         moveToWindow.Click += (_, _) => MoveTabToNewWindow(tab);
         menu.Items.Add(moveToWindow);
 

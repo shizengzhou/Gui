@@ -368,7 +368,7 @@ public sealed class TerminalPane
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, 8, 40, 0),
-            Padding = new Thickness(8, 3, 3, 3),
+            Padding = new Thickness(8, 5, 3, 5),
             CornerRadius = new CornerRadius(8),
             Background = new SolidColorBrush(Theme.PaletteTint()),
             BorderBrush = new SolidColorBrush(Theme.Stroke()),
