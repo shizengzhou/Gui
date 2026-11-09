@@ -466,8 +466,10 @@ public sealed partial class Workspace
         MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems,
             () => Activate(IndexOf(NewTab())));
         MakeRow(Strings.NewWindow, "Ctrl+Shift+N", _paletteItems, OpenNewWindow);
-        MakeRow(Strings.SplitRight, "Alt+Shift+Plus", _paletteItems, () => SplitFocused(false));
-        MakeRow(Strings.SplitDown, "Alt+Shift+-", _paletteItems, () => SplitFocused(true));
+        MakeRow(Strings.SplitRight, "Alt+Shift+Plus", _paletteItems, () => SplitFocused(SplitDirection.Right));
+        MakeRow(Strings.SplitDown, "Alt+Shift+-", _paletteItems, () => SplitFocused(SplitDirection.Down));
+        MakeRow(Strings.SplitLeft, string.Empty, _paletteItems, () => SplitFocused(SplitDirection.Left));
+        MakeRow(Strings.SplitUp, string.Empty, _paletteItems, () => SplitFocused(SplitDirection.Up));
         MakeRow(Strings.CloseFocusedPane, "Ctrl+Shift+W", _paletteItems, CloseFocusedPane);
         MakeRow(Strings.FindInTerminal, "Ctrl+Shift+F", _paletteItems, () =>
         {

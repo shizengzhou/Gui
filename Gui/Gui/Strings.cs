@@ -35,8 +35,18 @@ public static class Strings
 
     public static string SplitRight => Pick("Split right", "向右拆分窗格");
     public static string SplitDown => Pick("Split down", "向下拆分窗格");
+    public static string SplitLeft => Pick("Split left", "向左拆分窗格");
+    public static string SplitUp => Pick("Split up", "向上拆分窗格");
     public static string ToggleZoom => Pick("Toggle pane zoom", "切换窗格缩放");
     public static string ClosePane => Pick("Close pane", "关闭窗格");
+    public static string CloseSplit => Pick("Close split", "关闭拆分");
+
+    // ---- tab context menu -------------------------------------------------
+
+    public static string RenameTab => Pick("Rename tab", "重命名标签页");
+    public static string CloseOtherTabs => Pick("Close other tabs", "关闭其他标签页");
+    public static string CloseTabsToTheRight => Pick("Close tabs to the right", "关闭右侧标签页");
+    public static string MoveTabToNewWindow => Pick("Move tab to new window", "将标签页移到新窗口");
 
     // ---- search -----------------------------------------------------------
 

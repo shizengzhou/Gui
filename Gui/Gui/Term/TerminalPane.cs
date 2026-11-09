@@ -71,6 +71,9 @@ public sealed class TerminalPane
     private bool _redrawPending;
     private bool _loaded;
     private bool _ready;
+
+    /// <summary>True once the session was handed to another pane (a tab that moved windows).</summary>
+    private bool _sessionReleased;
     private bool _focused;
     private bool _hovered;
     private bool _selecting;
@@ -129,6 +132,8 @@ public sealed class TerminalPane
     public Action<TerminalPane>? OnFocus;
     public Action<TerminalPane>? OnSplitRight;
     public Action<TerminalPane>? OnSplitDown;
+    public Action<TerminalPane>? OnSplitLeft;
+    public Action<TerminalPane>? OnSplitUp;
     public Action<TerminalPane>? OnMaximize;
     public Action<TerminalPane>? OnClosePane;
     public Action<TerminalPane>? OnShellIcon;
@@ -1150,6 +1155,89 @@ public sealed class TerminalPane
     {
         if (_ready) return;
 
+        WireSession();
+        BeginSession();
+
+        // Policies have to be in place before the shell can print an OSC 52 sequence.
+        ApplyClipboardSettings();
+        _session.Start(_config.Command, _config.WorkingDirectory, _cols, _rows, PhysicalCellMetrics(),
+            _config.ExtraEnvironment, _config.TermVariable, _config.Input,
+            _config.ShellIntegration, _config.ShellFeatures);
+        _cwdTimer?.Start();
+        UpdateShellIcon();
+        UpdateLocation();
+        Redraw();
+
+        // Loaded can fire before the canvas is arranged (a cold start, or a window that is
+        // still hidden), so the Layout above may have no size to work with and the grid
+        // stays at the 80x24 seed. One dispatcher turn later the arrange has finished; lay
+        // out once more so the shell always gets the real column count.
+        _dispatcher?.TryEnqueue(() => Diag.Guard("pane.layout", () => Layout()));
+    }
+
+    /// <summary>
+    /// Re-attaches a session that is already running: a tab moved to another window keeps
+    /// its shell, scrollback and working directory instead of starting a new process.
+    /// </summary>
+    internal void AdoptSession(TerminalSession session)
+    {
+        if (_ready) return;
+
+        // The placeholder session made by the constructor is not needed.
+        _session.Dispose();
+        _session = session;
+        _session.SetScrollbackLimit(_config.ScrollbackLimit);
+        _session.SetScrollbackLimitLines(_config.ScrollbackLimitLines);
+
+        WireSession();
+        BeginSession();
+
+        ApplyClipboardSettings();
+        // Output that arrived while the pane was detached is still in the session's buffer.
+        _session.FlushPending();
+        _cwdTimer?.Start();
+        UpdateShellIcon();
+        UpdateLocation();
+        ApplyTheme();
+        _dispatcher?.TryEnqueue(() => Diag.Guard("pane.layout", () => Layout()));
+    }
+
+    /// <summary>
+    /// Hands the running session over without stopping the shell. Close() afterwards only
+    /// tears down this pane's timers and canvas hooks, so the new owner keeps the process.
+    /// </summary>
+    internal TerminalSession ReleaseSession()
+    {
+        TerminalSession session = _session;
+        _sessionReleased = true;
+        session.Post = null;
+        session.OnUpdate = null;
+        session.OnOutput = null;
+        session.OnBell = null;
+        session.OnCommandFinished = null;
+        session.OnExit = null;
+        session.OnTitle = null;
+        return session;
+    }
+
+    /// <summary>This pane's config snapshot, carried along when the pane moves windows.</summary>
+    internal Config ConfigSnapshot()
+    {
+        var copy = new Config();
+        copy.CopyFrom(_config);
+        return copy;
+    }
+
+    /// <summary>The dispatcher and draw plumbing both the fresh and the adopted session need.</summary>
+    private void BeginSession()
+    {
+        _ready = true;
+        HookDraw();
+        Layout();
+    }
+
+    private void WireSession()
+    {
         _session.Post = action =>
         {
             if (_dispatcher is null) return;
@@ -1184,26 +1272,6 @@ public sealed class TerminalPane
             // wait-after-command keeps the surface (and its scrollback) open after the shell exits.
             if (!_config.WaitAfterCommand) OnExit?.Invoke(this);
         };
-
-        _ready = true;
-        HookDraw();
-        Layout();
-
-        // Policies have to be in place before the shell can print an OSC 52 sequence.
-        ApplyClipboardSettings();
-        _session.Start(_config.Command, _config.WorkingDirectory, _cols, _rows, PhysicalCellMetrics(),
-            _config.ExtraEnvironment, _config.TermVariable, _config.Input,
-            _config.ShellIntegration, _config.ShellFeatures);
-        _cwdTimer?.Start();
-        UpdateShellIcon();
-        UpdateLocation();
-        Redraw();
-
-        // Loaded can fire before the canvas is arranged (a cold start, or a window that is
-        // still hidden), so the Layout above may have no size to work with and the grid
-        // stays at the 80x24 seed. One dispatcher turn later the arrange has finished; lay
-        // out once more so the shell always gets the real column count.
-        _dispatcher?.TryEnqueue(() => Diag.Guard("pane.layout", () => Layout()));
     }
 
     public void Close()
@@ -1242,6 +1310,7 @@ public sealed class TerminalPane
         _session.OnCommandFinished = null;
         _session.OnExit = null;
         _session.OnTitle = null;
+        if (_sessionReleased) return;
         _session.Stop();
         _session.Dispose();
     }
@@ -2334,22 +2403,35 @@ public sealed class TerminalPane
     {
         var menu = new MenuFlyout();
 
+        void AddItem(string text, Action action)
+        {
+            var item = new MenuFlyoutItem { Text = text };
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
+
+        // The menu intentionally shows no shortcut hints: copy and paste are bound to
+        // Ctrl+Shift+C / Ctrl+Shift+V, which the plain Ctrl+C / Ctrl+V labels would mislead.
         var copy = new MenuFlyoutItem
         {
             Text = Strings.Copy,
             IsEnabled = _session.HasSelection(),
-            KeyboardAcceleratorTextOverride = "Ctrl+C",
         };
         copy.Click += (_, _) => CopySelection();
         menu.Items.Add(copy);
 
-        var paste = new MenuFlyoutItem
-        {
-            Text = Strings.Paste,
-            KeyboardAcceleratorTextOverride = "Ctrl+V",
-        };
+        var paste = new MenuFlyoutItem { Text = Strings.Paste };
         paste.Click += (_, _) => PasteFromClipboard();
         menu.Items.Add(paste);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+        AddItem(Strings.SplitRight, () => OnSplitRight?.Invoke(this));
+        AddItem(Strings.SplitDown, () => OnSplitDown?.Invoke(this));
+        AddItem(Strings.SplitLeft, () => OnSplitLeft?.Invoke(this));
+        AddItem(Strings.SplitUp, () => OnSplitUp?.Invoke(this));
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+        AddItem(Strings.CloseSplit, () => OnClosePane?.Invoke(this));
 
         menu.ShowAt(_canvas, new FlyoutShowOptions { Position = position });
     }

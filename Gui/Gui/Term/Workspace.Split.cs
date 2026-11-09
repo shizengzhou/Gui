@@ -14,6 +14,15 @@ namespace Gui.Term;
 
 public sealed partial class Workspace
 {
+    /// <summary>Which side of the focused pane the new split lands on.</summary>
+    private enum SplitDirection
+    {
+        Right,
+        Down,
+        Left,
+        Up,
+    }
+
     private void SplitFocusedTail(TerminalPane created, bool vertical)
     {
         FocusPane(_tabs[_active], created);
@@ -371,6 +380,19 @@ public sealed partial class Workspace
         if (index < 0 || index >= _tabs.Count) return;
         SettleZoomTransition();
 
+        // A rename that is still open on this chip goes away with it; otherwise a closed
+        // editor would keep the keyboard away from the terminal.
+        if (_tabs[index].Renaming) EndRename(_tabs[index], false);
+
+        if (_tabs.Count == 1)
+        {
+            // The last tab takes the window with it, like Ghostty. Leaving the tab in place
+            // keeps the normal window-close path in charge, so "confirm-close-surface" can
+            // still ask before a running command is stopped.
+            _dispatcher?.TryEnqueue(() => _window?.Close());
+            return;
+        }
+
         // The tab is about to destroy its panes: drop any close animation that still
         // refers to one of them.
         Tab closing = _tabs[index];
@@ -384,13 +406,6 @@ public sealed partial class Workspace
         int previous = _active;
         _chipHost.Children.RemoveAt(index);
         _tabs.RemoveAt(index);
-
-        if (_tabs.Count == 0)
-        {
-            NewTab();
-            Activate(0);
-            return;
-        }
 
         // Closing a tab behind the active one must leave the selection alone: taking the
         // closed index would jump the selection forward (close the tab next to the active

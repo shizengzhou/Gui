@@ -53,6 +53,10 @@ public sealed partial class Workspace
     private sealed class Tab
     {
         public string Title = string.Empty;
+
+        // "Rename tab": a title the user pinned by hand. While it is set the shell's own
+        // title reports are ignored, exactly like Ghostty's tab title override.
+        public string? TitleOverride;
         public SplitNode? Root;
         public TerminalPane? Focused;
         public bool Zoomed;
@@ -63,6 +67,13 @@ public sealed partial class Workspace
         public readonly List<Grid> Grids = new();
         public Border Chip = null!;
         public TextBlock ChipText = null!;
+        public TextBox ChipEditor = null!;
+
+        /// <summary>True while the chip shows its inline rename editor instead of the label.</summary>
+        public bool Renaming;
+
+        /// <summary>The template's clear button, hidden so the chip keeps a single ×.</summary>
+        public Button? ChipEditorClear;
         public Image ChipIcon = null!;
         public FontIcon ChipIconFallback = null!;
         public ImageSource? ChipIconSource;
@@ -88,6 +99,29 @@ public sealed partial class Workspace
         // layout pass. It always holds the value currently on screen.
         public double ShiftX;
         public double ShiftY;
+    }
+
+    /// <summary>
+    /// A tab on its way to another window. WinUI cannot re-parent visuals across XamlRoots,
+    /// so the running sessions (and with them the shells, scrollback and directories) travel
+    /// instead of the controls; the destination window builds fresh panes around them.
+    /// </summary>
+    internal sealed class MovedTab
+    {
+        public string Title = string.Empty;
+        public string? TitleOverride;
+        public MovedSplit? Root;
+    }
+
+    internal sealed class MovedSplit
+    {
+        public TerminalSession? Session;
+        public Config Config = null!;
+        public string Title = string.Empty;
+        public bool Vertical;
+        public double Ratio = 0.5;
+        public MovedSplit? First;
+        public MovedSplit? Second;
     }
 
     /// <summary>One chip on its way to a new displacement, eased by the strip itself.</summary>
@@ -239,6 +273,15 @@ public sealed partial class Workspace
     private bool _sidebarCollapsed;
     private bool _firstSurface = true;
 
+    /// <summary>A tab handed over by another window before this one was attached.</summary>
+    private MovedTab? _initialTab;
+
+    /// <summary>
+    /// The tab whose chip is showing the inline rename editor. While it is set the window's
+    /// preview key handler must stay out of the way: the editor owns the keyboard.
+    /// </summary>
+    private Tab? _renamingTab;
+
     private readonly List<ExitAnimation> _exitAnimations = new();
     private ZoomTransition? _zoomTransition;
     private readonly List<TerminalPane> _closingPanes = new();
@@ -279,9 +322,10 @@ public sealed partial class Workspace
     private bool _inputHandlersInstalled;
     private TerminalPane? _imeCompositionPane;
 
-    public Workspace(Config config)
+    internal Workspace(Config config, MovedTab? initialTab = null)
     {
         _config = config;
+        _initialTab = initialTab;
         _placement = PlacementFrom(config.TabPosition);
         _sidebarWidth = Math.Max(MinSidebarWidth(), SidebarWidthFromConfig());
         _dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -340,7 +384,15 @@ public sealed partial class Workspace
             Diag.LogException("Workspace.Attach.appWindow", error);
         }
 
-        NewTab();
+        if (_initialTab is { } moved)
+        {
+            _initialTab = null;
+            NewTabFrom(moved);
+        }
+        else
+        {
+            NewTab();
+        }
         Activate(0);
         UpdateStatus();
         ApplyTabBarVisibility();
@@ -1933,10 +1985,288 @@ public sealed partial class Workspace
             tab.ChipClose.Margin = top ? new Thickness(0, 0, 8, 0) : new Thickness(0);
     }
 
+    /// <summary>
+    /// The tab's own context menu: the three close modes Ghostty exposes (this / other /
+    /// right) and moving the tab to its own window, with rename on its own at the end. Like
+    /// Ghostty, it acts on the clicked tab, not the active one.
+    /// </summary>
+    private void ShowTabMenu(Tab tab, Point position)
+    {
+        int index = IndexOf(tab);
+        if (index < 0) return;
+
+        var menu = new MenuFlyout();
+
+        var close = new MenuFlyoutItem { Text = Strings.CloseTab };
+        close.Click += (_, _) =>
+        {
+            int current = IndexOf(tab);
+            if (current >= 0) CloseTab(current);
+        };
+        menu.Items.Add(close);
+
+        var closeOthers = new MenuFlyoutItem
+        {
+            Text = Strings.CloseOtherTabs,
+            IsEnabled = _tabs.Count > 1,
+        };
+        closeOthers.Click += (_, _) => CloseOtherTabs(tab);
+        menu.Items.Add(closeOthers);
+
+        var closeRight = new MenuFlyoutItem
+        {
+            Text = Strings.CloseTabsToTheRight,
+            IsEnabled = index < _tabs.Count - 1,
+        };
+        closeRight.Click += (_, _) => CloseTabsToTheRight(tab);
+        menu.Items.Add(closeRight);
+
+        var moveToWindow = new MenuFlyoutItem { Text = Strings.MoveTabToNewWindow };
+        moveToWindow.Click += (_, _) => MoveTabToNewWindow(tab);
+        menu.Items.Add(moveToWindow);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        var rename = new MenuFlyoutItem { Text = Strings.RenameTab };
+        // The flyout restores focus when it closes, so the editor is opened one turn later
+        // or it would lose focus (and commit) immediately.
+        rename.Click += (_, _) => _dispatcher?.TryEnqueue(() => BeginRename(tab));
+        menu.Items.Add(rename);
+
+        menu.ShowAt(tab.Chip, new FlyoutShowOptions { Position = position });
+    }
+
+    private void CloseOtherTabs(Tab tab)
+    {
+        for (int index = _tabs.Count - 1; index >= 0; index--)
+        {
+            if (ReferenceEquals(_tabs[index], tab)) continue;
+            CloseTab(index);
+        }
+        int remaining = IndexOf(tab);
+        if (remaining >= 0) Activate(remaining);
+    }
+
+    private void CloseTabsToTheRight(Tab tab)
+    {
+        int index = IndexOf(tab);
+        if (index < 0) return;
+        for (int closing = _tabs.Count - 1; closing > index; closing--) CloseTab(closing);
+    }
+
+    /// <summary>
+    /// "Move tab to new window": the tab keeps its splits and running shells. WinUI cannot
+    /// re-parent visuals across windows, so the panes hand their sessions to the new window
+    /// and it rebuilds the controls around them.
+    /// </summary>
+    private void MoveTabToNewWindow(Tab tab)
+    {
+        int index = IndexOf(tab);
+        if (index < 0) return;
+        SettleZoomTransition();
+        if (tab.Renaming) EndRename(tab, false);
+
+        var moved = new MovedTab
+        {
+            Title = tab.Title,
+            TitleOverride = tab.TitleOverride,
+            Root = tab.Root is null ? null : CaptureSplit(tab.Root),
+        };
+        if (moved.Root is null) return;
+
+        ForEachPane(tab, pane =>
+        {
+            RetireExit(pane);
+            _closingPanes.Remove(pane);
+            // The session already belongs to the new window; only this pane's timers die.
+            pane.Close();
+        });
+
+        StopChipSpring(tab);
+        _chipHost.Children.RemoveAt(index);
+        _tabs.RemoveAt(index);
+
+        App.OpenWindow(null, moved);
+
+        if (_tabs.Count == 0)
+        {
+            // Like Ghostty, a window that lost its last tab goes away.
+            _dispatcher?.TryEnqueue(() =>
+            {
+                _allowClose = true;
+                _window?.Close();
+            });
+            return;
+        }
+
+        Activate(TabSelection.AfterClose(_active, index, _tabs.Count));
+    }
+
+    private static MovedSplit CaptureSplit(SplitNode node)
+    {
+        if (node.Pane is { } pane)
+        {
+            return new MovedSplit
+            {
+                Session = pane.ReleaseSession(),
+                Config = pane.ConfigSnapshot(),
+                Title = pane.Title,
+            };
+        }
+
+        return new MovedSplit
+        {
+            Vertical = node.Vertical,
+            Ratio = node.Ratio,
+            First = node.First is null ? null : CaptureSplit(node.First),
+            Second = node.Second is null ? null : CaptureSplit(node.Second),
+        };
+    }
+
+    /// <summary>
+    /// Renames on the tab itself: the chip's label is swapped for an editor. The pinned
+    /// title wins over the shell's own reports; an empty title hands it back to the shell.
+    /// </summary>
+    private void BeginRename(Tab tab)
+    {
+        if (tab.Renaming || IndexOf(tab) < 0) return;
+
+        tab.Renaming = true;
+        _renamingTab = tab;
+        // Hiding the label collapses its column, so the editor takes over the label's width
+        // (plus its own horizontal padding) and the chip keeps the size it had instead of
+        // snapping to the editor's minimum.
+        double labelWidth = tab.ChipText.ActualWidth;
+        tab.ChipEditor.Width = Math.Clamp(labelWidth > 0 ? labelWidth + 20.0 : 140.0, 60.0, 200.0);
+        tab.ChipText.Visibility = Visibility.Collapsed;
+        tab.ChipEditor.Text = tab.Title;
+        tab.ChipEditor.Foreground = ReferenceEquals(tab, _tabs[_active])
+            ? TextStrongBrush()
+            : ChromeTextStrongBrush();
+        tab.ChipEditor.Visibility = Visibility.Visible;
+
+        tab.ChipEditor.Focus(FocusState.Programmatic);
+        tab.ChipEditor.SelectAll();
+        HideChipEditorClearButtonSoon(tab);
+    }
+
+    private void EndRename(Tab tab, bool commit)
+    {
+        if (!tab.Renaming) return;
+        tab.Renaming = false;
+        if (ReferenceEquals(_renamingTab, tab)) _renamingTab = null;
+        tab.ChipEditor.Visibility = Visibility.Collapsed;
+        tab.ChipText.Visibility = Visibility.Visible;
+
+        if (commit)
+        {
+            string title = tab.ChipEditor.Text.Trim();
+            tab.TitleOverride = title.Length == 0 ? null : title;
+            tab.Title = tab.TitleOverride ?? PaneTitle(tab);
+            UpdateHeaders();
+        }
+
+        // The editor took the keyboard; hand it back unless the palette owns it.
+        if (_paletteLayer is null || _paletteLayer.Visibility != Visibility.Visible)
+            FocusKeyboardAnchor();
+    }
+
+    /// <summary>
+    /// The stock TextBox template puts a clear button on its trailing edge, which reads as a
+    /// second close button inside the chip. Every text change shows it again, so hide it again.
+    /// </summary>
+    private void HideChipEditorClearButton(Tab tab)
+    {
+        tab.ChipEditorClear ??= FindDescendant(tab.ChipEditor, "DeleteButton") as Button;
+        if (tab.ChipEditorClear is not { } deleteButton) return;
+        if (deleteButton.Visibility == Visibility.Collapsed && deleteButton.Width == 0) return;
+
+        deleteButton.Visibility = Visibility.Collapsed;
+        deleteButton.Width = 0;
+        deleteButton.MinWidth = 0;
+        deleteButton.Padding = new Thickness(0);
+        deleteButton.Margin = new Thickness(0);
+        deleteButton.Opacity = 0;
+        deleteButton.IsHitTestVisible = false;
+    }
+
+    private void HideChipEditorClearButtonSoon(Tab tab)
+    {
+        if (_dispatcher is null)
+        {
+            HideChipEditorClearButton(tab);
+            return;
+        }
+        _dispatcher.TryEnqueue(() => HideChipEditorClearButton(tab));
+    }
+
+    private static FrameworkElement? FindDescendant(DependencyObject root, string name)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement element && element.Name == name) return element;
+            FrameworkElement? found = FindDescendant(child, name);
+            if (found is not null) return found;
+        }
+        return null;
+    }
+
+    /// <summary>The title the chip falls back to when no rename is pinned.</summary>
+    private string PaneTitle(Tab tab)
+    {
+        string live = tab.Focused?.Title ?? string.Empty;
+        return live.Length == 0 ? ShellDisplayName(_config.Command) : live;
+    }
+
     private Tab NewTab()
     {
+        var pane = new TerminalPane(NewTabConfig(ActivePane()));
+        WirePane(pane);
+        return AddTab(ShellDisplayName(_config.Command), null, pane, new SplitNode { Pane = pane });
+    }
+
+    /// <summary>Rebuilds a tab another window handed over, keeping its running sessions.</summary>
+    private Tab NewTabFrom(MovedTab moved)
+    {
+        SplitNode? root = moved.Root is null ? null : BuildMovedSplit(moved.Root);
+        TerminalPane? focused = root is null ? null : root.Pane ?? FirstPane(root);
+        if (root is null || focused is null) return NewTab();
+
+        return AddTab(moved.Title, moved.TitleOverride, focused, root);
+    }
+
+    private SplitNode BuildMovedSplit(MovedSplit source)
+    {
+        if (source.Session is not { } session)
+        {
+            return new SplitNode
+            {
+                Vertical = source.Vertical,
+                Ratio = source.Ratio,
+                First = source.First is null ? null : BuildMovedSplit(source.First),
+                Second = source.Second is null ? null : BuildMovedSplit(source.Second),
+            };
+        }
+
+        var pane = new TerminalPane(source.Config);
+        pane.Title = source.Title;
+        WirePane(pane);
+        pane.AdoptSession(session);
+        return new SplitNode { Pane = pane };
+    }
+
+    private Tab AddTab(string title, string? titleOverride, TerminalPane focused, SplitNode root)
+    {
         Diag.Debug("tab", $"create start #{_tabs.Count + 1}");
-        var tab = new Tab { Title = ShellDisplayName(_config.Command) };
+        var tab = new Tab
+        {
+            Title = title,
+            TitleOverride = titleOverride,
+            Focused = focused,
+            Root = root,
+        };
 
         tab.Surface = new Grid { RowSpacing = SurfaceGap, ColumnSpacing = SurfaceGap };
 
@@ -1955,9 +2285,17 @@ public sealed partial class Workspace
         tab.Chip.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            int index = IndexOf(self);
+            // Right-click opens the tab menu for the chip that was clicked; like Ghostty, the
+            // menu acts on that tab without making it the active one.
+            PointerPoint point = args.GetCurrentPoint(self.Chip);
+            if (point.Properties.IsRightButtonPressed)
+            {
+                if (index >= 0) ShowTabMenu(self, point.Position);
+                return;
+            }
             // The strip is about to reorder; starting a drag now would race that
             // collection change.
-            int index = IndexOf(self);
             if (_hasPendingTabMove)
             {
                 if (index >= 0) Activate(index);
@@ -1969,12 +2307,12 @@ public sealed partial class Workspace
 
             // Capture on the strip, not the chip: reordering moves the chip between
             // children and would drop a chip-level capture.
-            Point point = args.GetCurrentPoint(_chipHost).Position;
+            Point stripPoint = args.GetCurrentPoint(_chipHost).Position;
             _dragTab = self;
             _dragArmed = true;
             _dragMoving = false;
-            _dragPressX = point.X;
-            _dragPressY = point.Y;
+            _dragPressX = stripPoint.X;
+            _dragPressY = stripPoint.Y;
             _dragTarget = index;
             _dragHomeX = 0;
             _dragHomeY = 0;
@@ -2029,6 +2367,48 @@ public sealed partial class Workspace
         Grid.SetColumn(tab.ChipText, 1);
         chipGrid.Children.Add(tab.ChipText);
 
+        // Inline rename: the label swaps for a TextBox in the same column, so the title is
+        // edited on the tab itself. Enter commits, Esc restores, leaving the editor commits.
+        tab.ChipEditor = new TextBox
+        {
+            FontFamily = TitleFontFamily(),
+            FontSize = 12,
+            MaxLength = 256,
+            MinWidth = 60,
+            // The stock style's 32 DIP minimum would override the height and leave the text
+            // sitting at the top of the box; the vertical padding centers the caret instead.
+            MinHeight = 26,
+            Height = 26,
+            Padding = new Thickness(6, 5, 6, 5),
+            BorderThickness = new Thickness(0),
+            Background = ClearBrush(),
+            VerticalAlignment = VerticalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            IsSpellCheckEnabled = false,
+            Visibility = Visibility.Collapsed,
+        };
+        // The stock template paints a field and an accent underline on focus; the chip keeps
+        // its own surface, so the editor has to stay flat and transparent.
+        tab.ChipEditor.Resources["TextControlBackground"] = ClearBrush();
+        tab.ChipEditor.Resources["TextControlBackgroundPointerOver"] = ClearBrush();
+        tab.ChipEditor.Resources["TextControlBackgroundFocused"] = ClearBrush();
+        tab.ChipEditor.Resources["TextControlBackgroundPressed"] = ClearBrush();
+        tab.ChipEditor.Resources["TextControlBorderThemeThicknessFocused"] = new Thickness(0);
+        tab.ChipEditor.Resources["TextControlBorderBrushFocused"] = ClearBrush();
+        tab.ChipEditor.Loaded += (_, _) => HideChipEditorClearButton(self);
+        tab.ChipEditor.TextChanged += (_, _) => HideChipEditorClearButtonSoon(self);
+        // The box's own visual states show the clear button again after focus and text
+        // changes; the layout pass after that state change hides it before it is painted.
+        tab.ChipEditor.LayoutUpdated += (_, _) =>
+        {
+            if (tab.ChipEditor.Visibility == Visibility.Visible) HideChipEditorClearButton(self);
+        };
+        tab.ChipEditor.LostFocus += (_, _) => EndRename(self, true);
+        // Keep the press inside the editor; the chip would otherwise start a tab drag.
+        tab.ChipEditor.PointerPressed += (_, args) => args.Handled = true;
+        Grid.SetColumn(tab.ChipEditor, 1);
+        chipGrid.Children.Add(tab.ChipEditor);
+
         tab.ChipClose = new Border
         {
             Width = 16,
@@ -2042,6 +2422,9 @@ public sealed partial class Workspace
         Hoverable(tab.ChipClose, ChromeCloseButtonHoverBrush);
         tab.ChipClose.PointerPressed += (_, args) =>
         {
+            // Only the left button closes; a right-click falls through to the chip so the
+            // tab menu opens instead of the tab disappearing.
+            if (!args.GetCurrentPoint(tab.ChipClose).Properties.IsLeftButtonPressed) return;
             args.Handled = true;
             // Removing the pressed chip from its panel inside this handler crashes WinUI;
             // close after the pointer event unwinds.
@@ -2108,12 +2491,6 @@ public sealed partial class Workspace
         int index = TabInsertIndex();
         _chipHost.Children.Insert(index, tab.ChipFocus);
 
-        var pane = new TerminalPane(NewTabConfig(ActivePane()));
-        WirePane(pane);
-
-        tab.Focused = pane;
-        tab.Root = new SplitNode { Pane = pane };
-
         _tabs.Insert(index, tab);
         Relayout(tab);
         Diag.Debug("tab", "create done");
@@ -2155,6 +2532,11 @@ public sealed partial class Workspace
     {
         int index = IndexOf(self);
         if (index < 0) return;
+
+        // While the inline editor is up these keys are the text box's: the caret moves and
+        // Delete edits text. They reach this handler only because the box leaves them
+        // unhandled, so the strip must not treat them as tab navigation or tab close.
+        if (self.Renaming) return;
 
         bool horizontal = _placement == TabPlacement.Top;
         int count = _tabs.Count;
@@ -3039,11 +3421,11 @@ public sealed partial class Workspace
     private static bool TabContainsPane(Tab tab, TerminalPane pane) => ContainsPane(tab.Root, pane);
 
     /// <summary>
-    /// Replaces the focused leaf with a two-leaf split; the new pane always lands in the
-    /// second half (right or bottom).
+    /// Replaces the focused leaf with a two-leaf split; the new pane lands in the second half
+    /// (right or bottom), or in the first half when splitting left or up.
     /// </summary>
-    private bool SplitLeaf(ref SplitNode? node, TerminalPane target, bool vertical, Config childConfig,
-        out TerminalPane? created)
+    private bool SplitLeaf(ref SplitNode? node, TerminalPane target, bool vertical, bool before,
+        Config childConfig, out TerminalPane? created)
     {
         created = null;
         if (node is null) return false;
@@ -3056,15 +3438,19 @@ public sealed partial class Workspace
             WirePane(pane);
             created = pane;
 
-            var split = new SplitNode { Vertical = vertical };
-            split.First = new SplitNode { Pane = node.Pane };
-            split.Second = new SplitNode { Pane = pane };
-            node = split;
+            var current = new SplitNode { Pane = node.Pane };
+            var fresh = new SplitNode { Pane = pane };
+            node = new SplitNode
+            {
+                Vertical = vertical,
+                First = before ? fresh : current,
+                Second = before ? current : fresh,
+            };
             return true;
         }
 
-        if (SplitLeaf(ref node.First, target, vertical, childConfig, out created)) return true;
-        return SplitLeaf(ref node.Second, target, vertical, childConfig, out created);
+        if (SplitLeaf(ref node.First, target, vertical, before, childConfig, out created)) return true;
+        return SplitLeaf(ref node.Second, target, vertical, before, childConfig, out created);
     }
 
     /// <summary>Detaches the leaf and collapses its parent into the surviving sibling subtree.</summary>
@@ -3117,7 +3503,7 @@ public sealed partial class Workspace
             foreach (Tab tab in _tabs)
             {
                 if (!TabContainsPane(tab, p)) continue;
-                if (ReferenceEquals(tab.Focused, p) && tab.Title != p.Title)
+                if (ReferenceEquals(tab.Focused, p) && tab.TitleOverride is null && tab.Title != p.Title)
                 {
                     tab.Title = p.Title;
                     UpdateHeaders();
@@ -3162,8 +3548,10 @@ public sealed partial class Workspace
                 return;
             }
         };
-        pane.OnSplitRight = _ => SplitFocused(false);
-        pane.OnSplitDown = _ => SplitFocused(true);
+        pane.OnSplitRight = _ => SplitFocused(SplitDirection.Right);
+        pane.OnSplitDown = _ => SplitFocused(SplitDirection.Down);
+        pane.OnSplitLeft = _ => SplitFocused(SplitDirection.Left);
+        pane.OnSplitUp = _ => SplitFocused(SplitDirection.Up);
         pane.OnDragHandleStart = BeginPaneDrag;
         pane.OnDragHandleMove = MovePaneDrag;
         pane.OnDragHandleDrop = p => EndPaneDrag(p, true);
@@ -3232,8 +3620,8 @@ public sealed partial class Workspace
         ForEachPane(tab, candidate => candidate.SetFocused(ReferenceEquals(candidate, pane)));
 
         // A split pane switch follows whichever pane is focused; also refresh the title
-        // while the tab is in the background.
-        if (pane.Title.Length > 0 && tab.Title != pane.Title) tab.Title = pane.Title;
+        // while the tab is in the background. A pinned tab title ignores both.
+        if (tab.TitleOverride is null && pane.Title.Length > 0 && tab.Title != pane.Title) tab.Title = pane.Title;
         UpdateHeaders();
         if (!ReferenceEquals(tab, _tabs[_active])) return;
 
@@ -3245,11 +3633,14 @@ public sealed partial class Workspace
         UpdateStatus();
     }
 
-    private void SplitFocused(bool vertical)
+    private void SplitFocused(SplitDirection direction)
     {
         if (_tabs.Count == 0) return;
         Tab tab = _tabs[_active];
         if (tab.Focused is null || tab.Root is null) return;
+
+        bool vertical = direction is SplitDirection.Down or SplitDirection.Up;
+        bool before = direction is SplitDirection.Left or SplitDirection.Up;
 
         // The split inherits the focused session: same shell command and the directory the
         // shell is currently sitting in. Everything else (background opacity/blur, backdrop
@@ -3264,7 +3655,8 @@ public sealed partial class Workspace
             childConfig.WorkingDirectory = tab.Focused.WorkingDirectory();
 
         SplitNode? root = tab.Root;
-        if (!SplitLeaf(ref root, tab.Focused, vertical, childConfig, out TerminalPane? created) || created is null)
+        if (!SplitLeaf(ref root, tab.Focused, vertical, before, childConfig, out TerminalPane? created) ||
+            created is null)
             return;
         tab.Root = root;
 

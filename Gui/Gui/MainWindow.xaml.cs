@@ -23,6 +23,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Directory a second window starts in, from "window-inherit-working-directory".</summary>
     private readonly string? _inheritedDirectory;
 
+    /// <summary>A tab handed over by "move tab to new window" before the workspace exists.</summary>
+    private readonly Term.Workspace.MovedTab? _movedTab;
+
     /// <summary>The workspace, so app-wide broadcasts can reach this window.</summary>
     internal Term.Workspace? Workspace => _workspace;
 
@@ -30,11 +33,12 @@ public sealed partial class MainWindow : Window
     private const int CascadeStep = 28;
     private static int _windowCount;
 
-    public MainWindow(string? workingDirectory = null)
+    internal MainWindow(string? workingDirectory = null, Term.Workspace.MovedTab? movedTab = null)
     {
         InitializeComponent();
 
         _inheritedDirectory = workingDirectory;
+        _movedTab = movedTab;
 
         // Size the window before it is shown. Doing this after Loaded (or on Activated)
         // means WinUI first displays the default-sized window and the resize lands a frame
@@ -50,7 +54,7 @@ public sealed partial class MainWindow : Window
         {
             var config = Term.Config.Load();
             if (_inheritedDirectory is not null) config.WorkingDirectory = _inheritedDirectory;
-            _workspace = new Term.Workspace(config);
+            _workspace = new Term.Workspace(config, _movedTab);
             _workspace.Attach(RootGrid, this);
             ApplyStartupWindow(config, _workspace);
             Closed += (_, _) => _workspace?.Close();

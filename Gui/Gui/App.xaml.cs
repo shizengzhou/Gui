@@ -77,16 +77,18 @@ public partial class App : Application
 
     /// <summary>
     /// Opens another window, optionally started in <paramref name="workingDirectory"/>
-    /// (Ctrl+Shift+N, the command palette and "window-inherit-working-directory").
+    /// (Ctrl+Shift+N, the command palette and "window-inherit-working-directory"), or
+    /// adopting a tab that "move tab to new window" handed over.
     /// </summary>
-    internal static void OpenWindow(string? workingDirectory = null)
+    internal static void OpenWindow(string? workingDirectory = null,
+        Term.Workspace.MovedTab? movedTab = null)
     {
-        if (Current is App app) app.ShowWindow(workingDirectory);
+        if (Current is App app) app.ShowWindow(workingDirectory, movedTab);
     }
 
-    private void ShowWindow(string? workingDirectory)
+    private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null)
     {
-        var window = new MainWindow(workingDirectory);
+        var window = new MainWindow(workingDirectory, movedTab);
         _windows.Add(window);
         window.Closed += (_, _) => _windows.Remove(window);
         window.Activate();

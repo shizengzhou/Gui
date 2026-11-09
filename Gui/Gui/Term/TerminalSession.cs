@@ -254,6 +254,12 @@ public sealed unsafe class TerminalSession : IDisposable
         });
     }
 
+    /// <summary>
+    /// Applies output buffered while no pane was attached. A tab that moves to another
+    /// window has no pane for a moment; the new one flushes that backlog on attach.
+    /// </summary>
+    internal void FlushPending() => Post?.Invoke(Drain);
+
     private void Drain()
     {
         byte[] bytes;

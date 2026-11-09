@@ -414,6 +414,24 @@ public sealed partial class Workspace
         if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible)
             return OnPaletteKey(args);
 
+        // The inline tab rename editor owns the keyboard. Enter and Esc are decided here,
+        // before the text box swallows them; arrows, Home/End and Delete stay with the box,
+        // which is why every other key is passed through untouched.
+        if (_renamingTab is { } renaming)
+        {
+            if (args.Key == VirtualKey.Enter)
+            {
+                EndRename(renaming, true);
+                return true;
+            }
+            if (args.Key == VirtualKey.Escape)
+            {
+                EndRename(renaming, false);
+                return true;
+            }
+            return false;
+        }
+
         // The find bar owns typing, Enter and Esc only while focus is in it; after Esc with
         // a query the bar stays visible and the terminal gets the keyboard back.
         if (_tabs.Count > 0 && _tabs[_active].Focused is { SearchHasFocus: true })
@@ -471,12 +489,12 @@ public sealed partial class Workspace
             int keyCode = (int)args.Key;
             if (keyCode == 0xBB || args.Key == VirtualKey.Add)
             {
-                SplitFocused(false);
+                SplitFocused(SplitDirection.Right);
                 return true;
             }
             if (keyCode == 0xBD || args.Key == VirtualKey.Subtract)
             {
-                SplitFocused(true);
+                SplitFocused(SplitDirection.Down);
                 return true;
             }
         }
