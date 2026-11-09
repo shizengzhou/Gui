@@ -177,6 +177,23 @@ public sealed unsafe class TerminalSession : IDisposable
             GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_CURSOR, null);
             GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_COLOR_PALETTE, null);
         }
+
+        // A color-only change does not dirty the existing rows, so the old render state keeps
+        // their resolved colors and background tabs would paint the previous theme. Rebuild
+        // the state so the next frame resolves every cell against the new palette.
+        ResetRenderState();
+    }
+
+    /// <summary>Drops and recreates the render state so the next frame is fully re-resolved.</summary>
+    private void ResetRenderState()
+    {
+        if (_renderState != IntPtr.Zero)
+        {
+            GhosttyNative.ghostty_render_state_free(_renderState);
+            _renderState = IntPtr.Zero;
+        }
+        if (GhosttyNative.ghostty_render_state_new(IntPtr.Zero, out _renderState) != GhosttyNative.SUCCESS)
+            _renderState = IntPtr.Zero;
     }
 
     /// <summary>Spawns the shell inside a ConPTY of the given character grid size.</summary>

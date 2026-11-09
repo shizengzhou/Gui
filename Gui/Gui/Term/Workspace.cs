@@ -1,4 +1,4 @@
-﻿﻿﻿﻿using System;
+﻿﻿using System;
 using Path = Microsoft.UI.Xaml.Shapes.Path;
 using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
@@ -204,7 +204,6 @@ public sealed partial class Workspace
     private List<PaletteItem>? _paletteActiveSub;
     private bool _paletteSubmenu;
     private bool _paletteThemesBuilt;
-    private bool _paletteAllowedLight;
     private bool _themePreviewActive;
     private bool _suppressPalettePreview;
     private ScrollViewer? _paletteScroller;
@@ -3210,6 +3209,10 @@ public sealed partial class Workspace
         _surfaceHost.Children.Clear();
         AddChild(_surfaceHost, _tabs[index].Surface, Array.Empty<Grid>());
         UpdateHeaders();
+
+        // A background tab misses the draws that happen while it is hidden; paint it again
+        // now that its surface is back in the tree so it never shows a stale frame.
+        ForEachPane(_tabs[index], pane => pane.Redraw());
 
         TerminalPane? pane = _tabs[index].Focused ?? FirstPane(_tabs[index].Root);
         if (pane is not null) FocusPane(_tabs[index], pane);
