@@ -698,10 +698,10 @@ public sealed partial class Workspace
         _palettePanel.Translation = new System.Numerics.Vector3(0, -6, 32);
         _paletteLayer.Visibility = Visibility.Visible;
 
-        // The keyboard anchor sits above the whole shell at the cursor cell. The card can be
-        // drawn over that cell, and the anchor would then swallow presses meant for the card,
-        // so it drops behind the shell while the palette is open.
-        Canvas.SetZIndex(_inputAnchor, -1);
+        // The IME sink sits above the whole shell at the cursor cell. The card can be drawn
+        // over that cell, and the sink would then swallow presses meant for the card, so it
+        // drops behind the shell while the palette is open.
+        Canvas.SetZIndex(_imeSink, -1);
 
         _dispatcher?.TryEnqueue(() =>
         {
@@ -717,7 +717,7 @@ public sealed partial class Workspace
         // A selection preview is never committed by closing the palette.
         RestoreCommittedTheme();
         _paletteLayer.Visibility = Visibility.Collapsed;
-        Canvas.SetZIndex(_inputAnchor, 0);
+        Canvas.SetZIndex(_imeSink, 0);
         if (_tabs.Count > 0) FocusKeyboardAnchor();
     }
 

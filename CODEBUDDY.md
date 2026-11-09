@@ -206,12 +206,19 @@ file in every other window; the `_applyingConfig` guard keeps a peer reload from
 
 All keyboard input goes through one shared, invisible `ContentControl` (the keyboard anchor):
 `PreviewKeyDown` runs the shortcut table and the key encoder. Text and IME do not go through a
-TextBox: `Term/ImeHost.cs` subclasses the window's input-site HWNDs, turns `WM_CHAR` into shell
-text, and implements the `WM_IME_*` / IMM32 composition and candidate-window path. Note that
-WinUI 3 runs text input through TSF, so while the terminal has focus no `WM_IME_*` message
-actually reaches the window: ASCII typing works, CJK composition does not (a real TextBox is
-the only place the system composes; the find bar and palette still do). When such a TextBox has
-focus the host passes every message through to XAML. The anchor is repositioned every 250 ms
+TextBox. `Term/ImeHost.cs` subclasses the window's input-site HWNDs and turns `WM_CHAR` into
+shell text, and the IME composes into an **invisible 1x1 `TextBox`** parked on the cursor cell:
+WinUI only feeds the text services for a real text control, so a custom-drawn surface has no
+other way to receive composition (IMM32 is dead here — XAML calls `ImmDisableLegacyIME`, and
+`ITfKeystrokeMgr` never hands a key to a TIP in this process, measured with the command
+palette's own search box). The box is `Opacity = 0`, never shows anything, and is emptied the
+moment its text is handed over: `TextChanged` flushes plain typing, `TextCompositionChanged`
+mirrors the preedit onto the pane, and `TextCompositionEnded` drains the sink one dispatcher
+turn later (the IME overwrites the raw pinyin with the picked characters in between). A
+cancelled composition sets `_imeDiscard` so its raw intermediate string is dropped instead of
+typed. While a composition is open the key handler swallows every key (the IME owns them and
+re-injects what it does not use). When a real TextBox (the find bar,
+the palette) has focus the host passes every message through to XAML. The anchor is repositioned every 250 ms
 onto the focused pane's cursor. It sits above the shell and is exactly one cell wide, so a left
 press on the cursor cell would otherwise be swallowed (no selection could start there).
 `AddHandler(..., handledEventsToo: true)` on the anchor forwards press, move and release to the

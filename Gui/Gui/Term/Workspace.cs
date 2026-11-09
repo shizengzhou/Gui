@@ -1,4 +1,4 @@
-﻿﻿using System;
+﻿﻿﻿﻿using System;
 using Path = Microsoft.UI.Xaml.Shapes.Path;
 using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
@@ -220,8 +220,10 @@ public sealed partial class Workspace
     private readonly List<FontIcon> _paletteWindowChecks = new();
     private readonly List<FontIcon> _paletteThemeChecks = new();
 
-    private Control _inputAnchor = null!;
-    private ImeHost? _imeHost;
+    private TextBox _imeSink = null!;
+    private bool _composing;
+    private bool _imeCommitted;
+    private bool _imeDiscard;
     private DispatcherQueueTimer? _imeTimer;
 
     // Every themed brush is created once and shared: switching the theme only has to
@@ -327,11 +329,6 @@ public sealed partial class Workspace
             // The beep for Alt chords comes from WinUI's input-site windows; retried by the
             // IME timer because they may not exist yet.
             InputSite.Install(_hwnd);
-            // IMM32 is hooked on the same input-site windows: they are what Windows gives
-            // focus and IME messages to.
-            _imeHost = new ImeHost(_hwnd, IsTerminalKeyboardFocus, CommitImeText,
-                ShowImeComposition, ImeCaretOnScreen);
-            _imeHost.Install();
             ApplyWindowTheme();
             _appWindow.Closing += OnAppWindowClosing;
             _appWindow.Changed += (_, args) =>
@@ -752,6 +749,9 @@ public sealed partial class Workspace
     private Brush ChromeTextStrongBrush() => ThemedBrush(Theme.ChromeTextStrong);
     private Brush ChromeTextBodyBrush() => ThemedBrush(Theme.ChromeTextBody);
     private Brush ChromeTextFaintBrush() => ThemedBrush(Theme.ChromeTextFaint);
+    private Brush ChromeIconStrongBrush() => ThemedBrush(Theme.ChromeIconStrong);
+    private Brush ChromeIconBodyBrush() => ThemedBrush(Theme.ChromeIconBody);
+    private Brush ChromeIconFaintBrush() => ThemedBrush(Theme.ChromeIconFaint);
     private Brush ChromeChipHoverBrush() => ThemedBrush(Theme.ChromeChipHover);
     private Brush ChromeCloseButtonHoverBrush() => ThemedBrush(Theme.ChromeCloseButtonHover);
     private Brush ChromeStrokeBrush() => ThemedBrush(Theme.ChromeStroke);
@@ -909,7 +909,7 @@ public sealed partial class Workspace
         };
     }
 
-    private Border ToolButton(char code) => ToolButton(code, TextFaintBrush());
+    private Border ToolButton(char code) => ToolButton(code, ChromeIconFaintBrush());
 
     private Border ToolButton(Path icon)
     {
@@ -1014,7 +1014,7 @@ public sealed partial class Workspace
         button.PointerExited += (_, _) =>
         {
             button.Background = ClearBrush();
-            if (icon is not null) icon.Foreground = ChromeTextBodyBrush();
+            if (icon is not null) icon.Foreground = ChromeIconBodyBrush();
         };
     }
 
@@ -1072,42 +1072,100 @@ public sealed partial class Workspace
         _root.Children.Add(_shell);
         ApplyBackgroundOpacity();
 
-        // Keyboard anchor: invisible, but it is the element XAML routes keys and text to.
-        // It is a plain Control, not a TextBox, because text and IME composition are handled
-        // by ImeHost through WM_CHAR / WM_IME_*.
-        _inputAnchor = new ContentControl
+        // Invisible IME sink: a 1x1 TextBox at the cursor cell, never visible and never painted.
+        // WinUI only feeds text services for a real text control, so this element is the only
+        // way an IME can compose into a custom-drawn surface; the terminal still draws the
+        // composition itself and the box is emptied as soon as its text is handed over.
+        _imeSink = new TextBox
         {
             Opacity = 0.0,
             Width = 8,
             Height = 16,
-            IsTabStop = true,
-            UseSystemFocusVisuals = false,
+            IsSpellCheckEnabled = false,
+            IsTextPredictionEnabled = false,
+            AcceptsReturn = false,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
         };
-        _root.Children.Add(_inputAnchor);
+        // The terminal draws its own right-click menu; the box's built-in copy/paste menu
+        // must not appear on top of it.
+        _imeSink.ContextRequested += (_, args) => args.Handled = true;
+        _root.Children.Add(_imeSink);
 
-        // The anchor sits above the whole window at the cursor cell. A press on it never
+        // The sink sits above the whole window at the cursor cell. A press on it never
         // reaches the pane's canvas (the canvas is inside the shell, not an ancestor of the
-        // anchor), so forward it to the focused pane and let selection start there. A plain
-        // Control does not claim the pointer, but the handlers stay for when the anchor is
-        // hit-testable.
-        _inputAnchor.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
+        // sink), so forward it to the focused pane and let selection start there. The sink
+        // keeps its hit-testability, which text and IME input depend on.
+        _imeSink.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
         {
             if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible) return;
             if (_tabs.Count == 0) return;
             _tabs[_active].Focused?.BeginSelectionFromAnchor(args);
         }), true);
-        _inputAnchor.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, args) =>
+        _imeSink.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, args) =>
         {
             if (_tabs.Count == 0) return;
             _tabs[_active].Focused?.MoveSelectionFromAnchor(args);
         }), true);
-        _inputAnchor.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) =>
+        _imeSink.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) =>
         {
             if (_tabs.Count == 0) return;
             _tabs[_active].Focused?.EndSelectionFromAnchor(args);
         }), true);
+
+        // The sink is only ever written by the IME: plain typing arrives as TextChanged, and a
+        // composition commit lands in Text one dispatcher turn after TextCompositionEnded.
+        _imeSink.TextChanged += (_, _) =>
+        {
+            if (_composing || _imeCommitted) return;
+
+            // A cancelled composition may be finalized through TextChanged rather than
+            // TextCompositionEnded, so the discard flag has to cover both routes.
+            if (_imeDiscard)
+            {
+                _imeDiscard = false;
+                FlushIme(false);
+                return;
+            }
+
+            FlushIme(true);
+        };
+        _imeSink.TextCompositionStarted += (_, _) =>
+        {
+            _imeDiscard = false;
+            _composing = true;
+            ShowImeComposition();
+        };
+        _imeSink.TextCompositionChanged += (_, _) => ShowImeComposition();
+        _imeSink.TextCompositionEnded += (_, _) =>
+        {
+            _composing = false;
+            _imeCommitted = true;
+            ShowImeComposition();
+
+            // At composition end Text still holds the raw composition string ("ni'hao"); the
+            // IME overwrites it with the characters the user picked on the next dispatcher
+            // turn, so the sink can only be drained then.
+            _dispatcher?.TryEnqueue(() =>
+            {
+                if (_composing) return;
+                _imeCommitted = false;
+                bool discard = _imeDiscard;
+                _imeDiscard = false;
+
+                Diag.Guard("ws.ime.commit", () => FlushIme(!discard));
+            });
+        };
+        _imeSink.LostFocus += (_, _) =>
+        {
+            // Focus leaving the sink (palette, tab chip, caption button) cancels the
+            // composition just like a click, so its raw pinyin must be dropped too.
+            if (_composing) _imeDiscard = true;
+            _composing = false;
+            _imeCommitted = false;
+            ShowImeComposition();
+        };
+        _imeSink.Paste += (_, args) => args.Handled = true;
 
         EnsureInputHandlers();
 
@@ -1133,11 +1191,13 @@ public sealed partial class Workspace
             if (OnKey(args)) args.Handled = true;
         }), true);
 
-        // Clicking away ends the composition; a terminal discards the raw intermediate
-        // string instead of sending it to the shell.
+        // Clicking away ends the composition but the IME finalizes it as the raw pinyin; a
+        // terminal discards that text instead of sending it to the shell.
         _root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) =>
         {
-            if (_imeHost is { IsComposing: true }) _imeHost.CancelComposition();
+            if (!_composing) return;
+            _imeDiscard = true;
+            ShowImeComposition();
         }), true);
 
         // A press outside the palette dismisses it. The palette layer covers the body only,
@@ -1192,7 +1252,6 @@ public sealed partial class Workspace
         {
             Diag.Guard("ws.ime", UpdateInputAnchor);
             InputSite.Install(_hwnd);
-            _imeHost?.Install();
         };
         _imeTimer.Start();
 
@@ -1327,7 +1386,7 @@ public sealed partial class Workspace
                 Margin = new Thickness(4, 0, 4, 4),
             };
 
-            Border add = ToolButton('\uE710', ChromeTextFaintBrush());
+            Border add = ToolButton('\uE710', ChromeIconFaintBrush());
             add.Width = 28;
             Hoverable(add, ChromeChipHoverBrush);
             add.PointerPressed += (_, args) =>
@@ -1339,7 +1398,7 @@ public sealed partial class Workspace
 
             // The magnifier opens the command palette, like the rail's own search command;
             // the per-pane find bar stays on Ctrl+Shift+F and the palette's Find row.
-            Border palette = ToolButton('\uE721', ChromeTextFaintBrush());
+            Border palette = ToolButton('\uE721', ChromeIconFaintBrush());
             palette.Width = 28;
             Hoverable(palette, ChromeChipHoverBrush);
             palette.PointerPressed += (_, args) =>
@@ -1377,7 +1436,7 @@ public sealed partial class Workspace
             };
 
             // The panel glyph shows the tab rail on the side it lives on.
-            Border sideToggle = ToolButton(PanelIcon(ChromeTextFaintBrush(), 14, !railRight));
+            Border sideToggle = ToolButton(PanelIcon(ChromeIconFaintBrush(), 14, !railRight));
             Hoverable(sideToggle, ChromeChipHoverBrush);
             sideToggle.PointerPressed += (_, args) =>
             {
@@ -1401,14 +1460,14 @@ public sealed partial class Workspace
             Margin = new Thickness(0),
         };
 
-        Border minimize = CaptionButton('\uE921', CaptionButtonWidth, headerHeight, ChromeTextBodyBrush());
-        Border maximize = CaptionButton('\uE922', CaptionButtonWidth, headerHeight, ChromeTextBodyBrush());
-        Border close = CaptionButton('\uE8BB', CaptionButtonWidth, headerHeight, ChromeTextBodyBrush());
+        Border minimize = CaptionButton('\uE921', CaptionButtonWidth, headerHeight, ChromeIconBodyBrush());
+        Border maximize = CaptionButton('\uE922', CaptionButtonWidth, headerHeight, ChromeIconBodyBrush());
+        Border close = CaptionButton('\uE8BB', CaptionButtonWidth, headerHeight, ChromeIconBodyBrush());
         _maximizeIcon = maximize.Child as FontIcon;
         _closeCaption = close;
         UpdateCloseCorner();
-        CaptionHover(minimize, ChromeChipHoverBrush, ChromeTextStrongBrush);
-        CaptionHover(maximize, ChromeChipHoverBrush, ChromeTextStrongBrush);
+        CaptionHover(minimize, ChromeChipHoverBrush, ChromeIconStrongBrush);
+        CaptionHover(maximize, ChromeChipHoverBrush, ChromeIconStrongBrush);
         CaptionHover(close, CloseHoverBrush, () => new SolidColorBrush(Colors.White));
 
         // The three window buttons carry the same one-line hover label the pane actions use.
@@ -1498,7 +1557,7 @@ public sealed partial class Workspace
 
         // The sidebar toggle is always a button of its own: collapsing the rail should never
         // require opening a menu.
-        Border collapse = ToolButton(PanelIcon(TextFaintBrush(), 14, _placement != TabPlacement.Right));
+        Border collapse = ToolButton(PanelIcon(ChromeIconFaintBrush(), 14, _placement != TabPlacement.Right));
         Hoverable(collapse, ChipHoverBrush);
         collapse.PointerPressed += (_, args) =>
         {
@@ -1979,7 +2038,7 @@ public sealed partial class Workspace
             Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Child = Glyph('\uE711', 10, ChromeTextFaintBrush()),
+            Child = Glyph('\uE711', 10, ChromeIconFaintBrush()),
         };
         Hoverable(tab.ChipClose, ChromeCloseButtonHoverBrush);
         tab.ChipClose.PointerPressed += (_, args) =>
@@ -3159,9 +3218,12 @@ public sealed partial class Workspace
     private void FocusPane(Tab tab, TerminalPane pane)
     {
         // A focus change wants to cancel the composition, not hand its raw pinyin to the
-        // newly focused shell.
-        if (tab.Focused is not null && !ReferenceEquals(tab.Focused, pane))
-            _imeHost?.CancelComposition();
+        // newly focused shell. The IME finalizes it one dispatcher turn later, so mark it now.
+        if (_composing && tab.Focused is not null && !ReferenceEquals(tab.Focused, pane))
+        {
+            _imeDiscard = true;
+            ShowImeComposition();
+        }
 
         tab.Focused = pane;
         ForEachPane(tab, candidate => candidate.SetFocused(ReferenceEquals(candidate, pane)));
