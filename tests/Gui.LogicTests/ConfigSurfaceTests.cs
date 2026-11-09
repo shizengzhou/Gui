@@ -297,10 +297,13 @@ public class ConfigSurfaceTests : IDisposable
     public void CommandFinishNotificationsResolve()
     {
         Config defaults = Config.Load(Write(string.Empty));
-        Assert.Equal("never", defaults.NotifyOnCommandFinish);
+        Assert.Equal("unfocused", defaults.NotifyOnCommandFinish);
         Assert.True(defaults.NotifyOnCommandFinishBell);
-        Assert.False(defaults.NotifyOnCommandFinishToast);
+        Assert.True(defaults.NotifyOnCommandFinishToast);
         Assert.Equal(TimeSpan.FromSeconds(5), defaults.NotifyOnCommandFinishAfter);
+
+        Assert.Equal("never", Config.Load(Write("notify-on-command-finish = never\n")).NotifyOnCommandFinish);
+        Assert.False(Config.Load(Write("notify-on-command-finish-action = no-notify\n")).NotifyOnCommandFinishToast);
 
         Config config = Config.Load(Write(
             "notify-on-command-finish = unfocused\n" +

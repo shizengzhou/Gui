@@ -291,9 +291,9 @@ public sealed class Config
 
     public string ShellIntegration = "detect";     // none, detect, or a shell name
     public ShellIntegrationFeatures ShellFeatures = ShellIntegrationFeatures.Default;
-    public string NotifyOnCommandFinish = "never"; // never, unfocused, always
-    public bool NotifyOnCommandFinishBell = true;  // notify-on-command-finish-action: bell
-    public bool NotifyOnCommandFinishToast;        // notify-on-command-finish-action: notify
+    public string NotifyOnCommandFinish = "unfocused"; // never, unfocused, or always
+    public bool NotifyOnCommandFinishBell = true;   // notify-on-command-finish-action: bell
+    public bool NotifyOnCommandFinishToast = true;  // notify-on-command-finish-action: notify
     public TimeSpan NotifyOnCommandFinishAfter = TimeSpan.FromSeconds(5);
 
     /// <summary>"progress-style": draw OSC 9;4 progress in the tab bar (default on).</summary>
@@ -1615,23 +1615,23 @@ public sealed class Config
         }
     }
 
-    /// <summary>"notify-on-command-finish": never (default), unfocused, or always.</summary>
+    /// <summary>"notify-on-command-finish": unfocused (default), always, or never.</summary>
     private static string NormalizeNotifyMode(string? value) =>
         value?.Trim().ToLowerInvariant() switch
         {
             "always" => "always",
-            "unfocused" => "unfocused",
-            _ => "never",
+            "never" => "never",
+            _ => "unfocused",
         };
 
     /// <summary>
     /// "notify-on-command-finish-action": a comma separated list of bell/notify with
-    /// "no-" negations. Ghostty enables the bell and leaves the desktop notification off.
+    /// "no-" negations. Both are on by default.
     /// </summary>
     private static (bool Bell, bool Toast) ParseNotifyAction(string? value)
     {
         bool bell = true;
-        bool toast = false;
+        bool toast = true;
         if (string.IsNullOrWhiteSpace(value)) return (bell, toast);
 
         foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))

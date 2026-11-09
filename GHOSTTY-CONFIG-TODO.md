@@ -100,8 +100,8 @@
 
 - [x] `command` — 启动的命令/Shell
 - [x] `initial-command` — 仅首个终端使用的启动命令；后续标签页仍用 `command`
-- [x] `notify-on-command-finish` — 命令结束时是否通知（never/unfocused/always，默认 never）；依赖 shell 集成上报的 OSC 133 D，`unfocused` 只在窗格未聚焦或窗口不在前台时通知
-- [x] `notify-on-command-finish-action` — 通知方式（bell/notify，可用 `no-` 关闭，默认 bell）；bell 走 `bell-features`，notify 走 Windows 应用通知（失败回退任务栏闪烁）
+- [x] `notify-on-command-finish` — 命令结束时是否通知（never/unfocused/always，本应用默认 `unfocused`，Ghostty 默认 never）；依赖 shell 集成上报的 OSC 133 D，`unfocused` 只在窗格未聚焦或窗口不在前台时通知
+- [x] `notify-on-command-finish-action` — 通知方式（bell/notify，可用 `no-` 关闭，本应用默认 `bell,notify`，Ghostty 默认只有 bell）；bell 走 `bell-features`，notify 走 Windows 应用通知（失败回退任务栏闪烁）
 - [x] `notify-on-command-finish-after` — 命令运行超过多久才触发通知；支持 `1h30m`、`45s`、`500ms` 这类时长，默认 5s
 - [x] `env` — 追加环境变量（`KEY=VALUE`，可重复）
 - [x] `input` — 启动时向子进程写入的输入数据
