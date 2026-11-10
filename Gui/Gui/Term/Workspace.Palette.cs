@@ -1,6 +1,8 @@
-﻿﻿using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
@@ -463,28 +465,140 @@ public sealed partial class Workspace
 
         _paletteRows = new StackPanel { Margin = new Thickness(6), Spacing = RowSpacing };
 
-        MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems,
-            () => Activate(IndexOf(NewTab())));
+        // ---- clipboard & terminal ----
+        MakeRow(Strings.ResetTerminal, string.Empty, _paletteItems, () => ActivePane()?.ResetTerminal());
+        MakeRow(Strings.CopyToClipboard, "Ctrl+Insert", _paletteItems, () => ActivePane()?.CopyToClipboard());
+        MakeRow(Strings.CopySelectionPlain, "Ctrl+Shift+C", _paletteItems, () => ActivePane()?.CopySelection());
+        MakeRow(Strings.CopySelectionAnsi, string.Empty, _paletteItems, () => ActivePane()?.CopySelectionAnsi());
+        MakeRow(Strings.CopySelectionHtml, string.Empty, _paletteItems, () => ActivePane()?.CopySelectionHtml());
+        MakeRow(Strings.CopyUrl, string.Empty, _paletteItems, () => ActivePane()?.CopyUrlAtPointer());
+        MakeRow(Strings.CopyTitle, string.Empty, _paletteItems, CopyActiveTitle);
+        MakeRow(Strings.PasteFromClipboard, "Ctrl+Shift+V", _paletteItems,
+            () => ActivePane()?.PasteFromClipboard());
+        MakeRow(Strings.PasteFromSelection, "Shift+Insert", _paletteItems, () => ActivePane()?.PasteSelection());
+
+        // ---- search ----
+        MakeRow(Strings.StartSearch, "Ctrl+Shift+F", _paletteItems, () => ActivePane()?.ShowSearch());
+        MakeRow(Strings.SearchSelection, string.Empty, _paletteItems, () => ActivePane()?.SearchSelection());
+        MakeRow(Strings.EndSearch, "Esc", _paletteItems, () => ActivePane()?.HideSearch());
+        MakeRow(Strings.NextSearchResult, "Enter", _paletteItems, () => ActivePane()?.SearchNext());
+        MakeRow(Strings.PreviousSearchResult, "Shift+Enter", _paletteItems, () => ActivePane()?.SearchPrevious());
+
+        // ---- font size ----
+        MakeRow(Strings.IncreaseFontSize, "Ctrl+Plus", _paletteItems, () => ActivePane()?.AdjustFontSize(1.0f));
+        MakeRow(Strings.DecreaseFontSize, "Ctrl+-", _paletteItems, () => ActivePane()?.AdjustFontSize(-1.0f));
+        MakeRow(Strings.ResetFontSize, "Ctrl+0", _paletteItems, () => ActivePane()?.ResetFontSize());
+
+        // ---- screen & scroll ----
+        MakeRow(Strings.ClearScreen, string.Empty, _paletteItems, () => ActivePane()?.ClearScreen());
+        MakeRow(Strings.SelectAll, "Ctrl+Shift+A", _paletteItems, () => ActivePane()?.SelectAll());
+        MakeRow(Strings.ScrollToTop, "Shift+Home", _paletteItems, () => ActivePane()?.ScrollToTop());
+        MakeRow(Strings.ScrollToBottom, "Shift+End", _paletteItems, () => ActivePane()?.ScrollToBottom());
+        MakeRow(Strings.ScrollToSelection, string.Empty, _paletteItems, () => ActivePane()?.ScrollToSelection());
+        MakeRow(Strings.ScrollPageUp, "Shift+PageUp", _paletteItems, () => ActivePane()?.ScrollPage(true));
+        MakeRow(Strings.ScrollPageDown, "Shift+PageDown", _paletteItems, () => ActivePane()?.ScrollPage(false));
+
+        // ---- export to temporary files (screen / selection x plain / HTML / VT x copy / paste / open) ----
+        foreach (string emit in new[] { string.Empty, "html", "vt" })
+        {
+            foreach (string action in new[] { "copy", "paste", "open" })
+            {
+                string emitValue = emit;
+                string actionValue = action;
+                MakeRow(Strings.WriteScreenFile(actionValue, emitValue), string.Empty, _paletteItems,
+                    () => WriteTerminalFile(false, emitValue, actionValue));
+            }
+        }
+        foreach (string emit in new[] { string.Empty, "html", "vt" })
+        {
+            foreach (string action in new[] { "copy", "paste", "open" })
+            {
+                string emitValue = emit;
+                string actionValue = action;
+                MakeRow(Strings.WriteSelectionFile(actionValue, emitValue), string.Empty, _paletteItems,
+                    () => WriteTerminalFile(true, emitValue, actionValue));
+            }
+        }
+
+        // ---- window & tabs ----
         MakeRow(Strings.NewWindow, "Ctrl+Shift+N", _paletteItems, OpenNewWindow);
-        MakeRow(Strings.SplitRight, "Alt+Shift+Plus", _paletteItems, () => SplitFocused(SplitDirection.Right));
-        MakeRow(Strings.SplitDown, "Alt+Shift+-", _paletteItems, () => SplitFocused(SplitDirection.Down));
+        MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems, () => Activate(IndexOf(NewTab())));
+        MakeRow(Strings.MoveTabLeft, "Ctrl+Shift+PageUp", _paletteItems, () => MoveTab(_active, _active - 1));
+        MakeRow(Strings.MoveTabRight, "Ctrl+Shift+PageDown", _paletteItems, () => MoveTab(_active, _active + 1));
+        MakeRow(Strings.MoveTabToNewWindow, string.Empty, _paletteItems, () =>
+        {
+            // Moving the only tab would just recreate the window; the tab menu disables it.
+            if (_tabs.Count > 1) MoveTabToNewWindow(_tabs[_active]);
+        });
+        MakeRow(Strings.NextTab, "Ctrl+Tab", _paletteItems, () => CycleTab(1));
+        MakeRow(Strings.PreviousTab, "Ctrl+Shift+Tab", _paletteItems, () => CycleTab(-1));
+        MakeRow(Strings.LastTab, "Alt+9", _paletteItems, ActivateLastTab);
+        MakeRow(Strings.ToggleSidebar, "Ctrl+Shift+B", _paletteItems, ToggleSidebar);
+
+        // ---- titles ----
+        MakeRow(Strings.ChangeTerminalTitle, string.Empty, _paletteItems, PromptSurfaceTitle);
+        MakeRow(Strings.ChangeTabTitle, string.Empty, _paletteItems, () =>
+        {
+            if (_tabs.Count == 0) return;
+            // The palette restores keyboard focus as it closes; open the editor one turn
+            // later or it would lose focus (and commit) immediately, like the tab menu does.
+            Tab tab = _tabs[_active];
+            _dispatcher?.TryEnqueue(() => BeginRename(tab));
+        });
+        MakeRow(Strings.ChangeWindowTitle, string.Empty, _paletteItems, PromptWindowTitle);
+
+        // ---- splits ----
+        MakeRow(Strings.SplitRight, "Ctrl+Shift+O", _paletteItems, () => SplitFocused(SplitDirection.Right));
+        MakeRow(Strings.SplitDown, "Ctrl+Shift+E", _paletteItems, () => SplitFocused(SplitDirection.Down));
         MakeRow(Strings.SplitLeft, string.Empty, _paletteItems, () => SplitFocused(SplitDirection.Left));
         MakeRow(Strings.SplitUp, string.Empty, _paletteItems, () => SplitFocused(SplitDirection.Up));
-        MakeRow(Strings.CloseFocusedPane, "Ctrl+Shift+W", _paletteItems, CloseFocusedPane);
-        MakeRow(Strings.FindInTerminal, "Ctrl+Shift+F", _paletteItems, () =>
-        {
-            if (_tabs.Count > 0) _tabs[_active].Focused?.ShowSearch();
-        });
-        MakeRow(Strings.CopySelection, "Ctrl+Shift+C", _paletteItems, () =>
-        {
-            if (_tabs.Count > 0) _tabs[_active].Focused?.CopySelection();
-        });
-        MakeRow(Strings.Paste, "Ctrl+Shift+V", _paletteItems, () =>
-        {
-            if (_tabs.Count > 0) _tabs[_active].Focused?.PasteFromClipboard();
-        });
+        MakeRow(Strings.FocusSplitPrevious, "Ctrl+Win+[", _paletteItems, () => CyclePane(-1));
+        MakeRow(Strings.FocusSplitNext, "Ctrl+Win+]", _paletteItems, () => CyclePane(1));
+        MakeRow(Strings.FocusSplitLeft, "Ctrl+Alt+\u2190", _paletteItems, () => FocusPaneTowards(-1, 0));
+        MakeRow(Strings.FocusSplitRight, "Ctrl+Alt+\u2192", _paletteItems, () => FocusPaneTowards(1, 0));
+        MakeRow(Strings.FocusSplitUp, "Ctrl+Alt+\u2191", _paletteItems, () => FocusPaneTowards(0, -1));
+        MakeRow(Strings.FocusSplitDown, "Ctrl+Alt+\u2193", _paletteItems, () => FocusPaneTowards(0, 1));
+        MakeRow(Strings.ToggleZoom, "Ctrl+Shift+Enter", _paletteItems, TogglePaneZoom);
+        MakeRow(Strings.ToggleReadOnly, string.Empty, _paletteItems, ToggleReadOnlyMode);
+        MakeRow(Strings.EqualizeSplits, string.Empty, _paletteItems, EqualizeSplits);
+        MakeRow(Strings.ResizeSplitLeft, "Win+Ctrl+Shift+\u2190", _paletteItems, () => ResizeSplit(-1, 0));
+        MakeRow(Strings.ResizeSplitRight, "Win+Ctrl+Shift+\u2192", _paletteItems, () => ResizeSplit(1, 0));
+        MakeRow(Strings.ResizeSplitUp, "Win+Ctrl+Shift+\u2191", _paletteItems, () => ResizeSplit(0, -1));
+        MakeRow(Strings.ResizeSplitDown, "Win+Ctrl+Shift+\u2193", _paletteItems, () => ResizeSplit(0, 1));
+
+        // ---- debug & config ----
+        MakeRow(Strings.ResetWindowSize, string.Empty, _paletteItems, ResetWindowSize);
+        MakeRow(Strings.ShowOnScreenKeyboard, string.Empty, _paletteItems, ShowOnScreenKeyboard);
+        MakeRow(Strings.OpenConfigOs, "Ctrl+,", _paletteItems, OpenConfig);
+        MakeRow(Strings.OpenConfigNewWindow, string.Empty, _paletteItems, OpenConfigInNewWindow);
         MakeRow(Strings.ReloadConfig, "Ctrl+Shift+,", _paletteItems, ReloadConfig);
-        MakeRow(Strings.OpenConfig, string.Empty, _paletteItems, OpenConfig);
+
+        // ---- close ----
+        MakeRow(Strings.CloseTerminal, "Ctrl+Shift+W", _paletteItems, CloseFocusedPane);
+        MakeRow(Strings.CloseTab, string.Empty, _paletteItems, () =>
+        {
+            if (_tabs.Count > 0) CloseTab(_active);
+        });
+        MakeRow(Strings.CloseOtherTabs, string.Empty, _paletteItems, () =>
+        {
+            if (_tabs.Count > 0) CloseOtherTabs(_tabs[_active]);
+        });
+        MakeRow(Strings.CloseTabsToTheRight, string.Empty, _paletteItems, () =>
+        {
+            if (_tabs.Count > 0) CloseTabsToTheRight(_tabs[_active]);
+        });
+        MakeRow(Strings.CloseWindowCommand, "Alt+F4", _paletteItems, CloseWindow);
+        MakeRow(Strings.CloseAllWindows, string.Empty, _paletteItems, QuitApplication);
+
+        // ---- window state ----
+        MakeRow(Strings.ToggleMaximize, string.Empty, _paletteItems, ToggleMaximize);
+        MakeRow(Strings.ToggleFullscreen, "Ctrl+Enter", _paletteItems, ToggleFullscreen);
+        MakeRow(Strings.ToggleFloatOnTop, string.Empty, _paletteItems, ToggleFloatOnTop);
+        MakeRow(Strings.ToggleMouseReporting, string.Empty, _paletteItems, ToggleMouseReportingMode);
+        MakeRow(Strings.ToggleBackgroundOpacity, string.Empty, _paletteItems, ToggleBackgroundOpacityMode);
+
+        // ---- other ----
+        MakeRow(Strings.Quit, "Ctrl+Shift+Q", _paletteItems, QuitApplication);
 
         // The debug tap mirrors the raw VT byte stream into the log; the row shows its state.
         PaletteItem? tapRow = null;
@@ -1026,11 +1140,173 @@ public sealed partial class Workspace
         Config.EnsureDefault(file);
         try
         {
-            Process.Start(new ProcessStartInfo("notepad.exe", '"' + file + '"') { UseShellExecute = true });
+            // Hand the file to whatever the OS has associated with it.
+            Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
         }
         catch (Exception error)
         {
             Diag.LogException("Workspace.OpenConfig", error);
+            try
+            {
+                Process.Start(new ProcessStartInfo("notepad.exe", '"' + file + '"') { UseShellExecute = true });
+            }
+            catch (Exception fallback)
+            {
+                Diag.LogException("Workspace.OpenConfigNotepad", fallback);
+            }
+        }
+    }
+
+    /// <summary>Opens the config in a new window whose shell runs the OS editor on it.</summary>
+    private void OpenConfigInNewWindow()
+    {
+        string file = Config.ConfigFile();
+        if (string.IsNullOrEmpty(file)) return;
+        Config.EnsureDefault(file);
+        App.OpenWindow(null, null, "notepad.exe \"" + file + "\"");
+    }
+
+    /// <summary>Blocks keyboard, IME and paste input for the focused pane.</summary>
+    private void ToggleReadOnlyMode()
+    {
+        if (ActivePane() is not { } pane) return;
+        pane.ReadOnly = !pane.ReadOnly;
+    }
+
+    /// <summary>Stops forwarding pointer input to a mouse-tracking program.</summary>
+    private void ToggleMouseReportingMode()
+    {
+        if (ActivePane() is not { } pane) return;
+        pane.MouseReportingEnabled = !pane.MouseReportingEnabled;
+    }
+
+    /// <summary>The configured background opacity, remembered while the window is opaque.</summary>
+    private float _savedBackgroundOpacity = 1.0f;
+
+    /// <summary>Swaps the configured opacity for fully opaque, and back.</summary>
+    private void ToggleBackgroundOpacityMode()
+    {
+        if (_config.BackgroundOpacity < 0.999f)
+        {
+            _savedBackgroundOpacity = _config.BackgroundOpacity;
+            _config.BackgroundOpacity = 1.0f;
+        }
+        else if (_savedBackgroundOpacity < 0.999f)
+        {
+            _config.BackgroundOpacity = _savedBackgroundOpacity;
+        }
+        else
+        {
+            return;
+        }
+
+        ApplyBackgroundOpacity();
+        foreach (Tab tab in _tabs)
+        {
+            ForEachPane(tab, pane =>
+            {
+                pane.SyncConfig(_config);
+                pane.ApplyTheme();
+            });
+        }
+    }
+
+    /// <summary>"Change Terminal Title…"</summary>
+    private async void PromptSurfaceTitle()
+    {
+        try
+        {
+            if (ActivePane() is not { } pane) return;
+            string? value = await PromptTextAsync(Strings.ChangeTerminalTitle, pane.Title);
+            if (value is not null) pane.SetTitleOverride(value);
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.PromptSurfaceTitle", error);
+        }
+    }
+
+    /// <summary>"Change Window Title…"</summary>
+    private async void PromptWindowTitle()
+    {
+        try
+        {
+            if (_appWindow is null) return;
+            string? value = await PromptTextAsync(Strings.ChangeWindowTitle, _appWindow.Title);
+            if (value is not null) _appWindow.Title = value;
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.PromptWindowTitle", error);
+        }
+    }
+
+    private async Task<string?> PromptTextAsync(string title, string initial)
+    {
+        XamlRoot? root = _root.XamlRoot;
+        if (root is null) return null;
+
+        var box = new TextBox { Text = initial, SelectionStart = initial.Length };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = root,
+            Title = title,
+            Content = box,
+            PrimaryButtonText = Strings.Ok,
+            CloseButtonText = Strings.Cancel,
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary ? box.Text : null;
+    }
+
+    /// <summary>
+    /// "write_screen_file" / "write_selection_file": formats the screen or the selection
+    /// into a temporary file, then copies its path, pastes it, or opens it.
+    /// </summary>
+    private void WriteTerminalFile(bool selectionOnly, string emit, string action)
+    {
+        if (ActivePane() is not { } pane) return;
+
+        int format = emit == "vt" ? GhosttyNative.FORMAT_VT : GhosttyNative.FORMAT_PLAIN;
+        byte[] bytes = pane.FormatTerminal(selectionOnly, format);
+        if (bytes.Length == 0) return;
+
+        string text = System.Text.Encoding.UTF8.GetString(bytes);
+        if (emit == "html") text = TerminalPane.HtmlFromPlain(text);
+
+        string extension = emit switch { "html" => ".html", "vt" => ".vt", _ => ".txt" };
+        string path = Path.Combine(Path.GetTempPath(),
+            "gui-" + (selectionOnly ? "selection" : "screen") + "-" +
+            DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + extension);
+
+        try
+        {
+            File.WriteAllText(path, text, new System.Text.UTF8Encoding(false));
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.WriteTerminalFile", error);
+            return;
+        }
+
+        switch (action)
+        {
+            case "copy":
+                CopyTextToClipboard(path);
+                break;
+            case "paste":
+                pane.PasteString(path);
+                break;
+            default:
+                try
+                {
+                    Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                }
+                catch (Exception error)
+                {
+                    Diag.LogException("Workspace.OpenTerminalFile", error);
+                }
+                break;
         }
     }
 
@@ -1054,7 +1330,20 @@ public sealed partial class Workspace
     {
         string text = Diag.ReadAll();
         if (text.Length == 0) return;
+        CopyTextToClipboard(text);
+    }
 
+    /// <summary>Copies the focused tab's title ("copy_title_to_clipboard").</summary>
+    private void CopyActiveTitle()
+    {
+        if (_tabs.Count == 0) return;
+        string title = _tabs[_active].Focused?.Title ?? _tabs[_active].Title;
+        if (title.Length == 0) return;
+        CopyTextToClipboard(title);
+    }
+
+    private static void CopyTextToClipboard(string text)
+    {
         try
         {
             var package = new DataPackage();
@@ -1063,7 +1352,7 @@ public sealed partial class Workspace
         }
         catch (Exception error)
         {
-            Diag.LogException("Workspace.CopyDiagnosticsLog", error);
+            Diag.LogException("Workspace.CopyText", error);
         }
     }
 

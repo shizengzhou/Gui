@@ -29,6 +29,143 @@ public sealed partial class Workspace
         AnimatePaneEntrance(created, vertical);
     }
 
+    /// <summary>Every divider in the active tab returns to the middle ("equalize_splits").</summary>
+    private void EqualizeSplits()
+    {
+        if (_tabs.Count == 0) return;
+        Tab tab = _tabs[_active];
+        if (tab.Root is null || tab.Root.Pane is not null) return;
+
+        ResetSplitRatios(tab.Root);
+        Relayout(tab);
+    }
+
+    private static void ResetSplitRatios(SplitNode? node)
+    {
+        if (node is null || node.Pane is not null) return;
+        node.Ratio = 0.5;
+        ResetSplitRatios(node.First);
+        ResetSplitRatios(node.Second);
+    }
+
+    /// <summary>The 5% step one "resize_split" command applies.</summary>
+    private const double SplitResizeStep = 0.05;
+
+    /// <summary>
+    /// Moves the divider that separates the focused pane along one axis ("resize_split").
+    /// <paramref name="dx"/> is -1 / +1 for left / right and <paramref name="dy"/> for
+    /// up / down.
+    /// </summary>
+    private void ResizeSplit(int dx, int dy)
+    {
+        if (_tabs.Count == 0) return;
+        Tab tab = _tabs[_active];
+        if (tab.Zoomed || tab.Root is null || tab.Focused is null) return;
+
+        bool sideBySide = dx != 0;
+        int direction = sideBySide ? dx : dy;
+        if (direction == 0) return;
+        if (!FindDivider(tab.Root, tab.Focused, sideBySide, out SplitNode? divider, out bool focusedIsFirst) ||
+            divider is null)
+        {
+            return;
+        }
+
+        // Moving the divider towards the focused side makes that pane bigger.
+        bool growFirst = focusedIsFirst == (direction > 0);
+        divider.Ratio = Math.Clamp(
+            divider.Ratio + (growFirst ? SplitResizeStep : -SplitResizeStep), 0.05, 0.95);
+        Relayout(tab);
+    }
+
+    /// <summary>
+    /// Finds the nearest ancestor split that divides the focused pane along the requested
+    /// axis. Side-by-side splits carry Vertical = false and divide along X.
+    /// </summary>
+    private static bool FindDivider(SplitNode? node, TerminalPane pane, bool sideBySide,
+        out SplitNode? divider, out bool focusedIsFirst)
+    {
+        divider = null;
+        focusedIsFirst = false;
+        if (node is null || node.Pane is not null) return false;
+
+        if (node.Vertical != sideBySide && node.First is not null && node.Second is not null)
+        {
+            if (ContainsPane(node.First, pane))
+            {
+                divider = node;
+                focusedIsFirst = true;
+                return true;
+            }
+            if (ContainsPane(node.Second, pane))
+            {
+                divider = node;
+                focusedIsFirst = false;
+                return true;
+            }
+        }
+
+        return FindDivider(node.First, pane, sideBySide, out divider, out focusedIsFirst) ||
+               FindDivider(node.Second, pane, sideBySide, out divider, out focusedIsFirst);
+    }
+
+    /// <summary>
+    /// Cycles the focused pane in layout order ("Focus Split: Previous / Next").
+    /// </summary>
+    private void CyclePane(int delta)
+    {
+        if (_tabs.Count == 0) return;
+        Tab tab = _tabs[_active];
+        if (tab.Zoomed || tab.Root is null || tab.Focused is null) return;
+
+        var panes = new List<TerminalPane>();
+        VisitPanes(tab.Root, panes.Add);
+        if (panes.Count < 2) return;
+
+        int index = panes.IndexOf(tab.Focused);
+        if (index < 0) return;
+        FocusPane(tab, panes[((index + delta) % panes.Count + panes.Count) % panes.Count]);
+    }
+
+    /// <summary>
+    /// Moves the focus to the nearest pane in the requested direction ("Focus Split: Left"
+    /// and friends). <paramref name="dx"/> is -1 / +1 for left / right and
+    /// <paramref name="dy"/> for up / down.
+    /// </summary>
+    private void FocusPaneTowards(int dx, int dy)
+    {
+        if (_tabs.Count == 0) return;
+        Tab tab = _tabs[_active];
+        if (tab.Zoomed || tab.Root is null || tab.Focused is null) return;
+
+        Rect origin = PaneBounds(tab.Focused);
+        double ox = origin.X + origin.Width / 2.0;
+        double oy = origin.Y + origin.Height / 2.0;
+
+        TerminalPane? best = null;
+        double bestDistance = double.MaxValue;
+        VisitPanes(tab.Root, candidate =>
+        {
+            if (ReferenceEquals(candidate, tab.Focused)) return;
+
+            Rect bounds = PaneBounds(candidate);
+            double cx = bounds.X + bounds.Width / 2.0;
+            double cy = bounds.Y + bounds.Height / 2.0;
+
+            // The pane has to sit on the requested side; distance then prefers the nearest
+            // neighbour and penalises panes that are far off the axis.
+            double along = dx != 0 ? (cx - ox) * dx : (cy - oy) * dy;
+            if (along <= 0.5) return;
+            double across = dx != 0 ? Math.Abs(cy - oy) : Math.Abs(cx - ox);
+            double distance = along + across;
+            if (distance >= bestDistance) return;
+            bestDistance = distance;
+            best = candidate;
+        });
+
+        if (best is not null) FocusPane(tab, best);
+    }
+
     private void CloseFocusedPane()
     {
         if (_tabs.Count == 0) return;
@@ -564,9 +701,10 @@ public sealed partial class Workspace
 
             // Tooltip mirrors Windows Terminal's _UpdateToolTip: "<shell name>: <title>"
             // unless the two are equal, then the switch-to-tab chord on an italic line.
+            // Ghostty binds Alt+1..8 to the tab slots; the ninth slot has no chord.
             string profile = tab.Focused is not null ? ShellDisplayName(tab.Focused.ShellCommand()) : string.Empty;
             string heading = profile.Length == 0 || tab.Title == profile ? tab.Title : profile + ": " + tab.Title;
-            string shortcut = index < 9 ? "ctrl+alt+" + (index + 1) : string.Empty;
+            string shortcut = index < 8 ? "alt+" + (index + 1) : string.Empty;
             string content = shortcut.Length == 0 ? heading : heading + "\n" + shortcut;
             if (content != tab.ChipTipContent)
             {

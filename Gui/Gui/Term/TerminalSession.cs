@@ -889,18 +889,30 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     /// <summary>UTF-8; empty when nothing is selected.</summary>
-    public byte[] CopySelection()
+    public byte[] CopySelection() => Format(true, GhosttyNative.FORMAT_PLAIN);
+
+    /// <summary>
+    /// Formats the current selection, or the whole terminal when
+    /// <paramref name="selectionOnly"/> is false. <paramref name="emit"/> is Ghostty's
+    /// FORMAT_PLAIN or FORMAT_VT; the result is UTF-8.
+    /// </summary>
+    public byte[] Format(bool selectionOnly, int emit)
     {
         if (_terminal == IntPtr.Zero) return Array.Empty<byte>();
 
         var selection = new GhosttyNative.GhosttySelection { Size = (nuint)sizeof(GhosttyNative.GhosttySelection) };
-        if (GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_SELECTION, &selection) != GhosttyNative.SUCCESS)
-            return Array.Empty<byte>();
+        bool hasSelection = false;
+        if (selectionOnly)
+        {
+            hasSelection = GhosttyNative.ghostty_terminal_get(
+                _terminal, GhosttyNative.TDATA_SELECTION, &selection) == GhosttyNative.SUCCESS;
+            if (!hasSelection) return Array.Empty<byte>();
+        }
 
         var options = new GhosttyNative.GhosttyFormatterTerminalOptions
         {
             Size = (nuint)sizeof(GhosttyNative.GhosttyFormatterTerminalOptions),
-            Emit = GhosttyNative.FORMAT_PLAIN,
+            Emit = emit,
             Unwrap = 1,
             Trim = 1,
             Extra = new GhosttyNative.GhosttyFormatterTerminalExtra
@@ -910,7 +922,7 @@ public sealed unsafe class TerminalSession : IDisposable
         };
 
         GhosttyNative.GhosttySelection* selectionPtr = &selection;
-        options.Selection = (IntPtr)selectionPtr;
+        if (hasSelection) options.Selection = (IntPtr)selectionPtr;
 
         IntPtr formatter = IntPtr.Zero;
         if (GhosttyNative.ghostty_formatter_terminal_new(IntPtr.Zero, out formatter, _terminal, options) != GhosttyNative.SUCCESS)
@@ -940,6 +952,58 @@ public sealed unsafe class TerminalSession : IDisposable
         {
             GhosttyNative.ghostty_formatter_free(formatter);
         }
+    }
+
+    /// <summary>The cursor cell in viewport coordinates ("adjust_selection").</summary>
+    public bool CursorCell(out ushort x, out ushort y)
+    {
+        x = 0;
+        y = 0;
+        if (_renderState == IntPtr.Zero) return false;
+
+        UpdateRenderState();
+        var cursor = new GhosttyNative.GhosttyRenderStateCursor
+        {
+            Size = (nuint)sizeof(GhosttyNative.GhosttyRenderStateCursor),
+        };
+        if (GhosttyNative.ghostty_render_state_get(
+                _renderState, GhosttyNative.RS_CURSOR, &cursor) != GhosttyNative.SUCCESS)
+        {
+            return false;
+        }
+        if (cursor.ViewportHasValue == 0) return false;
+
+        x = cursor.ViewportX;
+        y = cursor.ViewportY;
+        return true;
+    }
+
+    /// <summary>Resets the terminal state ("reset"): RIS clears the screen and every mode.</summary>
+    public void Reset()
+    {
+        if (_terminal == IntPtr.Zero) return;
+        WriteVt("\x1bc");
+        OnUpdate?.Invoke();
+    }
+
+    /// <summary>The absolute screen row where the current selection starts.</summary>
+    public bool SelectedRow(out ulong row)
+    {
+        row = 0;
+        if (_terminal == IntPtr.Zero) return false;
+
+        var selection = new GhosttyNative.GhosttySelection { Size = (nuint)sizeof(GhosttyNative.GhosttySelection) };
+        if (GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_SELECTION, &selection) != GhosttyNative.SUCCESS)
+            return false;
+
+        GhosttyNative.GhosttyPointCoordinate start;
+        if (GhosttyNative.ghostty_terminal_point_from_grid_ref(
+                _terminal, in selection.Start, GhosttyNative.POINT_SCREEN, &start) != GhosttyNative.SUCCESS)
+        {
+            return false;
+        }
+        row = start.Y;
+        return true;
     }
 
     public bool BracketedPaste()
@@ -1064,6 +1128,42 @@ public sealed unsafe class TerminalSession : IDisposable
             Tag = GhosttyNative.SCROLL_BOTTOM,
         };
         GhosttyNative.ghostty_terminal_scroll_viewport(_terminal, behavior);
+        OnUpdate?.Invoke();
+    }
+
+    /// <summary>Scrolls the viewport by one window ("scroll_page_up/down").</summary>
+    public void ScrollPage(bool up)
+    {
+        if (_terminal == IntPtr.Zero) return;
+        if (!Scrollbar(out _, out _, out ulong len) || len == 0) return;
+
+        int rows = (int)Math.Min(len, int.MaxValue);
+        Scroll(up ? -rows : rows);
+    }
+
+    /// <summary>
+    /// Scrolls to the previous or next shell prompt ("jump_to_prompt"). The terminal's
+    /// semantic marks come from the OSC 133 shell integration, so shells without it simply
+    /// do not move.
+    /// </summary>
+    public void JumpToPrompt(int delta)
+    {
+        if (_terminal == IntPtr.Zero || delta == 0) return;
+
+        var behavior = new GhosttyNative.GhosttyTerminalScrollViewport
+        {
+            Tag = GhosttyNative.SCROLL_DELTA_PROMPT,
+            Delta = (IntPtr)delta,
+        };
+        GhosttyNative.ghostty_terminal_scroll_viewport(_terminal, behavior);
+        OnUpdate?.Invoke();
+    }
+
+    /// <summary>Clears the screen and the scrollback ("clear_screen").</summary>
+    public void ClearScreen()
+    {
+        if (_terminal == IntPtr.Zero) return;
+        WriteVt("\x1b[2J\x1b[3J\x1b[H");
         OnUpdate?.Invoke();
     }
 

@@ -105,15 +105,28 @@ public partial class App : Application
     /// adopting a tab that "move tab to new window" handed over.
     /// </summary>
     internal static void OpenWindow(string? workingDirectory = null,
-        Term.Workspace.MovedTab? movedTab = null)
+        Term.Workspace.MovedTab? movedTab = null, string? command = null)
     {
-        if (Current is App app) app.ShowWindow(workingDirectory, movedTab);
+        if (Current is App app) app.ShowWindow(workingDirectory, movedTab, null, command);
+    }
+
+    /// <summary>
+    /// Closes every window ("quit"). A copy is walked because each close removes its window
+    /// from the list; the last close is what lets the process exit.
+    /// </summary>
+    internal static void CloseAllWindows()
+    {
+        if (Current is not App app) return;
+
+        var windows = new Window[app._windows.Count];
+        app._windows.CopyTo(windows);
+        foreach (Window window in windows) window.Close();
     }
 
     private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null,
-        Term.WindowState? restore = null)
+        Term.WindowState? restore = null, string? command = null)
     {
-        var window = new MainWindow(workingDirectory, movedTab, restore);
+        var window = new MainWindow(workingDirectory, movedTab, restore, command);
         _windows.Add(window);
         window.Closed += (_, _) => OnWindowClosed(window);
         window.Activate();

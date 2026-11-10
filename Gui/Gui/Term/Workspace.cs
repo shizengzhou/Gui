@@ -1,4 +1,4 @@
-﻿﻿using System;
+﻿using System;
 using Path = Microsoft.UI.Xaml.Shapes.Path;
 using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
@@ -271,6 +271,9 @@ public sealed partial class Workspace
 
     private readonly List<Tab> _tabs = new();
     private int _active;
+
+    /// <summary>The tab that was active before the current one ("last_tab").</summary>
+    private int _lastActive;
     private bool _sidebarCollapsed;
     private bool _firstSurface = true;
 
@@ -3766,12 +3769,28 @@ public sealed partial class Workspace
         AnimateZoomTransition(tab, focused, before);
     }
 
+    /// <summary>Steps the active tab by <paramref name="delta"/> and wraps around.</summary>
+    private void CycleTab(int delta)
+    {
+        int count = _tabs.Count;
+        if (count == 0) return;
+        Activate(((_active + delta) % count + count) % count);
+    }
+
+    /// <summary>Returns to the tab that was active before the current one ("last_tab").</summary>
+    private void ActivateLastTab()
+    {
+        if (_lastActive < 0 || _lastActive >= _tabs.Count || _lastActive == _active) return;
+        Activate(_lastActive);
+    }
+
     private void Activate(int index)
     {
         if (index < 0 || index >= _tabs.Count) return;
         SettleZoomTransition();
 
         Diag.Debug("tab", $"activate {index}");
+        if (_active != index) _lastActive = _active;
         _active = index;
         _ensureActiveVisible = true;
         _surfaceHost.Children.Clear();

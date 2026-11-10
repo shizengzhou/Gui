@@ -29,6 +29,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Session this window rebuilds instead of starting a fresh shell.</summary>
     private readonly Term.WindowState? _restore;
 
+    /// <summary>Command this window runs instead of the configured shell ("Open Config in New Terminal Window").</summary>
+    private readonly string? _commandOverride;
+
     /// <summary>
     /// State captured while the window is closing, for "window-save-state": AppWindow's
     /// geometry cannot be read once the window is gone, and the app persists this snapshot
@@ -44,13 +47,14 @@ public sealed partial class MainWindow : Window
     private static int _windowCount;
 
     internal MainWindow(string? workingDirectory = null, Term.Workspace.MovedTab? movedTab = null,
-        Term.WindowState? restore = null)
+        Term.WindowState? restore = null, string? command = null)
     {
         InitializeComponent();
 
         _inheritedDirectory = workingDirectory;
         _movedTab = movedTab;
         _restore = restore;
+        _commandOverride = command;
 
         // Size the window before it is shown. Doing this after Loaded (or on Activated)
         // means WinUI first displays the default-sized window and the resize lands a frame
@@ -69,6 +73,7 @@ public sealed partial class MainWindow : Window
         {
             var config = Term.Config.Load();
             if (_inheritedDirectory is not null) config.WorkingDirectory = _inheritedDirectory;
+            if (_commandOverride is not null) config.Command = _commandOverride;
             _workspace = new Term.Workspace(config, _movedTab, _restore);
             _workspace.Attach(RootGrid, this);
             ApplyStartupWindow(config, _workspace);
@@ -214,6 +219,26 @@ public sealed partial class MainWindow : Window
         catch (Exception error)
         {
             Diag.LogException("MainWindow.SizeAndCenter", error);
+        }
+    }
+
+    /// <summary>"Reset Window Size": leaves maximize/fullscreen and re-centers at the default size.</summary>
+    internal void ResetWindowSize()
+    {
+        try
+        {
+            if (AppWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen)
+                AppWindow.SetPresenter(AppWindowPresenterKind.Default);
+            if (AppWindow.Presenter is OverlappedPresenter
+                { State: OverlappedPresenterState.Maximized } presenter)
+            {
+                presenter.Restore();
+            }
+            SizeAndCenter();
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("MainWindow.ResetWindowSize", error);
         }
     }
 

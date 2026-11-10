@@ -1,4 +1,4 @@
-﻿﻿using System;
+﻿using System;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
@@ -140,6 +140,25 @@ public sealed class TerminalPane
     private int _progressValue;
 
     public string Title = string.Empty;
+
+    /// <summary>
+    /// A title the user pinned by hand ("Change Terminal Title…"). While it is set the
+    /// shell's own title reports no longer replace it.
+    /// </summary>
+    private string? _titleOverride;
+
+    /// <summary>True while Shift+arrows extend a keyboard selection.</summary>
+    private bool _keyboardSelecting;
+    private ushort _selectAnchorX;
+    private uint _selectAnchorY;
+    private ushort _selectEndX;
+    private uint _selectEndY;
+
+    /// <summary>True blocks keyboard input, IME text and pasting ("Toggle Read-Only Mode").</summary>
+    public bool ReadOnly;
+
+    /// <summary>False stops forwarding pointer input to a mouse-tracking program.</summary>
+    public bool MouseReportingEnabled = true;
 
     public Action<TerminalPane>? OnTitle;
     public Action<TerminalPane>? OnExit;
@@ -957,6 +976,35 @@ public sealed class TerminalPane
         }
     }
 
+    /// <summary>
+    /// Opens the find bar with the current selection as the query ("search_selection").
+    /// A search needle is one line, so a multi-line selection searches its first line.
+    /// </summary>
+    public void SearchSelection()
+    {
+        string text = System.Text.Encoding.UTF8.GetString(_session.CopySelection()).Trim();
+        if (text.Length == 0) return;
+
+        int lineBreak = text.IndexOfAny(new[] { '\r', '\n' });
+        if (lineBreak >= 0) text = text[..lineBreak];
+
+        ShowSearch();
+        if (_searchBox is null) return;
+        _searchBox.Text = text;
+        _searchBox.SelectAll();
+    }
+
+    /// <summary>Moves to the next or previous match while the find bar is open.</summary>
+    public void SearchNext()
+    {
+        if (_searchActive) NavigateSearch(true);
+    }
+
+    public void SearchPrevious()
+    {
+        if (_searchActive) NavigateSearch(false);
+    }
+
     /// <summary>Gives the keyboard back to the terminal without dismissing the find bar.</summary>
     private void ReleaseSearchFocus() => OnSearchFocusReleased?.Invoke(this);
 
@@ -1336,8 +1384,9 @@ public sealed class TerminalPane
             {
                 return;
             }
-            Title = _bellTitle ? BellTitlePrefix + value : value;
             _baseTitle = value;
+            if (_titleOverride is not null) return;
+            Title = _bellTitle ? BellTitlePrefix + value : value;
             OnTitle?.Invoke(this);
         };
         _session.OnBell = RingBell;
@@ -2009,6 +2058,7 @@ public sealed class TerminalPane
     public bool KeyDown(KeyRoutedEventArgs args)
     {
         if (!_ready || _session is null) return false;
+        if (ReadOnly) return true;
 
         int mods = CurrentMods();
         bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
@@ -2035,6 +2085,7 @@ public sealed class TerminalPane
     public void CommitText(string text)
     {
         if (!_ready || _session is null || text.Length == 0) return;
+        if (ReadOnly) return;
         HidePointer();
         ClearBellState();
         ClearSelectionOnTyping();
@@ -2047,6 +2098,7 @@ public sealed class TerminalPane
         if (!_config.SelectionClearOnTyping) return;
         if (!_session.HasSelection()) return;
         StopSelectionScroll();
+        _keyboardSelecting = false;
         _session.ClearSelection();
         Redraw();
     }
@@ -2060,7 +2112,78 @@ public sealed class TerminalPane
         string value = System.Text.Encoding.UTF8.GetString(text);
         if (_config.ClipboardCodepointMap.Count > 0) value = _config.ApplyClipboardCodepointMap(value);
         if (_config.ClipboardTrimTrailingSpaces) value = TrimTrailingSpaces(value);
+        CopyTextToClipboard(value);
+        ClearSelectionAfterCopy();
+    }
 
+    /// <summary>
+    /// "Copy to Clipboard": the selection when there is one, otherwise the whole screen.
+    /// </summary>
+    public void CopyToClipboard()
+    {
+        if (_session.HasSelection())
+        {
+            CopySelection();
+            return;
+        }
+
+        StopSelectionScroll();
+        byte[] text = _session.Format(false, GhosttyNative.FORMAT_PLAIN);
+        if (text.Length == 0) return;
+        CopyTextToClipboard(System.Text.Encoding.UTF8.GetString(text));
+    }
+
+    /// <summary>Copies the selection with colors as ANSI sequences.</summary>
+    public void CopySelectionAnsi()
+    {
+        StopSelectionScroll();
+        byte[] text = _session.Format(true, GhosttyNative.FORMAT_VT);
+        if (text.Length == 0) return;
+        CopyTextToClipboard(System.Text.Encoding.UTF8.GetString(text));
+        ClearSelectionAfterCopy();
+    }
+
+    /// <summary>Copies the selection as a minimal HTML document.</summary>
+    public void CopySelectionHtml()
+    {
+        StopSelectionScroll();
+        byte[] text = _session.Format(true, GhosttyNative.FORMAT_PLAIN);
+        if (text.Length == 0) return;
+
+        string plain = System.Text.Encoding.UTF8.GetString(text);
+        try
+        {
+            var package = new DataPackage();
+            package.SetText(plain);
+            package.SetHtmlFormat(HtmlFormatHelper.CreateHtmlFormat(HtmlFromPlain(plain)));
+            Clipboard.SetContent(package);
+        }
+        catch
+        {
+            // Clipboard unavailable.
+        }
+        ClearSelectionAfterCopy();
+    }
+
+    private void ClearSelectionAfterCopy()
+    {
+        if (!_config.SelectionClearOnCopy || !_session.HasSelection()) return;
+        _keyboardSelecting = false;
+        _session.ClearSelection();
+        Redraw();
+    }
+
+    /// <summary>Wraps terminal text into a preformatted HTML document.</summary>
+    internal static string HtmlFromPlain(string plain)
+    {
+        string body = System.Net.WebUtility.HtmlEncode(plain);
+        return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>" +
+               "<body><pre style=\"font-family:Consolas,monospace;white-space:pre-wrap\">" +
+               body + "</pre></body></html>";
+    }
+
+    private static void CopyTextToClipboard(string value)
+    {
         try
         {
             var package = new DataPackage();
@@ -2071,12 +2194,142 @@ public sealed class TerminalPane
         {
             // Clipboard unavailable.
         }
+    }
 
-        if (_config.SelectionClearOnCopy)
+    /// <summary>Scrolls the viewport to the oldest row ("scroll_to_top").</summary>
+    public void ScrollToTop() => _session.ScrollTo(0);
+
+    /// <summary>Scrolls the viewport to the newest row ("scroll_to_bottom").</summary>
+    public void ScrollToBottom() => _session.ScrollToBottom();
+
+    /// <summary>Scrolls the viewport by one window ("scroll_page_up/down").</summary>
+    public void ScrollPage(bool up) => _session.ScrollPage(up);
+
+    /// <summary>Jumps to the previous (-1) or next (+1) shell prompt.</summary>
+    public void JumpToPrompt(int delta) => _session.JumpToPrompt(delta);
+
+    /// <summary>Selects the whole viewport ("select_all").</summary>
+    public void SelectAll()
+    {
+        if (_cols == 0 || _rows == 0) return;
+        if (!_session.SetSelection(0, 0, (ushort)(_cols - 1), (ushort)(_rows - 1))) return;
+
+        _keyboardSelecting = false;
+        _session.UpdateRenderState();
+        Redraw();
+    }
+
+    /// <summary>
+    /// Extends the selection from the text cursor by one cell ("adjust_selection"). The
+    /// anchor is kept in screen coordinates so scrolling does not move it.
+    /// </summary>
+    public void AdjustSelection(int dx, int dy)
+    {
+        if (!_ready) return;
+        if (!_session.CursorCell(out ushort cursorX, out ushort cursorY)) return;
+        if (!_session.Scrollbar(out ulong total, out ulong offset, out ulong len)) return;
+        if (total == 0 || _cols == 0) return;
+
+        long cursorRow = (long)offset + cursorY;
+        if (!_keyboardSelecting || !_session.HasSelection())
         {
-            _session.ClearSelection();
-            Redraw();
+            _keyboardSelecting = true;
+            _selectAnchorX = cursorX;
+            _selectAnchorY = (uint)Math.Clamp(cursorRow, 0, (long)total - 1);
+            _selectEndX = cursorX;
+            _selectEndY = _selectAnchorY;
         }
+
+        long maxRow = (long)total - 1;
+        long endRow = _selectEndY;
+        long endX = _selectEndX;
+
+        if (dy != 0) endRow = Math.Clamp(endRow + dy, 0, maxRow);
+        if (dx != 0)
+        {
+            // Move across the row, wrapping so the selection can span line breaks.
+            long flat = endRow * _cols + endX + dx;
+            flat = Math.Clamp(flat, 0, Math.Max(0, (long)total * _cols - 1));
+            endRow = flat / _cols;
+            endX = flat % _cols;
+        }
+
+        _selectEndX = (ushort)Math.Clamp(endX, 0, _cols - 1);
+        _selectEndY = (uint)endRow;
+
+        if (!_session.SetSelectionScreen(_selectAnchorX, _selectAnchorY,
+                _selectEndX, _selectEndY))
+        {
+            return;
+        }
+
+        _session.UpdateRenderState();
+        UpdateScrollbar();
+        Redraw();
+    }
+
+    /// <summary>Clears the screen and the scrollback ("clear_screen").</summary>
+    public void ClearScreen()
+    {
+        _session.ClearScreen();
+        Redraw();
+    }
+
+    /// <summary>Copies the URL under the pointer ("copy_url_to_clipboard").</summary>
+    public void CopyUrlAtPointer()
+    {
+        string? url = _hoverUrl;
+        if (url is null && CellAt(_hoverPoint, out ushort x, out ushort y))
+        {
+            if (_config.LinkOsc8) url = _session.HyperlinkAt(x, y);
+            if (url is null && _config.LinkUrl) url = UrlAt(x, y);
+        }
+        if (string.IsNullOrEmpty(url)) return;
+        CopyTextToClipboard(url);
+    }
+
+    /// <summary>Pins the pane title; null returns it to the shell's own reports.</summary>
+    public void SetTitleOverride(string? title)
+    {
+        _titleOverride = string.IsNullOrWhiteSpace(title) ? null : title.Trim();
+        Title = _titleOverride ?? _baseTitle;
+        if (Title.Length > 0) OnTitle?.Invoke(this);
+    }
+
+    /// <summary>Formats the selection (or the whole terminal) for the file export commands.</summary>
+    public byte[] FormatTerminal(bool selectionOnly, int emit) => _session.Format(selectionOnly, emit);
+
+    public bool HasSelection() => _session.HasSelection();
+
+    /// <summary>Pastes a string as terminal input, honouring bracketed paste.</summary>
+    public void PasteString(string text)
+    {
+        if (ReadOnly || text.Length == 0) return;
+        _session.PasteText(System.Text.Encoding.UTF8.GetBytes(text));
+        if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
+    }
+
+    /// <summary>Pastes the current selection back into the shell ("paste_from_selection").</summary>
+    public void PasteSelection()
+    {
+        if (ReadOnly) return;
+        byte[] text = _session.CopySelection();
+        if (text.Length == 0) return;
+        _session.PasteText(text);
+        if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
+    }
+
+    /// <summary>Resets the terminal state ("Reset Terminal").</summary>
+    public void ResetTerminal()
+    {
+        _session.Reset();
+        Redraw();
+    }
+
+    /// <summary>Scrolls the viewport so the selection starts at its top edge.</summary>
+    public void ScrollToSelection()
+    {
+        if (_session.SelectedRow(out ulong row)) _session.ScrollTo(row);
     }
 
     /// <summary>Trims the whitespace that ends every line, leaving leading indentation alone.</summary>
@@ -2090,6 +2343,7 @@ public sealed class TerminalPane
 
     public void PasteFromClipboard()
     {
+        if (ReadOnly) return;
         _ = PasteAsync();
     }
 
@@ -2222,6 +2476,7 @@ public sealed class TerminalPane
     {
         if (!_ready) return;
 
+        _keyboardSelecting = false;
         ShowPointer();
         ClearBellState();
         OnFocus?.Invoke(this);
@@ -2552,6 +2807,7 @@ public sealed class TerminalPane
     /// </summary>
     private bool TryReportMouse(int action, int button, int mods, PointerPoint point)
     {
+        if (!MouseReportingEnabled) return false;
         if (!_config.MouseReporting) return false;
 
         bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;

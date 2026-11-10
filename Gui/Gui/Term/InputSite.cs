@@ -10,9 +10,9 @@ namespace Gui.Term;
 ///
 /// WinUI hands WM_SYSCHAR from its child "InputSiteWindowClass" windows to DefWindowProc,
 /// which plays the default system sound for any Alt chord that produced a character.
-/// Alt+Shift+Plus / Alt+Shift+Minus are the split-pane hotkeys, so their WM_SYSCHAR is
-/// swallowed at that window. The flag is armed only by those two keys, so Alt+Space and
-/// other Alt combinations keep their normal behaviour.
+/// Alt+Shift+Plus / Alt+Shift+Minus (splits) and Alt+1..9 (tab switching) are handled by
+/// the app, so their WM_SYSCHAR is swallowed at that window. The flag is armed only by
+/// those keys, so Alt+Space and other Alt combinations keep their normal behaviour.
 /// </summary>
 internal static class InputSite
 {
@@ -25,6 +25,8 @@ internal static class InputSite
     private const int VK_OEM_MINUS = 0xBD;
     private const int VK_ADD = 0x6B;
     private const int VK_SUBTRACT = 0x6D;
+    private const int VK_1 = 0x31;
+    private const int VK_9 = 0x39;
 
     private const uint SubclassId = 1;
 
@@ -65,18 +67,19 @@ internal static class InputSite
         return true;
     }
 
-    private static bool IsSplitKey(int key) =>
-        key is VK_OEM_PLUS or VK_OEM_MINUS or VK_ADD or VK_SUBTRACT;
+    private static bool IsSilencedKey(int key) =>
+        key is VK_OEM_PLUS or VK_OEM_MINUS or VK_ADD or VK_SUBTRACT ||
+        (key is >= VK_1 and <= VK_9);
 
     private static IntPtr OnMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam,
         IntPtr id, IntPtr data)
     {
         switch (message)
         {
-            case WM_SYSKEYDOWN when IsSplitKey(wParam.ToInt32()):
+            case WM_SYSKEYDOWN when IsSilencedKey(wParam.ToInt32()):
                 _armed = true;
                 break;
-            case WM_SYSKEYUP when IsSplitKey(wParam.ToInt32()):
+            case WM_SYSKEYUP when IsSilencedKey(wParam.ToInt32()):
                 _armed = false;
                 break;
             case WM_SYSCHAR when _armed:

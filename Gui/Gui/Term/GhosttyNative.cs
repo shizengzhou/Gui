@@ -101,6 +101,8 @@ internal static unsafe class GhosttyNative
     internal const int SCROLL_TOP = 0;
     internal const int SCROLL_BOTTOM = 1;
     internal const int SCROLL_DELTA = 2;
+    internal const int SCROLL_ROW = 3;
+    internal const int SCROLL_DELTA_PROMPT = 4;
 
     // ---- GhosttyPointTag ----
     internal const int POINT_VIEWPORT = 1;

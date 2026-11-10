@@ -429,6 +429,8 @@ internal static class Program
         new("SCROLL_TOP", "GhosttyTerminalScrollViewportTag", "TOP"),
         new("SCROLL_BOTTOM", "GhosttyTerminalScrollViewportTag", "BOTTOM"),
         new("SCROLL_DELTA", "GhosttyTerminalScrollViewportTag", "DELTA"),
+        new("SCROLL_ROW", "GhosttyTerminalScrollViewportTag", "ROW"),
+        new("SCROLL_DELTA_PROMPT", "GhosttyTerminalScrollViewportTag", "DELTA_PROMPT"),
 
         new("POINT_VIEWPORT", "GhosttyPointTag", "VIEWPORT"),
         new("POINT_SCREEN", "GhosttyPointTag", "SCREEN"),

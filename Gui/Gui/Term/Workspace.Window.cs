@@ -1,4 +1,5 @@
-﻿﻿using System;
+﻿using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI;
@@ -19,6 +20,17 @@ namespace Gui.Term;
 
 public sealed partial class Workspace
 {
+    /// <summary>True while "Toggle Float on Top" keeps the window above the others.</summary>
+    private bool _floatOnTop;
+
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private static readonly IntPtr HWND_NOTOPMOST = new(-2);
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOACTIVATE = 0x0010;
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     // ---------------- window ----------------
 
     private void OnHeaderPointerPressed(object sender, PointerRoutedEventArgs args)
@@ -115,6 +127,55 @@ public sealed partial class Workspace
     private void MinimizeWindow()
     {
         if (_window?.AppWindow.Presenter is OverlappedPresenter presenter) presenter.Minimize();
+    }
+
+    /// <summary>
+    /// "Toggle Float on Top": keeps this window above every other window until it is toggled
+    /// back.
+    /// </summary>
+    private void ToggleFloatOnTop()
+    {
+        if (_appWindow is null) return;
+        IntPtr hwnd = Win32Interop.GetWindowFromWindowId(_appWindow.Id);
+        if (hwnd == IntPtr.Zero) return;
+
+        _floatOnTop = !_floatOnTop;
+        SetWindowPos(hwnd, _floatOnTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+
+    /// <summary>"Reset Window Size": back to the default size, centered on the work area.</summary>
+    private void ResetWindowSize()
+    {
+        if (_window is MainWindow main) main.ResetWindowSize();
+    }
+
+    /// <summary>"Show On-Screen Keyboard": starts the Windows touch keyboard.</summary>
+    private void ShowOnScreenKeyboard()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("osk.exe") { UseShellExecute = true });
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.OnScreenKeyboard", error);
+        }
+    }
+
+    /// <summary>Ghostty's "close_window": closes this window (still honours confirm-close-surface).</summary>
+    private void CloseWindow() => _window?.Close();
+
+    /// <summary>Ghostty's "quit": closes every window, which is how the app exits.</summary>
+    private void QuitApplication() => App.CloseAllWindows();
+
+    /// <summary>Ghostty's "toggle_fullscreen".</summary>
+    private void ToggleFullscreen()
+    {
+        if (_appWindow is null) return;
+        _appWindow.SetPresenter(_appWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen
+            ? AppWindowPresenterKind.Default
+            : AppWindowPresenterKind.FullScreen);
     }
 
     /// <summary>
@@ -398,6 +459,9 @@ public sealed partial class Workspace
         if (IsDown(VirtualKey.Shift)) mods |= GhosttyNative.MODS_SHIFT;
         if (IsDown(VirtualKey.Control)) mods |= GhosttyNative.MODS_CTRL;
         if (IsDown(VirtualKey.Menu)) mods |= GhosttyNative.MODS_ALT;
+        // Ghostty calls the Win key "super"; a few default bindings use it.
+        if (IsDown(VirtualKey.LeftWindows) || IsDown(VirtualKey.RightWindows))
+            mods |= GhosttyNative.MODS_SUPER;
         return mods;
     }
 
@@ -446,25 +510,90 @@ public sealed partial class Workspace
         bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
         bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
         bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
+        bool super = (mods & GhosttyNative.MODS_SUPER) != 0;
 
-        // Windows Terminal's tab hotkeys: Ctrl+Alt+1..9 jump straight to the tab in that
-        // slot. Out-of-range digits fall through to the shell.
-        if (ctrl && alt && !shift)
+        // Ghostty's Alt+1..8 jump straight to the tab in that slot; Alt+9 returns to the
+        // previous tab. An out-of-range slot is still consumed (Ghostty binds the chord
+        // regardless of how many tabs exist).
+        if (alt && !ctrl && !shift)
         {
             int slot = (int)args.Key - (int)VirtualKey.Number1;
-            if (slot >= 0 && slot < 9 && slot < _tabs.Count)
+            if (slot >= 0 && slot < 8)
             {
-                Activate(slot);
+                if (slot < _tabs.Count) Activate(slot);
+                return true;
+            }
+            if (args.Key == VirtualKey.Number9)
+            {
+                ActivateLastTab();
                 return true;
             }
         }
 
+        // Ghostty's Ctrl+Alt+arrows move the focus between splits.
+        if (ctrl && alt && !shift)
+        {
+            switch (args.Key)
+            {
+                case VirtualKey.Left:
+                    FocusPaneTowards(-1, 0);
+                    return true;
+                case VirtualKey.Right:
+                    FocusPaneTowards(1, 0);
+                    return true;
+                case VirtualKey.Up:
+                    FocusPaneTowards(0, -1);
+                    return true;
+                case VirtualKey.Down:
+                    FocusPaneTowards(0, 1);
+                    return true;
+            }
+        }
+
+        // Ghostty's viewport scrolling: Shift+Home/End/PageUp/PageDown. Shift+Insert pastes
+        // the current selection on non-macOS.
+        if (shift && !ctrl && !alt)
+        {
+            TerminalPane? scrollPane = ActivePane();
+            switch (args.Key)
+            {
+                case VirtualKey.Home:
+                    scrollPane?.ScrollToTop();
+                    return true;
+                case VirtualKey.End:
+                    scrollPane?.ScrollToBottom();
+                    return true;
+                case VirtualKey.PageUp:
+                    scrollPane?.ScrollPage(true);
+                    return true;
+                case VirtualKey.PageDown:
+                    scrollPane?.ScrollPage(false);
+                    return true;
+                case VirtualKey.Left:
+                    scrollPane?.AdjustSelection(-1, 0);
+                    return true;
+                case VirtualKey.Right:
+                    scrollPane?.AdjustSelection(1, 0);
+                    return true;
+                case VirtualKey.Up:
+                    scrollPane?.AdjustSelection(0, -1);
+                    return true;
+                case VirtualKey.Down:
+                    scrollPane?.AdjustSelection(0, 1);
+                    return true;
+                case VirtualKey.Insert:
+                    scrollPane?.PasteSelection();
+                    return true;
+            }
+        }
+
         // Windows Terminal font zoom: Ctrl+Plus / Ctrl+Minus resize the focused pane's font
-        // by one point; Ctrl+0 restores the configured size.
+        // by one point; Ctrl+0 restores the configured size. Ghostty's Ctrl+Enter toggles
+        // fullscreen and Ctrl+PageUp/PageDown switch tabs here too.
         if (ctrl && !alt)
         {
             int keyCode = (int)args.Key;
-            TerminalPane? pane = _tabs.Count > 0 ? _tabs[_active].Focused : null;
+            TerminalPane? pane = ActivePane();
             if (keyCode == 0xBB || args.Key == VirtualKey.Add)
             {
                 pane?.AdjustFontSize(1.0f);
@@ -478,6 +607,81 @@ public sealed partial class Workspace
             if (args.Key == VirtualKey.Number0 || keyCode == 0x60)
             {
                 pane?.ResetFontSize();
+                return true;
+            }
+
+            if (!shift)
+            {
+                switch (args.Key)
+                {
+                    case VirtualKey.Enter:
+                        ToggleFullscreen();
+                        return true;
+                    case VirtualKey.Insert:
+                        pane?.CopyToClipboard();
+                        return true;
+                    case VirtualKey.PageUp:
+                        CycleTab(-1);
+                        return true;
+                    case VirtualKey.PageDown:
+                        CycleTab(1);
+                        return true;
+                }
+            }
+        }
+
+        // Ghostty's open_config: Ctrl+, opens the config with the OS editor. Ctrl+Shift+,
+        // reloads it (handled below).
+        if (ctrl && !alt && !shift && (int)args.Key == 0xBC)
+        {
+            OpenConfig();
+            return true;
+        }
+
+        // Ghostty's write_screen_file:open.
+        if (ctrl && alt && shift && args.Key == VirtualKey.J)
+        {
+            WriteTerminalFile(false, string.Empty, "open");
+            return true;
+        }
+
+        // Ghostty's super bindings: resize splits with Win+Ctrl+Shift+arrows and
+        // write_screen_file:copy with Ctrl+Shift+Win+J. The Win key combinations may be
+        // claimed by the shell before they reach the app.
+        if (super && ctrl && shift && !alt)
+        {
+            switch (args.Key)
+            {
+                case VirtualKey.Left:
+                    ResizeSplit(-1, 0);
+                    return true;
+                case VirtualKey.Right:
+                    ResizeSplit(1, 0);
+                    return true;
+                case VirtualKey.Up:
+                    ResizeSplit(0, -1);
+                    return true;
+                case VirtualKey.Down:
+                    ResizeSplit(0, 1);
+                    return true;
+                case VirtualKey.J:
+                    WriteTerminalFile(false, string.Empty, "copy");
+                    return true;
+            }
+        }
+
+        // Ghostty's Ctrl+Super+[ / ] cycle the split focus.
+        if (ctrl && super && !alt && !shift)
+        {
+            int keyCode = (int)args.Key;
+            if (keyCode == 0xDB)
+            {
+                CyclePane(-1);
+                return true;
+            }
+            if (keyCode == 0xDD)
+            {
+                CyclePane(1);
                 return true;
             }
         }
@@ -519,6 +723,21 @@ public sealed partial class Workspace
                 case VirtualKey.W:
                     CloseFocusedPane();
                     return true;
+                case VirtualKey.Q:
+                    QuitApplication();
+                    return true;
+                case VirtualKey.O:
+                    SplitFocused(SplitDirection.Right);
+                    return true;
+                case VirtualKey.E:
+                    SplitFocused(SplitDirection.Down);
+                    return true;
+                case VirtualKey.A:
+                    ActivePane()?.SelectAll();
+                    return true;
+                case VirtualKey.J:
+                    WriteTerminalFile(false, string.Empty, "paste");
+                    return true;
                 case VirtualKey.Enter:
                     TogglePaneZoom();
                     return true;
@@ -526,25 +745,41 @@ public sealed partial class Workspace
                     ShowCommandPalette();
                     return true;
                 case VirtualKey.F:
-                    if (_tabs.Count > 0) _tabs[_active].Focused?.ShowSearch();
+                    ActivePane()?.ShowSearch();
                     return true;
                 case VirtualKey.C:
-                    if (_tabs.Count > 0) _tabs[_active].Focused?.CopySelection();
+                    ActivePane()?.CopySelection();
                     return true;
                 case VirtualKey.V:
-                    if (_tabs.Count > 0) _tabs[_active].Focused?.PasteFromClipboard();
+                    ActivePane()?.PasteFromClipboard();
                     return true;
                 case VirtualKey.B:
                     ToggleSidebar();
+                    return true;
+                case VirtualKey.Left:
+                    CycleTab(-1);
+                    return true;
+                case VirtualKey.Right:
+                    CycleTab(1);
+                    return true;
+                case VirtualKey.PageUp:
+                    MoveTab(_active, _active - 1);
+                    return true;
+                case VirtualKey.PageDown:
+                    MoveTab(_active, _active + 1);
+                    return true;
+                case VirtualKey.Up:
+                    ActivePane()?.JumpToPrompt(-1);
+                    return true;
+                case VirtualKey.Down:
+                    ActivePane()?.JumpToPrompt(1);
                     return true;
             }
         }
 
         if (ctrl && args.Key == VirtualKey.Tab && _tabs.Count > 0)
         {
-            int count = _tabs.Count;
-            int next = shift ? (_active + count - 1) % count : (_active + 1) % count;
-            Activate(next);
+            CycleTab(shift ? -1 : 1);
             return true;
         }
 
