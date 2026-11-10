@@ -87,6 +87,12 @@ public partial class App : Application
     {
         try
         {
+            // Read the shell's icon while the first window is still being built: the chip of a
+            // restored background tab is drawn long before its shell starts, and a cold icon
+            // extraction would land after it. Warming the cache here lets the chip take the
+            // finished icon straight out of it.
+            _ = Term.ShellIcon.GetAsync(Term.TerminalSession.PreferredShellPath(_config.Command));
+
             // "window-save-state": reopen exactly what was on screen when the last window
             // closed. A missing or unreadable file falls back to one fresh window.
             List<Term.WindowState>? restored =

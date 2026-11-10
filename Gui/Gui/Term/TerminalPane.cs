@@ -738,7 +738,8 @@ public sealed class TerminalPane
     public FrameworkElement Visual => _host;
 
     /// <summary>Icon of the shell this pane spawned, shared with the tab chip.</summary>
-    public ImageSource? ShellIconSource => _shellIconSource;
+    public ImageSource? ShellIconSource =>
+        _shellIconSource ?? (_shellIconPath.Length > 0 ? ShellIcon.TryGetCached(_shellIconPath) : null);
 
     public CellMetrics CellMetricsDip => _renderer.CellMetrics;
     public int Columns => _cols;
@@ -2099,7 +2100,12 @@ public sealed class TerminalPane
         _shellIcon.Source = source;
         _shellIcon.Visibility = Visibility.Visible;
         _iconFallback.Visibility = Visibility.Collapsed;
-        OnShellIcon?.Invoke(this);
+
+        // A cached icon resolves synchronously, so by the time it is ready the pane's tab does
+        // not exist yet and nobody is listening. Announcing on the next dispatcher turn gives
+        // the chip that is built right after this constructor the chance to hear it.
+        if (_dispatcher is null || !_dispatcher.TryEnqueue(() => OnShellIcon?.Invoke(this)))
+            OnShellIcon?.Invoke(this);
     }
 
     // ---------------- session inheritance ----------------

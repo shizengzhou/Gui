@@ -1463,10 +1463,93 @@ public sealed unsafe class TerminalSession : IDisposable
 
     /// <summary>
     /// The executable a pane will run, resolved without starting it: the configured command
-    /// when there is one, the default shell otherwise.
+    /// when there is one, the default shell otherwise. A command word such as "pwsh" is looked
+    /// up through PATH, because the pane's icon needs a file to read, not a command to run.
     /// </summary>
-    internal static string PreferredShellPath(string command) =>
-        string.IsNullOrEmpty(command) ? DefaultShellPath() : ExecutableToken(command);
+    internal static string PreferredShellPath(string command)
+    {
+        string path = string.IsNullOrEmpty(command) ? DefaultShellPath() : ExecutableToken(command);
+        return FollowAlias(ResolveExecutable(path));
+    }
+
+    private static string ResolveExecutable(string path)
+    {
+        if (path.Length == 0 || Path.IsPathRooted(path)) return path;
+
+        // .exe is appended only when the name has no extension of its own, so "cmd" and
+        // "cmd.exe" both land on the real file.
+        var buffer = new StringBuilder(1024);
+        uint length = SearchPath(null, path, ".exe", (uint)buffer.Capacity, buffer, out _);
+        return length > 0 && length < buffer.Capacity ? buffer.ToString(0, (int)length) : path;
+    }
+
+    /// <summary>
+    /// An app-execution alias ("%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe") is a
+    /// zero-length stub that has no icon of its own: extracting from it yields the generic
+    /// application icon. The alias names the real executable in its reparse data, so the icon
+    /// comes from there; a restored tab would otherwise show the generic glyph until its shell
+    /// started and reported the real path.
+    /// </summary>
+    private static string FollowAlias(string path)
+    {
+        if (path.Length == 0 || !File.Exists(path)) return path;
+        try
+        {
+            if (new FileInfo(path).Length != 0) return path;
+        }
+        catch (Exception)
+        {
+            return path;
+        }
+
+        string? target = AliasTarget(path);
+        return target is not null && File.Exists(target) ? target : path;
+    }
+
+    private const uint FSCTL_GET_REPARSE_POINT = 0x000900A8;
+    private const uint IO_REPARSE_TAG_APPEXECLINK = 0x8000001B;
+    private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+
+    private static string? AliasTarget(string path)
+    {
+        IntPtr handle = CreateFileW(path, 0, 7, IntPtr.Zero, 3,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+        if (handle == new IntPtr(-1)) return null;
+
+        try
+        {
+            var data = new byte[16 * 1024];
+            if (!DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, IntPtr.Zero, 0, data, data.Length,
+                    out int written, IntPtr.Zero))
+                return null;
+
+            if (written < 20 || BitConverter.ToUInt32(data, 0) != IO_REPARSE_TAG_APPEXECLINK) return null;
+
+            // Header (4 tag + 2 length + 2 reserved), a 4-byte version, then NUL-terminated
+            // UTF-16 strings; the executable's full path is the first rooted one.
+            var text = new StringBuilder();
+            for (int i = 16; i + 1 < written; i += 2)
+            {
+                char c = (char)(data[i] | (data[i + 1] << 8));
+                if (c != '\0')
+                {
+                    text.Append(c);
+                    continue;
+                }
+
+                string candidate = text.ToString();
+                text.Clear();
+                if (candidate.Length > 0 && Path.IsPathRooted(candidate)) return candidate;
+            }
+
+            return null;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
 
     public static string DefaultShellPath()
     {
@@ -1719,4 +1802,17 @@ public sealed unsafe class TerminalSession : IDisposable
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern uint SearchPath(string? path, string fileName, string? extension, uint bufferLength, StringBuilder buffer, out IntPtr filePart);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr attributes,
+        uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(IntPtr device, uint code, IntPtr input, uint inputSize,
+        byte[] output, int outputSize, out int returned, IntPtr overlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 }

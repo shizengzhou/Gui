@@ -689,8 +689,11 @@ public sealed partial class Workspace
                 : tab.Hovered ? ChromeTextStrongBrush() : ChromeTextBodyBrush();
             tab.ChipText.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
 
-            // The chip icon follows the focused pane's shell, like its header.
-            ImageSource? iconSource = tab.Focused?.ShellIconSource;
+            // The chip icon follows the tab's pane, like its header. A tab that was never
+            // activated (opened by the CLI, or restored at startup) has no focused pane yet,
+            // so it falls back to the one that will be shown when the tab is opened.
+            TerminalPane? shown = tab.Focused ?? FirstPane(tab.Root);
+            ImageSource? iconSource = shown?.ShellIconSource;
             if (!ReferenceEquals(iconSource, tab.ChipIconSource))
             {
                 tab.ChipIconSource = iconSource;
@@ -707,8 +710,8 @@ public sealed partial class Workspace
                 }
             }
 
-            // The chip reports what the focused pane's program says it is doing (OSC 7501).
-            if (tab.Focused?.ProgramStatus is { State: not ProgramState.Idle } reported)
+            // The chip reports what that pane's program says it is doing (OSC 7501).
+            if (shown?.ProgramStatus is { State: not ProgramState.Idle } reported)
             {
                 tab.ChipStatusDot.Visibility = Visibility.Visible;
                 tab.ChipStatusDot.Fill = new SolidColorBrush(Theme.ProgramStatusColor(reported.State));

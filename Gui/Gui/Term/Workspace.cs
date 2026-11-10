@@ -3776,10 +3776,12 @@ public sealed partial class Workspace
         };
         pane.OnShellIcon = p =>
         {
+            // A background tab has no focused pane yet, and its chip still has to pick the
+            // icon up as soon as it is read, not when the tab is finally opened.
             foreach (Tab tab in _tabs)
             {
                 if (!TabContainsPane(tab, p)) continue;
-                if (ReferenceEquals(tab.Focused, p)) UpdateHeaders();
+                UpdateHeaders();
                 return;
             }
         };
@@ -3788,7 +3790,7 @@ public sealed partial class Workspace
             foreach (Tab tab in _tabs)
             {
                 if (!TabContainsPane(tab, p)) continue;
-                if (ReferenceEquals(tab.Focused, p)) UpdateHeaders();
+                UpdateHeaders();
                 return;
             }
         };

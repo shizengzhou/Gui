@@ -41,6 +41,17 @@ internal static class ShellIcon
     // ImageSource instances are UI-thread affine, so this cache has no lock.
     private static readonly Dictionary<string, ImageSource?> SourceCache = new();
 
+    /// <summary>
+    /// The icon if this process already decoded it. A pane whose icon finished before its tab
+    /// chip existed has no notification left to send, so the chip asks for the cached one
+    /// instead of falling back to the generic glyph.
+    /// </summary>
+    public static ImageSource? TryGetCached(string executable)
+    {
+        if (string.IsNullOrEmpty(executable)) return null;
+        return SourceCache.TryGetValue(executable.ToLowerInvariant(), out ImageSource? cached) ? cached : null;
+    }
+
     public static async Task<ImageSource?> GetAsync(string executable)
     {
         if (string.IsNullOrEmpty(executable)) return null;
