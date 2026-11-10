@@ -2006,11 +2006,11 @@ public sealed partial class Workspace
         tab.Chip.CornerRadius = CompactDensity && top
             ? new CornerRadius(8, 8, 0, 0)
             : new CornerRadius(8);
-        tab.Chip.Padding = top ? new Thickness(11, 0, 10, 0) : new Thickness(8, 0, 8, 0);
+        // Symmetric insets: the shell icon (16 DIP) and the close button (16 DIP) sit the
+        // same distance from their edge, so the chip reads as one balanced row.
+        tab.Chip.Padding = top ? new Thickness(11, 0, 11, 0) : new Thickness(8, 0, 8, 0);
         tab.Chip.Margin = top ? new Thickness(0, 0, 2, 0) : new Thickness(0);
         tab.Chip.MaxWidth = top ? 220 : double.PositiveInfinity;
-        if (tab.ChipClose is not null)
-            tab.ChipClose.Margin = top ? new Thickness(0, 0, 8, 0) : new Thickness(0);
     }
 
     /// <summary>
@@ -2401,7 +2401,7 @@ public sealed partial class Workspace
 
         Tab tab = AddTab(
             state.Title.Length > 0 ? state.Title : ShellDisplayName(_config.Command),
-            state.TitleOverride, focused, root);
+            state.TitleOverride, focused, root, append: true);
         if (!state.Zoomed) return;
         tab.Zoomed = true;
         Relayout(tab);
@@ -2473,7 +2473,13 @@ public sealed partial class Workspace
         return $"── restored · session ended {when} ──";
     }
 
-    private Tab AddTab(string title, string? titleOverride, TerminalPane focused, SplitNode root)
+    /// <param name="append">
+    /// Restored tabs keep the order they were saved in; "window-new-tab-position" only applies
+    /// to tabs the user opens. Otherwise every restored tab is inserted after the active one
+    /// and the strip comes back rearranged.
+    /// </param>
+    private Tab AddTab(string title, string? titleOverride, TerminalPane focused, SplitNode root,
+        bool append = false)
     {
         Diag.Debug("tab", $"create start #{_tabs.Count + 1}");
         var tab = new Tab
@@ -2718,7 +2724,7 @@ public sealed partial class Workspace
         tab.ChipFocus.KeyDown += (_, args) => OnChipKeyDown(self, args);
 
         AutomationProperties.SetName(tab.ChipClose, Strings.CloseTab);
-        int index = TabInsertIndex();
+        int index = append ? _tabs.Count : TabInsertIndex();
         _chipHost.Children.Insert(index, tab.ChipFocus);
 
         _tabs.Insert(index, tab);
