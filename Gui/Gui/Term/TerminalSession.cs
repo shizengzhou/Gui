@@ -1223,11 +1223,32 @@ public sealed unsafe class TerminalSession : IDisposable
         OnUpdate?.Invoke();
     }
 
-    /// <summary>Clears the screen and the scrollback ("clear_screen").</summary>
+    /// <summary>True while the shell is sitting at its prompt (shell integration only).</summary>
+    public bool AtPrompt => _marks.AtPrompt;
+
+    /// <summary>
+    /// Clears the screen and the scrollback ("clear_screen"), following Ghostty: at a prompt
+    /// the screen is erased and the shell is handed a form feed (Ctrl+L) so it paints a fresh
+    /// prompt, because an emulator that moves the cursor behind the shell's back leaves every
+    /// later redraw offset from the real position. Away from a prompt only the rows above the
+    /// cursor go, so whatever the program is drawing keeps its place.
+    /// </summary>
     public void ClearScreen()
     {
         if (_terminal == IntPtr.Zero) return;
-        WriteVt("\x1b[2J\x1b[3J\x1b[H");
+
+        WriteVt("\x1b[3J");
+
+        if (AtPrompt)
+        {
+            WriteVt("\x1b[2J");
+            WriteInput(new byte[] { 0x0C });
+        }
+        else
+        {
+            WriteVt("\x1b[1J");
+        }
+
         OnUpdate?.Invoke();
     }
 

@@ -127,6 +127,13 @@ internal sealed class ShellMarkParser
     /// <summary>True between an OSC 133 C and the matching D.</summary>
     public bool CommandRunning { get; private set; }
 
+    /// <summary>
+    /// True once an OSC 133 A mark said the shell is showing its prompt and no command has
+    /// started since. It is what a "clear screen" needs: whether the cursor belongs to an
+    /// idle prompt (which the shell can repaint) or to a running program.
+    /// </summary>
+    public bool AtPrompt { get; private set; }
+
     /// <summary>Raised on the UI thread when a command closed with OSC 133 D.</summary>
     public Action<int, TimeSpan>? CommandFinished;
 
@@ -151,6 +158,7 @@ internal sealed class ShellMarkParser
         _collect = false;
         _started = false;
         CommandRunning = false;
+        AtPrompt = false;
         ProgressState = 0;
         ProgressValue = 0;
     }
@@ -271,6 +279,7 @@ internal sealed class ShellMarkParser
             case 'A':
                 // A new prompt without a D means the previous command's end mark was lost.
                 CommandRunning = false;
+                AtPrompt = true;
                 _started = false;
                 ClearProgress();
                 PromptStarted?.Invoke();
@@ -283,6 +292,7 @@ internal sealed class ShellMarkParser
                     _startedTicks = Environment.TickCount64;
                 }
                 CommandRunning = true;
+                AtPrompt = false;
                 break;
 
             case 'D':

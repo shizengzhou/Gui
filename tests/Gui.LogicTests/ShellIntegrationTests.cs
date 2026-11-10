@@ -51,12 +51,16 @@ public class ShellIntegrationTests
 
         Feed(parser, "\u001b]133;A\u0007prompt\u001b]133;B\u0007");
         Assert.False(parser.CommandRunning);
+        Assert.True(parser.AtPrompt);
 
         Feed(parser, "\u001b]133;C\u0007output");
         Assert.True(parser.CommandRunning);
+        Assert.False(parser.AtPrompt);
 
         Feed(parser, "\u001b]133;D;7\u0007");
         Assert.False(parser.CommandRunning);
+        // D closes the command, but only the next A mark means the prompt is on screen.
+        Assert.False(parser.AtPrompt);
         Assert.NotNull(finished);
         Assert.Equal(7, finished!.Value.Exit);
         Assert.True(finished.Value.Duration >= TimeSpan.Zero);
