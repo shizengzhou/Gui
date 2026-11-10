@@ -906,13 +906,15 @@ public sealed partial class Workspace
     /// chrome reads consistently. Returns the label so the maximize button can follow the
     /// window state.
     /// </summary>
-    private static TextBlock CaptionTip(Border button, string text)
+    private TextBlock CaptionTip(Border button, string text)
     {
         var label = new TextBlock
         {
             Text = text,
             FontSize = 12,
-            Foreground = new SolidColorBrush(Theme.TextStrong()),
+            // Shared themed brush: a theme switch repaints it in place, a captured
+            // SolidColorBrush would keep the old theme's color.
+            Foreground = TextStrongBrush(),
         };
         var tip = new StackPanel { Spacing = 2 };
         tip.Children.Add(label);
