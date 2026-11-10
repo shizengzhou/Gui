@@ -31,7 +31,22 @@ internal static unsafe class GhosttyNative
     internal const int OPT_SCROLLBACK_MAX_LINES = 28;
     internal const int OPT_CLIPBOARD_READ = 38;
     internal const int OPT_CLIPBOARD_WRITE_MAX_BYTES = 39;
+    internal const int OPT_PROGRAM_STATUS = 46;
     internal const int OPT_RESIZE_WINDOW = 47;
+
+    // ---- GhosttyProgramStatusState ----
+    internal const int PROGRAM_STATUS_IDLE = 0;
+    internal const int PROGRAM_STATUS_WORKING = 1;
+    internal const int PROGRAM_STATUS_DONE = 2;
+    internal const int PROGRAM_STATUS_BLOCKED = 3;
+    internal const int PROGRAM_STATUS_ERROR = 4;
+    internal const int PROGRAM_STATUS_CLEAR = 5;
+
+    // ---- GhosttyProgramStatusKind ----
+    internal const int PROGRAM_STATUS_KIND_NONE = 0;
+    internal const int PROGRAM_STATUS_KIND_PERMISSION = 1;
+    internal const int PROGRAM_STATUS_KIND_QUESTION = 2;
+    internal const int PROGRAM_STATUS_KIND_AUTH = 3;
 
     // ---- GhosttyClipboardLocation / results ----
     internal const int CLIPBOARD_LOCATION_STANDARD = 0;
@@ -424,6 +439,28 @@ internal static unsafe class GhosttyNative
     /// <summary>OSC 52 / kitty clipboard callback: <paramref name="request"/> is a sized struct.</summary>
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void ClipboardFn(IntPtr terminal, IntPtr userdata, IntPtr request);
+
+    /// <summary>OSC 7501 report: <paramref name="report"/> is a sized struct.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void ProgramStatusFn(IntPtr terminal, IntPtr userdata, IntPtr report);
+
+    /// <summary>
+    /// One validated program status report (OSC 7501). The strings are UTF-8 and only
+    /// valid during the callback. Absent text is empty, absent kind is none, and absent
+    /// progress is -1.
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit, Size = 88)]
+    internal struct GhosttyTerminalProgramStatus
+    {
+        [FieldOffset(0)] public nuint Size;
+        [FieldOffset(8)] public int State;
+        [FieldOffset(12)] public int Kind;
+        [FieldOffset(16)] public sbyte Progress;
+        [FieldOffset(24)] public GhosttyString Id;
+        [FieldOffset(40)] public GhosttyString App;
+        [FieldOffset(56)] public GhosttyString Title;
+        [FieldOffset(72)] public GhosttyString Message;
+    }
 
     /// <summary>Answers a clipboard request; must be called before the callback returns.</summary>
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]

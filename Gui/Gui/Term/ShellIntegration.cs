@@ -141,6 +141,9 @@ internal sealed class ShellMarkParser
     /// <summary>Raised when an OSC 9;4 report changes the state or the percentage.</summary>
     public Action<int, int>? ProgressChanged;
 
+    /// <summary>Raised on OSC 133 A: a shell prompt is back, so the command is over.</summary>
+    public event Action? PromptStarted;
+
     public void Reset()
     {
         _state = State.Ground;
@@ -270,6 +273,7 @@ internal sealed class ShellMarkParser
                 CommandRunning = false;
                 _started = false;
                 ClearProgress();
+                PromptStarted?.Invoke();
                 break;
 
             case 'C':

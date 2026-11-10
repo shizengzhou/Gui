@@ -222,6 +222,19 @@ public static class Theme
         CustomTheme ? Tint(Light ? (byte)0x3D : (byte)0x4D, AccentRgb())
                     : Light ? Rgba(0x3D, 0, 95, 184) : Rgba(0x4D, 96, 205, 255);
 
+    /// <summary>
+    /// Colour of a program status report (OSC 7501): the theme accent while work runs, and
+    /// Windows' semantic amber/red/green for the states that need attention or are done.
+    /// </summary>
+    public static Color ProgramStatusColor(ProgramState state) => state switch
+    {
+        ProgramState.Working => Accent(),
+        ProgramState.Blocked => Rgba(255, 0xC2, 0x7C, 0x0E),
+        ProgramState.Error => Rgba(255, 0xC4, 0x2B, 0x1C),
+        ProgramState.Done => Rgba(255, 0x0F, 0x7B, 0x0F),
+        _ => TextFaint(),
+    };
+
     // --- hover fills -----------------------------------------------------------
     public static Color ChipHover() => ChipHoverFor(Light);
 

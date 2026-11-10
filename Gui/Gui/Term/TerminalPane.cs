@@ -140,6 +140,11 @@ public sealed class TerminalPane
     private int _progressState;   // 0 none, 1 normal, 2 error, 3 indeterminate, 4 paused
     private int _progressValue;
 
+    // OSC 7501: what the running program says it is doing, shown in the header.
+    private StackPanel? _statusBadge;
+    private FontIcon? _statusIcon;
+    private TextBlock? _statusText;
+
     public string Title = string.Empty;
 
     /// <summary>
@@ -550,8 +555,48 @@ public sealed class TerminalPane
             VerticalAlignment = VerticalAlignment.Center,
         };
         actionHost.Children.Add(_actions);
-        Grid.SetColumn(actionHost, 1);
-        header.Children.Add(actionHost);
+
+        // OSC 7501: the program's own account of what it is doing, left of the actions so
+        // it cannot push them off the header. Hidden until a report arrives.
+        var statusBadge = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+        _statusBadge = statusBadge;
+        _statusIcon = new FontIcon
+        {
+            Glyph = "\uE73E",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 11,
+            Foreground = faint,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _statusText = new TextBlock
+        {
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = faint,
+            MaxWidth = 240,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        statusBadge.Children.Add(_statusIcon);
+        statusBadge.Children.Add(_statusText);
+
+        var rightHost = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        rightHost.Children.Add(statusBadge);
+        rightHost.Children.Add(actionHost);
+        Grid.SetColumn(rightHost, 1);
+        header.Children.Add(rightHost);
 
         // Ghostty's split handle is the split's own title bar: grabbing the shell icon or
         // the working directory drags the pane. Only that content is the grab area, so it
@@ -1269,6 +1314,53 @@ public sealed class TerminalPane
         _progressBar.Value = _progressValue;
     }
 
+    // ---------------- program status (OSC 7501) ----------------
+
+    /// <summary>The OSC 7501 report to show, or null when the program reported nothing.</summary>
+    public ProgramStatusInfo? ProgramStatus => _session?.ProgramStatus;
+
+    /// <summary>Raised when the visible OSC 7501 report changed, so tab chips can follow.</summary>
+    public Action<TerminalPane>? OnProgramStatusChanged;
+
+    /// <summary>
+    /// Draws the program's own status in the header: its message or title, plus a percentage
+    /// while it works. An idle program shows nothing, and the icon alone is enough when the
+    /// report carried no text.
+    /// </summary>
+    private void UpdateStatusBadge()
+    {
+        if (_statusBadge is null || _statusIcon is null || _statusText is null) return;
+
+        ProgramStatusInfo? reported = _session?.ProgramStatus;
+        if (reported is not { } status || status.State == ProgramState.Idle)
+        {
+            _statusBadge.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        string text = status.Message.Length > 0 ? status.Message
+            : status.Title.Length > 0 ? status.Title
+            : status.App;
+        if (status.Progress >= 0)
+            text = text.Length == 0 ? $"{status.Progress}%" : $"{text} {status.Progress}%";
+
+        _statusBadge.Visibility = Visibility.Visible;
+        _statusIcon.Glyph = StatusGlyph(status.State);
+        _statusIcon.Foreground = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
+        _statusText.Text = text;
+        _statusText.Foreground = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
+        _statusText.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private static string StatusGlyph(ProgramState state) => state switch
+    {
+        ProgramState.Working => "\uE895",  // Sync
+        ProgramState.Blocked => "\uE72E",  // Lock
+        ProgramState.Error => "\uE783",    // Error
+        ProgramState.Done => "\uE73E",     // CheckMark
+        _ => "\uE946",                     // Info
+    };
+
     // ---------------- lifecycle ----------------
 
     /// <summary>
@@ -1355,6 +1447,7 @@ public sealed class TerminalPane
         session.OnBell = null;
         session.OnCommandFinished = null;
         session.OnProgress = null;
+        session.OnProgramStatus = null;
         session.OnExit = null;
         session.OnTitle = null;
         return session;
@@ -1409,6 +1502,11 @@ public sealed class TerminalPane
         _session.OnBell = RingBell;
         _session.OnCommandFinished = (exit, duration) => OnCommandFinished?.Invoke(this, exit, duration);
         _session.OnProgress = OnProgressReported;
+        _session.OnProgramStatus = () =>
+        {
+            UpdateStatusBadge();
+            OnProgramStatusChanged?.Invoke(this);
+        };
         _session.OnExit = () =>
         {
             // wait-after-command keeps the surface (and its scrollback) open after the shell exits.
@@ -1451,6 +1549,7 @@ public sealed class TerminalPane
         _session.OnBell = null;
         _session.OnCommandFinished = null;
         _session.OnProgress = null;
+        _session.OnProgramStatus = null;
         _session.OnExit = null;
         _session.OnTitle = null;
         if (_sessionReleased) return;
@@ -1738,7 +1837,13 @@ public sealed class TerminalPane
     {
         if (_focused == focused) return;
         _focused = focused;
-        if (focused) ClearBellState();
+        if (focused)
+        {
+            ClearBellState();
+            // The user is looking at the surface: a finished or failed program report has
+            // served its purpose.
+            _session?.AcknowledgeProgramStatus();
+        }
 
         // Only the focused pane blinks. The unfocused caret stays solid, so the inactive
         // pane does not animate while the user works elsewhere.
@@ -1917,6 +2022,7 @@ public sealed class TerminalPane
         UpdateFrameBorder();
         _progressBar.Foreground = new SolidColorBrush(Theme.Accent());
         UpdateProgressBar();
+        UpdateStatusBadge();
         _dim.Background = new SolidColorBrush(DimFillColor());
         _canvas.ClearColor = CanvasClearColor();
         if (_linkPreview is not null)

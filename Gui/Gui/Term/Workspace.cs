@@ -78,6 +78,9 @@ public sealed partial class Workspace
         public Image ChipIcon = null!;
         public FontIcon ChipIconFallback = null!;
         public ImageSource? ChipIconSource;
+
+        /// <summary>OSC 7501 status dot on the shell icon (blocked, failed, done, working).</summary>
+        public Ellipse ChipStatusDot = null!;
         public Border ChipClose = null!;
         public Border ChipDivider = null!;
         public ContentControl ChipFocus = null!;
@@ -2544,6 +2547,20 @@ public sealed partial class Workspace
             Visibility = Visibility.Collapsed,
         };
         iconSlot.Children.Add(tab.ChipIcon);
+
+        // The chip reports the focused pane's OSC 7501 status without widening the chip:
+        // a dot on the corner of the shell icon, coloured by the state.
+        tab.ChipStatusDot = new Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, -1, -1),
+            Visibility = Visibility.Collapsed,
+        };
+        iconSlot.Children.Add(tab.ChipStatusDot);
+
         chipGrid.Children.Add(iconSlot);
 
         tab.ChipText = Label(tab.Title, 12, ChromeTextBodyBrush());
@@ -3730,6 +3747,15 @@ public sealed partial class Workspace
             }
         };
         pane.OnShellIcon = p =>
+        {
+            foreach (Tab tab in _tabs)
+            {
+                if (!TabContainsPane(tab, p)) continue;
+                if (ReferenceEquals(tab.Focused, p)) UpdateHeaders();
+                return;
+            }
+        };
+        pane.OnProgramStatusChanged = p =>
         {
             foreach (Tab tab in _tabs)
             {

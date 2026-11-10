@@ -699,6 +699,17 @@ public sealed partial class Workspace
                 }
             }
 
+            // The chip reports what the focused pane's program says it is doing (OSC 7501).
+            if (tab.Focused?.ProgramStatus is { State: not ProgramState.Idle } reported)
+            {
+                tab.ChipStatusDot.Visibility = Visibility.Visible;
+                tab.ChipStatusDot.Fill = new SolidColorBrush(Theme.ProgramStatusColor(reported.State));
+            }
+            else
+            {
+                tab.ChipStatusDot.Visibility = Visibility.Collapsed;
+            }
+
             // Tooltip mirrors Windows Terminal's _UpdateToolTip: "<shell name>: <title>"
             // unless the two are equal, then the switch-to-tab chord on an italic line.
             // Ghostty binds Alt+1..8 to the tab slots; the ninth slot has no chord.

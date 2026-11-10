@@ -56,6 +56,7 @@ public sealed unsafe class TerminalSession : IDisposable
     private readonly GhosttyNative.NotifyFn _bell;
     private readonly GhosttyNative.ClipboardFn _clipboardWrite;
     private readonly GhosttyNative.ClipboardFn _clipboardRead;
+    private readonly GhosttyNative.ProgramStatusFn _programStatusFn;
 
     // "clipboard-write" / "clipboard-read": allow, deny, or ask. "ask" has no prompt in this
     // build (the reply must be synchronous), so it behaves like deny.
@@ -68,6 +69,9 @@ public sealed unsafe class TerminalSession : IDisposable
 
     // OSC 133 marks emitted by the injected shell integration. UI-thread only.
     private readonly ShellMarkParser _marks = new();
+
+    // OSC 7501 program status records. UI-thread only.
+    private readonly ProgramStatusTracker _programStatus = new();
 
     /// <summary>The saved screen and scrollback, written once the pane's real grid is known.</summary>
     private string _restoreText = string.Empty;
@@ -87,8 +91,14 @@ public sealed unsafe class TerminalSession : IDisposable
     /// <summary>OSC 9;4: the program reported a new progress state and percentage.</summary>
     public Action<int, int>? OnProgress;
 
+    /// <summary>OSC 7501: the record a person should see changed (or went away).</summary>
+    public Action? OnProgramStatus;
+
     /// <summary>True between the command's output start (C) and its finish (D).</summary>
     public bool CommandRunning => _marks.CommandRunning;
+
+    /// <summary>The OSC 7501 report to show, or null when the program reported nothing.</summary>
+    public ProgramStatusInfo? ProgramStatus => _programStatus.Current;
 
     public IntPtr Terminal => _terminal;
     public IntPtr RenderState => _renderState;
@@ -115,8 +125,14 @@ public sealed unsafe class TerminalSession : IDisposable
         _bell = OnBellChanged;
         _clipboardWrite = OnClipboardWrite;
         _clipboardRead = OnClipboardRead;
+        _programStatusFn = OnProgramStatusReport;
         _marks.CommandFinished = (exit, duration) => OnCommandFinished?.Invoke(exit, duration);
         _marks.ProgressChanged = (state, value) => OnProgress?.Invoke(state, value);
+        // A new prompt means the command that reported "working"/"blocked" is over.
+        _marks.PromptStarted += () =>
+        {
+            if (_programStatus.ClearBusy()) OnProgramStatus?.Invoke();
+        };
 
         if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out _terminal, 80, 24) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_terminal_new failed");
@@ -142,6 +158,9 @@ public sealed unsafe class TerminalSession : IDisposable
         SetFunctionPointer(GhosttyNative.OPT_BELL, _bell);
         SetFunctionPointer(GhosttyNative.OPT_CLIPBOARD_WRITE, _clipboardWrite);
         SetFunctionPointer(GhosttyNative.OPT_CLIPBOARD_READ, _clipboardRead);
+        // Setting the callback also makes the library answer "OSC 7501 ; ?" through the
+        // write-PTY callback, so a program can ask whether the protocol is supported.
+        SetFunctionPointer(GhosttyNative.OPT_PROGRAM_STATUS, _programStatusFn);
 
         ApplyTheme(Theme.Terminal);
     }
@@ -286,6 +305,8 @@ public sealed unsafe class TerminalSession : IDisposable
         Post?.Invoke(() =>
         {
             Drain();
+            // Nothing is running any more; finished and failed reports stay for the user.
+            if (_programStatus.ClearBusy()) OnProgramStatus?.Invoke();
             OnExit?.Invoke();
         });
     }
@@ -442,6 +463,49 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     private void OnBellChanged(IntPtr terminal, IntPtr userdata) => OnBell?.Invoke();
+
+    // ---------------- program status (OSC 7501) ----------------
+
+    /// <summary>
+    /// One validated report. CLEAR is not a state but a removal request; the protocol keeps
+    /// one record per id, so the tracker replaces the record wholesale.
+    /// </summary>
+    private unsafe void OnProgramStatusReport(IntPtr terminal, IntPtr userdata, IntPtr reportPointer)
+    {
+        if (reportPointer == IntPtr.Zero) return;
+        var report = *(GhosttyNative.GhosttyTerminalProgramStatus*)reportPointer;
+
+        if (report.State == GhosttyNative.PROGRAM_STATUS_CLEAR)
+        {
+            if (_programStatus.Clear(ReadString(report.Id))) OnProgramStatus?.Invoke();
+            return;
+        }
+        if (report.State < GhosttyNative.PROGRAM_STATUS_IDLE ||
+            report.State > GhosttyNative.PROGRAM_STATUS_ERROR)
+        {
+            return;
+        }
+
+        var info = new ProgramStatusInfo(
+            (ProgramState)report.State,
+            report.Kind >= GhosttyNative.PROGRAM_STATUS_KIND_NONE
+                && report.Kind <= GhosttyNative.PROGRAM_STATUS_KIND_AUTH
+                ? (ProgramKind)report.Kind
+                : ProgramKind.None,
+            report.Progress is >= 0 and <= 100 ? report.Progress : -1,
+            ReadString(report.Id),
+            ReadString(report.App),
+            ReadString(report.Title),
+            ReadString(report.Message));
+
+        if (_programStatus.Apply(info)) OnProgramStatus?.Invoke();
+    }
+
+    /// <summary>The user looked at this surface: finished and failed reports can go away.</summary>
+    public void AcknowledgeProgramStatus()
+    {
+        if (_programStatus.Acknowledge()) OnProgramStatus?.Invoke();
+    }
 
     // ---------------- clipboard (OSC 52 / kitty) ----------------
 
