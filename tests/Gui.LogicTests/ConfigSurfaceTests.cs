@@ -80,7 +80,8 @@ public class ConfigSurfaceTests : IDisposable
         foreach (ConfigOption option in ConfigSchema.Ghostty)
         {
             if (skip.Contains(option.Name)) continue;
-            text.Append(option.Name).Append(" = ").Append(Sample(option.Kind)).Append('\n');
+            string sample = option.Name == "language" ? "en" : Sample(option.Kind);
+            text.Append(option.Name).Append(" = ").Append(sample).Append('\n');
         }
 
         Config config = Config.Load(Write(text.ToString()));
@@ -613,17 +614,28 @@ public class ConfigSurfaceTests : IDisposable
     [Fact]
     public void LanguageFollowsTheSystemUnlessOverridden()
     {
-        // With no explicit value the detected system language is used.
+        // An absent or empty value follows the detected system language.
         Assert.Equal(Config.DetectSystemLanguage(), Config.Load(Write(string.Empty)).Language);
+        Assert.Equal(Config.DetectSystemLanguage(), Config.Load(Write("language =\n")).Language);
 
         Assert.Equal(Language.Chinese, Config.Load(Write("language = zh-CN\n")).Language);
-        Assert.Equal(Language.Chinese, Config.Load(Write("language = zh\n")).Language);
-        Assert.Equal(Language.Chinese, Config.Load(Write("language = chinese\n")).Language);
-        Assert.Equal(Language.Chinese, Config.Load(Write("language = zh-Hans\n")).Language);
+        Assert.Equal(Language.Chinese, Config.Load(Write("language = zh-cn\n")).Language);
+        Assert.Equal(Language.English, Config.Load(Write("language = en\n")).Language);
 
-        // Any other tag keeps English, even when the system language is Chinese.
-        Assert.Equal(Language.English, Config.Load(Write("language = de\n")).Language);
+        // Only those two spellings are accepted; everything else falls back to English.
+        Assert.Equal(Language.English, Config.Load(Write("language = zh\n")).Language);
         Assert.Equal(Language.English, Config.Load(Write("language = en-GB\n")).Language);
+        Assert.Equal(Language.English, Config.Load(Write("language = chinese\n")).Language);
+    }
+
+    [Fact]
+    public void AnUnsupportedLanguageWarnsAndFallsBackToEnglish()
+    {
+        Config config = Config.Load(Write("language = de\n"));
+
+        Assert.Equal(Language.English, config.Language);
+        Assert.Contains(config.Diagnostics,
+            d => d.Key == "language" && d.Severity == ConfigSeverity.Warning);
     }
 
     [Fact]

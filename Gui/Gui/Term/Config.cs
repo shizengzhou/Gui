@@ -112,7 +112,7 @@ public sealed class Config
     public const string DefaultTheme = "light:" + LightThemeName + ",dark:" + DarkThemeName;
 
     public string Command = string.Empty;          // empty: auto-detect pwsh/powershell/cmd
-    public Language Language = Language.English;   // "language"; English is the default
+    public Language Language = Language.English;   // "language"; unset follows the system
     public string InitialCommand = string.Empty;   // empty: same as Command
     public string WorkingDirectory = string.Empty; // empty: %USERPROFILE%
     public string WindowTitle = string.Empty;      // empty: follow the active pane title
@@ -721,6 +721,16 @@ public sealed class Config
     private static bool Validate(ConfigOption option, string value, int line, out string reason)
     {
         reason = string.Empty;
+
+        // "language" is the one free-text option with a fixed vocabulary: an empty value
+        // falls back to the system language, so anything else has to name English or Chinese.
+        if (option.Name == "language")
+        {
+            if (ParseLanguage(value) is not null) return true;
+            reason = "expected en or zh-CN (leave empty to follow the system language)";
+            return false;
+        }
+
         switch (option.Kind)
         {
             case ConfigKind.Bool:
@@ -758,7 +768,11 @@ public sealed class Config
     private void Resolve()
     {
         Command = Last("command") ?? string.Empty;
-        Language = ParseLanguage(Last("language")) ?? DetectSystemLanguage();
+        // An unset option follows the system language; an explicit value this build does not
+        // ship falls back to English (the warning comes from Validate).
+        Language = Last("language") is { } language
+            ? ParseLanguage(language) ?? Language.English
+            : DetectSystemLanguage();
         InitialCommand = Last("initial-command") ?? string.Empty;
         WorkingDirectory = Last("working-directory") ?? string.Empty;
         WindowTitle = Last("title") ?? string.Empty;
@@ -1217,18 +1231,19 @@ public sealed class Config
     // ---------------- value shapes ----------------
 
     /// <summary>
-    /// "language" takes a BCP-47 style tag. Chinese is the only translation this build
-    /// ships, so every other tag falls back to English. Null means the option was not set,
-    /// in which case the system language decides.
+    /// "language" names the UI language explicitly: "zh-CN" selects the Chinese translation
+    /// and "en" selects English. Null means the option was not set or is not one of those
+    /// two spellings; <see cref="Resolve"/> decides between the system language and the
+    /// English fallback for the two cases.
     /// </summary>
     private static Language? ParseLanguage(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
 
         string text = value.Trim().ToLowerInvariant();
-        if (text.StartsWith("zh", StringComparison.Ordinal) || text is "chinese" or "中文" or "简体中文")
-            return Language.Chinese;
-        return Language.English;
+        if (text == "zh-cn") return Language.Chinese;
+        if (text == "en") return Language.English;
+        return null;
     }
 
     /// <summary>
