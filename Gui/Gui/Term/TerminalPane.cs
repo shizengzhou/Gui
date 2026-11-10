@@ -84,6 +84,9 @@ public sealed class TerminalPane
 
     /// <summary>True once the session was handed to another pane (a tab that moved windows).</summary>
     private bool _sessionReleased;
+
+    /// <summary>True once the pane stopped its shell; Close is idempotent.</summary>
+    private bool _closed;
     private bool _focused;
     private bool _hovered;
     private bool _selecting;
@@ -1517,6 +1520,10 @@ public sealed class TerminalPane
     public void Close()
     {
         if (!_ready && _session is null) return;
+        // Closing a tab and closing the split inside it can both reach the same pane; the
+        // shell behind it must go exactly once.
+        if (_closed) return;
+        _closed = true;
         _ready = false;
         _layoutSuspended = 0;
         ShowPointer();

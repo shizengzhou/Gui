@@ -324,6 +324,11 @@ public sealed partial class Workspace
         {
             Tab tab = _tabs[index];
             if (!TabContainsPane(tab, pane)) continue;
+
+            // The pane is leaving the tab whichever way the tree ends up, so its shell stops
+            // here; a pane that is dropped without this keeps its ConPTY host for good.
+            pane.Close();
+
             if (tab.Root is null || tab.Root.Pane is not null)
             {
                 CloseTab(index);
@@ -537,6 +542,9 @@ public sealed partial class Workspace
         {
             RetireExit(pane);
             _closingPanes.Remove(pane);
+            // The tab is leaving the tree, so its shells have to stop here: nothing else
+            // reaches them, and a ConPTY that stays alive keeps its console host too.
+            pane.Close();
         });
         StopChipSpring(closing);
 
