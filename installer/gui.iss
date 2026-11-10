@@ -22,11 +22,27 @@
   #define PublishDir "..\Gui\Gui\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish"
 #endif
 
+; The Setup.exe's own resource version: digits and dots only, so a pre-release suffix such as
+; "-beta.1" is stripped by build-installer.ps1 and passed as /DVerFile=...
+#ifndef VerFile
+  #define VerFile AppVersion
+#endif
+
 [Setup]
 AppId={{5F0C7B2E-3A61-4C9D-8E24-9B7D1A6F0C58}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppName}
+AppCopyright={#AppName}
+; Without these the setup program's file properties are empty and Explorer's tooltip reports
+; "File version: 0.0.0.0"; the app's own exe gets its version from -p:Version in the publish.
+VersionInfoVersion={#VerFile}
+VersionInfoProductVersion={#VerFile}
+VersionInfoTextVersion={#AppVersion}
+VersionInfoCompany={#AppName}
+VersionInfoProductName={#AppName}
+VersionInfoDescription={#AppName} Setup
+VersionInfoOriginalFileName={#AppName}-{#AppVersion}-x64-setup.exe
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -43,6 +59,8 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppExe}
+; Same mark as the exe, taken from the source tree so a stale payload cannot pick an old one.
+SetupIconFile=..\Gui\Gui\Assets\app.ico
 CloseApplications=yes
 RestartApplications=no
 

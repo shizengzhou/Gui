@@ -5,6 +5,13 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>Gui</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The app icon (installer, taskbar and alt-tab come from this embedded resource).
+         Regenerate it with: python installer/make-icon.py Gui/Gui/Assets -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- Without this the informational version becomes "1.2.3+<commit>", which ends up in the
+         exe's Product version in Explorer. The build number belongs in the build log, not in
+         a property sheet. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Platforms>x86;x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>

@@ -54,6 +54,9 @@ _ref/
 .screenshots/
 .probe/
 
+# Python scratch from installer/make-icon.py
+__pycache__/
+
 # OS junk
 Thumbs.db
 desktop.ini

@@ -63,6 +63,17 @@ public sealed partial class MainWindow : Window
         else RestoreGeometry(_restore);
 
         AppWindow.Closing += (_, _) => Snapshot = CaptureState();
+
+        // The window has no system title bar, so nothing copies the exe's icon onto the HWND.
+        // Windows paints the taskbar thumbnail's header and Alt+Tab from WM_GETICON, which is
+        // empty until the window sets one; the taskbar button itself uses the exe and looked
+        // fine without this.
+        string icon = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+        if (System.IO.File.Exists(icon))
+        {
+            AppWindow.SetIcon(icon);
+            AppWindow.SetTaskbarIcon(icon);
+        }
     }
 
     private void OnTerminalLoaded(object sender, RoutedEventArgs args)
