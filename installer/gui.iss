@@ -1,7 +1,7 @@
 ﻿; Inno Setup script for the Gui terminal (x64).
 ;
 ; Build the payload first, then compile this script:
-;   dotnet publish Gui/Gui/Gui.csproj -c Release -p:Platform=x64 -p:PublishTrimmed=false
+;   dotnet publish Gui/Gui/Gui.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64
 ;   iscc installer/gui.iss /DAppVersion=1.0.0
 ;
 ; The app is unpackaged and self-contained, so the payload directory already carries the
@@ -15,7 +15,12 @@
 
 #define AppName "Gui"
 #define AppExe "Gui.exe"
-#define PublishDir "..\Gui\Gui\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish"
+; Where the publish profile dropped the payload. The profile's PublishDir has no platform
+; folder, unlike a plain "dotnet publish -p:Platform=x64"; override with /DPublishDir=... if
+; you published elsewhere.
+#ifndef PublishDir
+  #define PublishDir "..\Gui\Gui\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish"
+#endif
 
 [Setup]
 AppId={{5F0C7B2E-3A61-4C9D-8E24-9B7D1A6F0C58}

@@ -2255,6 +2255,34 @@ public sealed partial class Workspace
         return live.Length == 0 ? ShellDisplayName(_config.Command) : live;
     }
 
+    /// <summary>
+    /// Opens a tab on behalf of gui-cli's "+new-tab": the caller may pin the directory, the
+    /// command and the title; everything else follows this window's config.
+    /// </summary>
+    internal void OpenTab(string? workingDirectory, string? command, string? title)
+    {
+        Config config = NewTabConfig(ActivePane());
+        if (ReferenceEquals(config, _config))
+        {
+            // NewTabConfig hands back the shared instance when nothing is inherited; the
+            // overrides below must not leak into the window's config.
+            config = new Config();
+            config.CopyFrom(_config);
+        }
+
+        if (!string.IsNullOrWhiteSpace(workingDirectory)) config.WorkingDirectory = workingDirectory!;
+        if (!string.IsNullOrWhiteSpace(command)) config.Command = command!;
+
+        var pane = new TerminalPane(config);
+        WirePane(pane);
+
+        bool named = !string.IsNullOrWhiteSpace(title);
+        if (named) pane.SetTitleOverride(title);
+
+        AddTab(named ? title! : ShellDisplayName(config.Command), named ? title : null, pane,
+            new SplitNode { Pane = pane });
+    }
+
     private Tab NewTab()
     {
         var pane = new TerminalPane(NewTabConfig(ActivePane()));

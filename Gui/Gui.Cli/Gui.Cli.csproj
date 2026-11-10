@@ -35,6 +35,7 @@
     <Compile Include="../Gui/Term/ConfigSchema.cs" Link="ConfigSchema.cs" />
     <Compile Include="../Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../Gui/Term/Keybinds.cs" Link="Keybinds.cs" />
+    <Compile Include="../Gui/Term/IpcProtocol.cs" Link="IpcProtocol.cs" />
     <Compile Include="../Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />
   </ItemGroup>
 </Project>

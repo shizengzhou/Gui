@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.UI.Xaml;
 
 namespace Gui;
@@ -16,6 +17,15 @@ public partial class App : Application
     /// Closed handler removes it again so closing the last one lets the process exit.
     /// </summary>
     private readonly List<Window> _windows = new();
+
+    /// <summary>
+    /// The window `gui-cli +new-tab` targets: the last one that was activated. Null until the
+    /// first window appears, at which point the newest window is used instead.
+    /// </summary>
+    private MainWindow? _active;
+
+    /// <summary>The gui-cli control channel, started with the first window.</summary>
+    private Term.IpcServer? _ipc;
 
     /// <summary>The config read at startup; "window-save-state" and language live here.</summary>
     private readonly Term.Config _config;
@@ -90,6 +100,11 @@ public partial class App : Application
             {
                 ShowWindow(null);
             }
+            Microsoft.UI.Dispatching.DispatcherQueue? queue =
+                Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            if (queue is not null)
+                _ipc = Term.IpcServer.Start(Term.IpcProtocol.PipeName(), queue, HandleIpcRequest);
+
             Diag.Log("App.OnLaunched", "activated");
         }
         catch (Exception error)
@@ -123,12 +138,36 @@ public partial class App : Application
         foreach (Window window in windows) window.Close();
     }
 
+    /// <summary>
+    /// Runs one gui-cli request on the UI thread. The returned string is what the CLI prints
+    /// on stderr; null means the request succeeded.
+    /// </summary>
+    private string? HandleIpcRequest(Term.IpcProtocol.Request request)
+    {
+        if (!string.Equals(request.Action, "new-tab", StringComparison.Ordinal))
+            return $"unknown action '{request.Action}'";
+
+        MainWindow? target = _active ?? _windows.OfType<MainWindow>().LastOrDefault();
+        if (target?.Workspace is not { } workspace) return "no window is open";
+
+        workspace.OpenTab(request.WorkingDirectory, request.Command, request.Title);
+        target.Activate();
+        Diag.Log("ipc",
+            $"new-tab cwd={request.WorkingDirectory ?? "-"} command={request.Command ?? "-"} title={request.Title ?? "-"}");
+        return null;
+    }
+
     private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null,
         Term.WindowState? restore = null, string? command = null)
     {
         var window = new MainWindow(workingDirectory, movedTab, restore, command);
         _windows.Add(window);
         window.Closed += (_, _) => OnWindowClosed(window);
+        window.Activated += (_, args) =>
+        {
+            if (args.WindowActivationState != WindowActivationState.Deactivated) _active = window;
+        };
+
         window.Activate();
         MarkSessionDirty();
     }

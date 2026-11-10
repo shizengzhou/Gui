@@ -70,8 +70,13 @@
   <PropertyGroup>
     <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
-    <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
-    <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
+
+    <!-- Never trim. gui-cli.exe shares this folder's runtime, and the trimmer only knows
+         about Gui's own IL: it strips members of System.Private.CoreLib that gui-cli calls
+         but Gui never does (System.Range.StartAt disappears and "+show-config" dies with
+         MissingMethodException at startup). Trimming saves ~2 MB of the ~176 MB folder, so
+         the trade is not worth a second binary that breaks on unpublishable APIs. -->
+    <PublishTrimmed>False</PublishTrimmed>
   </PropertyGroup>
 
   <!-- ReferenceOutputAssembly=false keeps gui-cli.dll out of the app's compile references,
