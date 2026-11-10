@@ -68,6 +68,7 @@ public sealed class TerminalPane
     private bool _handleDragging;
     private Point _handlePressPoint;
     private readonly List<ActionVisual> _actionVisuals = new();
+    private Keybinds _keybinds = null!;
 
     private readonly DispatcherQueue? _dispatcher;
     private DispatcherQueueTimer? _blinkTimer;
@@ -188,6 +189,8 @@ public sealed class TerminalPane
         public TextBlock TipTitle = null!;
         public TextBlock TipKey = null!;
         public Func<string> Tip = () => string.Empty;
+        public string? ActionId;
+        public string FallbackShortcut = string.Empty;
     }
 
     /// <summary>
@@ -244,6 +247,7 @@ public sealed class TerminalPane
         string? restoredSnapshot = null)
     {
         _config = config;
+        _keybinds = new Keybinds(config);
         _restoreBanner = restoreBanner;
         RestoredSnapshotName = restoredSnapshot;
         if (config.FontSize > 0) _fontSizeDip = config.FontSizeDip;
@@ -527,16 +531,16 @@ public sealed class TerminalPane
         };
         _actionsInset = 0.0;
 
-        AddAction(SplitIcon(true, iconFaint, 12.0), () => Strings.SplitRight, "alt+shift+plus",
+        AddAction(SplitIcon(true, iconFaint, 12.0), () => Strings.SplitRight, "new_split:right", "alt+shift+plus",
             () => OnSplitRight?.Invoke(this));
-        AddAction(SplitIcon(false, iconFaint, 12.0), () => Strings.SplitDown, "alt+shift+-",
+        AddAction(SplitIcon(false, iconFaint, 12.0), () => Strings.SplitDown, "new_split:down", "alt+shift+-",
             () => OnSplitDown?.Invoke(this));
 
         _zoomIcon = StyledIcon(iconFaint, 12.0);
         _zoomIcon.Data = ZoomGeometry(false, 12.0);
-        _zoomButton = AddAction(_zoomIcon, () => Strings.ToggleZoom, "ctrl+shift+enter",
+        _zoomButton = AddAction(_zoomIcon, () => Strings.ToggleZoom, "toggle_split_zoom", "ctrl+shift+enter",
             () => OnMaximize?.Invoke(this));
-        _closeButton = AddAction(CloseIcon(iconFaint, 11.0), () => Strings.ClosePane, "ctrl+shift+w",
+        _closeButton = AddAction(CloseIcon(iconFaint, 11.0), () => Strings.ClosePane, "close_surface", "ctrl+shift+w",
             () => OnClosePane?.Invoke(this));
 
         // The action buttons keep the arrow cursor: the header's move cursor stops at this
@@ -804,7 +808,18 @@ public sealed class TerminalPane
         if (dragging) OnDragHandleDrop?.Invoke(this);
     }
 
-    private Border AddAction(Path icon, Func<string> tip, string shortcut, Action handler)
+    /// <summary>The tooltips show the chord the config leaves active for the action.</summary>
+    internal void ApplyKeybinds()
+    {
+        _keybinds = new Keybinds(_config);
+        foreach (ActionVisual action in _actionVisuals)
+        {
+            if (action.ActionId is not null)
+                action.TipKey.Text = _keybinds.Label(action.ActionId, action.FallbackShortcut);
+        }
+    }
+
+    private Border AddAction(Path icon, Func<string> tip, string actionId, string shortcut, Action handler)
     {
         var button = new Border
         {
@@ -826,7 +841,7 @@ public sealed class TerminalPane
         };
         var tipKey = new TextBlock
         {
-            Text = shortcut,
+            Text = _keybinds.Label(actionId, shortcut),
             FontSize = 11,
             Foreground = new SolidColorBrush(Theme.TextFaint()),
             FontStyle = FontStyle.Italic,
@@ -862,6 +877,8 @@ public sealed class TerminalPane
             TipTitle = tipTitle,
             TipKey = tipKey,
             Tip = tip,
+            ActionId = actionId,
+            FallbackShortcut = shortcut,
         });
         return button;
     }

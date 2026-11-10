@@ -136,7 +136,7 @@
 - [ ] `class` — 应用窗口类名（X11 WM_CLASS）
 - [ ] `x11-instance-name` — X11 WM_CLASS 实例名（仅 X11）
 - [x] `working-directory` — 启动后切换到的目录
-- [ ] `keybind` — 键绑定（`trigger=action`）
+- [x] `keybind` — 键绑定（`trigger=action`，支持 `clear` 与 `trigger=` 解绑；见 `Gui/Gui/Term/Keybinds.cs`）
 - [ ] `key-remap` — 应用层修饰键重映射
 - [x] `window-padding-x` — 水平内边距；**单位 pt**（与 Ghostty 一致），单个值或 `left,right`；`Term/Config.cs` 的 `PaddingDips` 按 `floor(pt × dpi / 72)` 折算成物理像素，再除以缩放比例得到布局用的 DIP
 - [x] `window-padding-y` — 垂直内边距；**单位 pt**，单个值或 `top,bottom`，换算方式同上

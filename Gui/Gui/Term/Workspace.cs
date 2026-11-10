@@ -338,6 +338,7 @@ public sealed partial class Workspace
         _sidebarWidth = Math.Max(MinSidebarWidth(), SidebarWidthFromConfig());
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _appliedLanguage = Strings.Current;
+        RefreshKeybinds();
     }
 
     /// <summary>The config value for the tab rail; anything unknown means the top.</summary>
@@ -502,6 +503,7 @@ public sealed partial class Workspace
     {
         Config fresh = Config.Load();
         _config.CopyFrom(fresh);
+        RefreshKeybinds();
 
         // Split panes keep their own copy of the config (their session command and working
         // directory are per pane), so the reload has to be pushed into them before anything
@@ -531,6 +533,7 @@ public sealed partial class Workspace
                 pane.ApplyFont();
                 pane.ApplyScrollSettings();
                 pane.ApplyClipboardSettings();
+                pane.ApplyKeybinds();
             });
 
         // The chrome is rebuilt here, so a failure must not take the app down with it.
@@ -544,11 +547,18 @@ public sealed partial class Workspace
 
         if (languageChanged)
             Diag.Guard("ws.language", ApplyLanguage);
+
+        // The palette chips and pane tooltips mirror the configured keybind lines, so the
+        // layer is rebuilt with the fresh map. This is also where a changed language lands,
+        // because BuildPalette re-reads every Strings property.
+        if (_paletteLayer is not null)
+            _body.Children.Remove(_paletteLayer);
+        Diag.Guard("ws.palette", BuildPalette);
     }
 
     /// <summary>
     /// Re-labels everything this app draws itself: pane tooltips, tab automation names and
-    /// the command palette. Terminal content and the running shells are untouched.
+    /// the command palette.
     /// </summary>
     private void ApplyLanguage()
     {
@@ -556,11 +566,6 @@ public sealed partial class Workspace
             ForEachPane(tab, pane => pane.ApplyLanguage());
 
         UpdateHeaders();
-
-        // BuildPalette creates a fresh layer, so the old one has to leave the tree first.
-        if (_paletteLayer is not null)
-            _contentStack.Children.Remove(_paletteLayer);
-        BuildPalette();
     }
 
     /// <summary>

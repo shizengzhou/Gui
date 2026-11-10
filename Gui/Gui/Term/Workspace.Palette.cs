@@ -177,6 +177,14 @@ public sealed partial class Workspace
 
     private PaletteItem MakeRow(string text, string shortcut, List<PaletteItem> owner, Action? action)
     {
+        // The row doubles as the keybind handler for its action. The chip shows the chord
+        // the config leaves active for that action instead of a copy of the built-in one.
+        string? actionId = KeybindActionForLabel(text);
+        if (actionId is not null && action is not null)
+            _keybindActions[actionId] = action;
+        if (actionId is not null)
+            shortcut = _keybinds.Label(actionId, shortcut);
+
         Border row = PaletteRowBorder();
         row.BorderBrush = ClearBrush();
         row.Background = ClearBrush();
@@ -350,6 +358,7 @@ public sealed partial class Workspace
         // lists hold the old rows as well and the highlight lands on one that is no longer in
         // the tree, leaving the visible list with no selection.
         ResetPaletteState();
+        RegisterBuiltInKeybindActions();
 
         _paletteLayer = new Grid
         {
@@ -660,6 +669,9 @@ public sealed partial class Workspace
                 ApplyThemeChoice(themeName, lightMode);
             });
         }
+
+        // Every row has registered its handler by now; aliases need the final table.
+        LinkKeybindAliases();
 
         _paletteEmpty = Label(Strings.NoMatchingCommands, 12, TextFaintBrush());
         _paletteEmpty.Margin = new Thickness(12, 22, 12, 22);

@@ -19,6 +19,7 @@ internal static class Program
         "\n" +
         "Actions (prefixed with '+', like ghostty):\n" +
         "  +show-config    print the effective configuration in Ghostty format\n" +
+        "  +list-keybinds  print the key bindings this build honors, as Ghostty keybind lines\n" +
         "  +help           list the available actions\n" +
         "  +version        print the version\n" +
         "\n" +
@@ -44,6 +45,9 @@ internal static class Program
         {
             case "+show-config":
                 return ShowConfig.Run(rest);
+
+            case "+list-keybinds":
+                return ListKeybinds.Run(rest);
 
             case "+help":
             case "--help":

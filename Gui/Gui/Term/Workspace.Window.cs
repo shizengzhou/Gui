@@ -510,6 +510,42 @@ public sealed partial class Workspace
         bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
         bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
         bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
+
+        // A "keybind" line wins over the built-in chord, and an explicit unbind hands the
+        // key back to the shell instead of running the default action.
+        KeybindMatch match = _keybinds.Resolve(mods, args.Key, out string? boundAction);
+        if (match == KeybindMatch.Action)
+        {
+            RunKeybindAction(boundAction);
+            return true;
+        }
+        if (match == KeybindMatch.Unbound) return false;
+
+        // "keybind = clear" drops the built-in chords; only configured lines remain.
+        if (!_keybinds.Cleared && DefaultShortcut(mods, args))
+            return true;
+
+        // Plain Ctrl+V is swallowed so it cannot paste into any focused text box; it does
+        // not reach the shell either.
+        if (ctrl && !shift && !alt && args.Key == VirtualKey.V) return true;
+
+        // A focused tab chip keeps its roving navigation (arrows, Enter, Delete).
+        if (IsChipFocused()) return false;
+
+        if (_tabs.Count > 0 && _tabs[_active].Focused is { } focused)
+            return focused.KeyDown(args);
+        return false;
+    }
+
+    /// <summary>
+    /// The chords this build ships with. They are checked after the configured bindings, so
+    /// a user line can both add a chord and remove one (with "trigger=").
+    /// </summary>
+    private bool DefaultShortcut(int mods, KeyRoutedEventArgs args)
+    {
+        bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
+        bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
+        bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
         bool super = (mods & GhosttyNative.MODS_SUPER) != 0;
 
         // Ghostty's Alt+1..8 jump straight to the tab in that slot; Alt+9 returns to the
@@ -783,15 +819,6 @@ public sealed partial class Workspace
             return true;
         }
 
-        // Plain Ctrl+V is swallowed so it cannot paste into any focused text box; it does
-        // not reach the shell either.
-        if (ctrl && !shift && !alt && args.Key == VirtualKey.V) return true;
-
-        // A focused tab chip keeps its roving navigation (arrows, Enter, Delete).
-        if (IsChipFocused()) return false;
-
-        if (_tabs.Count > 0 && _tabs[_active].Focused is { } focused)
-            return focused.KeyDown(args);
         return false;
     }
 

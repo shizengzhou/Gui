@@ -3,7 +3,9 @@
     <!-- A console-subsystem companion so stdout reaches the calling shell (a WinExe/GUI
          subsystem binary cannot write to a parent console). Ships next to Gui.exe. -->
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- The Windows TFM, not plain net8.0: Term/Keybinds.cs reads VirtualKey, which comes
+         from the Windows SDK projection. No Windows App SDK or WinUI package is involved. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <AssemblyName>gui-cli</AssemblyName>
     <RootNamespace>Gui.Cli</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -28,9 +30,11 @@
        runtime bootstrap. LoadRaw() keeps parsing free of any libghostty-vt call. -->
   <ItemGroup>
     <Compile Include="../Gui/Strings.cs" Link="Strings.cs" />
+    <Compile Include="../Gui/Diag.cs" Link="Diag.cs" />
     <Compile Include="../Gui/Term/Config.cs" Link="Config.cs" />
     <Compile Include="../Gui/Term/ConfigSchema.cs" Link="ConfigSchema.cs" />
     <Compile Include="../Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
+    <Compile Include="../Gui/Term/Keybinds.cs" Link="Keybinds.cs" />
     <Compile Include="../Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />
   </ItemGroup>
 </Project>
