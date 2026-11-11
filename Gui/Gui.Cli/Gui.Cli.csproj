@@ -33,6 +33,7 @@
     <Compile Include="../Gui/Diag.cs" Link="Diag.cs" />
     <Compile Include="../Gui/Term/Config.cs" Link="Config.cs" />
     <Compile Include="../Gui/Term/ConfigSchema.cs" Link="ConfigSchema.cs" />
+    <Compile Include="../Gui/Term/ColorReport.cs" Link="ColorReport.cs" />
     <Compile Include="../Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../Gui/Term/Keybinds.cs" Link="Keybinds.cs" />
     <Compile Include="../Gui/Term/IpcProtocol.cs" Link="IpcProtocol.cs" />

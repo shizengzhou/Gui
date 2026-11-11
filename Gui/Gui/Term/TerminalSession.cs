@@ -57,6 +57,15 @@ public sealed unsafe class TerminalSession : IDisposable
     private readonly GhosttyNative.ClipboardFn _clipboardWrite;
     private readonly GhosttyNative.ClipboardFn _clipboardRead;
     private readonly GhosttyNative.ProgramStatusFn _programStatusFn;
+    private readonly GhosttyNative.EnquiryFn _enquiry;
+
+    // "enquiry-response" is answered from native code, so its bytes stay pinned for the
+    // lifetime of the setting and the callback hands the pointer back.
+    private byte[] _enquiryResponse = Array.Empty<byte>();
+    private GCHandle _enquiryPin;
+
+    // "osc-color-report-format" is applied to the terminal's own replies, not to the VT core.
+    private string _oscColorReportFormat = ColorReport.SixteenBit;
 
     // "clipboard-write" / "clipboard-read": allow, deny, or ask. "ask" has no prompt in this
     // build (the reply must be synchronous), so it behaves like deny.
@@ -121,6 +130,7 @@ public sealed unsafe class TerminalSession : IDisposable
     {
         _writePty = OnWritePty;
         _titleChanged = OnTitleChanged;
+        _enquiry = OnEnquiry;
         _pwdChanged = OnPwdChanged;
         _bell = OnBellChanged;
         _clipboardWrite = OnClipboardWrite;
@@ -154,6 +164,7 @@ public sealed unsafe class TerminalSession : IDisposable
 
         SetFunctionPointer(GhosttyNative.OPT_WRITE_PTY, _writePty);
         SetFunctionPointer(GhosttyNative.OPT_TITLE_CHANGED, _titleChanged);
+        SetFunctionPointer(GhosttyNative.OPT_ENQUIRY, _enquiry);
         SetFunctionPointer(GhosttyNative.OPT_PWD_CHANGED, _pwdChanged);
         SetFunctionPointer(GhosttyNative.OPT_BELL, _bell);
         SetFunctionPointer(GhosttyNative.OPT_CLIPBOARD_WRITE, _clipboardWrite);
@@ -450,7 +461,21 @@ public sealed unsafe class TerminalSession : IDisposable
     private void OnWritePty(IntPtr terminal, IntPtr userdata, IntPtr data, nuint len)
     {
         if (data == IntPtr.Zero || len == 0) return;
-        WriteInput(new ReadOnlySpan<byte>((void*)data, checked((int)len)));
+        int length = checked((int)len);
+
+        // "osc-color-report-format": the core only speaks 16-bit color replies, so another
+        // format is applied here, before the bytes reach the shell.
+        if (_oscColorReportFormat != ColorReport.SixteenBit)
+        {
+            var reply = new byte[length];
+            Marshal.Copy(data, reply, 0, length);
+            byte[]? rewritten = ColorReport.Apply(reply, _oscColorReportFormat);
+            if (rewritten is null) return;
+            WriteInput(rewritten);
+            return;
+        }
+
+        WriteInput(new ReadOnlySpan<byte>((void*)data, length));
     }
 
     private void OnTitleChanged(IntPtr terminal, IntPtr userdata)
@@ -1352,6 +1377,46 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     /// <summary>
+    /// "title-report": lets a program read the title back with CSI 21 t. The core answers
+    /// with the title it holds (OSC 0/2), and only when this option is on.
+    /// </summary>
+    public void SetTitleReport(bool enabled)
+    {
+        if (_terminal == IntPtr.Zero) return;
+        byte value = enabled ? (byte)1 : (byte)0;
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_TITLE_REPORT, &value);
+    }
+
+    /// <summary>
+    /// "enquiry-response": the bytes written back when a program sends ENQ (0x05). Empty
+    /// keeps the terminal silent, which is Ghostty's default.
+    /// </summary>
+    public void SetEnquiryResponse(string response)
+    {
+        if (_enquiryPin.IsAllocated) _enquiryPin.Free();
+        _enquiryResponse = Encoding.UTF8.GetBytes(response);
+        _enquiryPin = _enquiryResponse.Length > 0
+            ? GCHandle.Alloc(_enquiryResponse, GCHandleType.Pinned)
+            : default;
+    }
+
+    /// <summary>
+    /// "osc-color-report-format": how the terminal shapes OSC 4/10/11 query replies. The core
+    /// always answers 16-bit; the other values rewrite the reply on the way to the pty.
+    /// </summary>
+    public void SetOscColorReportFormat(string format) =>
+        _oscColorReportFormat = ColorReport.Normalize(format);
+
+    private GhosttyNative.GhosttyString OnEnquiry(IntPtr terminal, IntPtr userdata) =>
+        _enquiryPin.IsAllocated
+            ? new GhosttyNative.GhosttyString
+            {
+                Ptr = _enquiryPin.AddrOfPinnedObject(),
+                Len = (nuint)_enquiryResponse.Length,
+            }
+            : default;
+
+    /// <summary>
     /// Scroll state for the scrollbar: total rows, the row at the top of the viewport and the
     /// number of rows the viewport shows. False when the terminal reports nothing usable.
     /// </summary>
@@ -1757,6 +1822,7 @@ public sealed unsafe class TerminalSession : IDisposable
         Stop();
         _disposed = true;
 
+        if (_enquiryPin.IsAllocated) _enquiryPin.Free();
         if (_cells != IntPtr.Zero) { GhosttyNative.ghostty_render_state_row_cells_free(_cells); _cells = IntPtr.Zero; }
         if (_rowIterator != IntPtr.Zero) { GhosttyNative.ghostty_render_state_row_iterator_free(_rowIterator); _rowIterator = IntPtr.Zero; }
         if (_mouseEvent != IntPtr.Zero) { GhosttyNative.ghostty_mouse_event_free(_mouseEvent); _mouseEvent = IntPtr.Zero; }

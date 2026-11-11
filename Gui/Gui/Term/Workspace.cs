@@ -536,6 +536,7 @@ public sealed partial class Workspace
                 pane.ApplyFont();
                 pane.ApplyScrollSettings();
                 pane.ApplyClipboardSettings();
+                pane.ApplyProgramQueries();
                 pane.ApplyKeybinds();
             });
 

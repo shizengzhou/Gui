@@ -30,6 +30,7 @@
     <Compile Include="../../Gui/Gui/Term/IpcProtocol.cs" Link="IpcProtocol.cs" />
     <Compile Include="../../Gui/Gui/Term/Config.cs" Link="Config.cs" />
     <Compile Include="../../Gui/Gui/Term/ConfigSchema.cs" Link="ConfigSchema.cs" />
+    <Compile Include="../../Gui/Gui/Term/ColorReport.cs" Link="ColorReport.cs" />
     <Compile Include="../../Gui/Gui/Term/FontStyleNames.cs" Link="FontStyleNames.cs" />
     <Compile Include="../../Gui/Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../../Gui/Gui/Term/KeyMap.cs" Link="KeyMap.cs" />

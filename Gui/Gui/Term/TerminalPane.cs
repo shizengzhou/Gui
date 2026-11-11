@@ -263,6 +263,9 @@ public sealed class TerminalPane
         _session = new TerminalSession(snapshot);
         _session.SetScrollbackLimit(config.ScrollbackLimit);
         _session.SetScrollbackLimitLines(config.ScrollbackLimitLines);
+        _session.SetTitleReport(config.TitleReport);
+        _session.SetEnquiryResponse(config.EnquiryResponse);
+        _session.SetOscColorReportFormat(config.OscColorReportFormat);
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         _canvas = new CanvasControl
@@ -1423,6 +1426,9 @@ public sealed class TerminalPane
         _session = session;
         _session.SetScrollbackLimit(_config.ScrollbackLimit);
         _session.SetScrollbackLimitLines(_config.ScrollbackLimitLines);
+        _session.SetTitleReport(_config.TitleReport);
+        _session.SetEnquiryResponse(_config.EnquiryResponse);
+        _session.SetOscColorReportFormat(_config.OscColorReportFormat);
 
         WireSession();
         BeginSession();
@@ -1949,6 +1955,14 @@ public sealed class TerminalPane
         _session.SetScrollbackLimit(_config.ScrollbackLimit);
         _session.SetScrollbackLimitLines(_config.ScrollbackLimitLines);
         UpdateScrollbar();
+    }
+
+    /// <summary>Re-applies the program-query options after a config reload.</summary>
+    public void ApplyProgramQueries()
+    {
+        _session.SetTitleReport(_config.TitleReport);
+        _session.SetEnquiryResponse(_config.EnquiryResponse);
+        _session.SetOscColorReportFormat(_config.OscColorReportFormat);
     }
 
     /// <summary>Re-applies "clipboard-read/write" and the per-write byte limit.</summary>

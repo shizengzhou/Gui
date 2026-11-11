@@ -67,6 +67,8 @@ internal static class Program
             CheckScrollbackSmoke();
             CheckMouseSmoke();
             CheckBellSmoke();
+            CheckTitleReportSmoke();
+            CheckEnquirySmoke();
             CheckSearchSmoke();
             CheckSnapshotSmoke();
         }
@@ -360,6 +362,7 @@ internal static class Program
         new("OPT_USERDATA", "GhosttyTerminalOption", "USERDATA"),
         new("OPT_WRITE_PTY", "GhosttyTerminalOption", "WRITE_PTY"),
         new("OPT_BELL", "GhosttyTerminalOption", "BELL"),
+        new("OPT_ENQUIRY", "GhosttyTerminalOption", "ENQUIRY"),
         new("OPT_TITLE_CHANGED", "GhosttyTerminalOption", "TITLE_CHANGED"),
         new("OPT_COLOR_FOREGROUND", "GhosttyTerminalOption", "COLOR_FOREGROUND"),
         new("OPT_COLOR_BACKGROUND", "GhosttyTerminalOption", "COLOR_BACKGROUND"),
@@ -372,6 +375,7 @@ internal static class Program
         new("OPT_CLIPBOARD_WRITE_MAX_BYTES", "GhosttyTerminalOption", "CLIPBOARD_WRITE_MAX_BYTES"),
         new("OPT_SCROLLBACK_MAX_BYTES", "GhosttyTerminalOption", "SCROLLBACK_MAX_BYTES"),
         new("OPT_SCROLLBACK_MAX_LINES", "GhosttyTerminalOption", "SCROLLBACK_MAX_LINES"),
+        new("OPT_TITLE_REPORT", "GhosttyTerminalOption", "TITLE_REPORT"),
         new("OPT_PROGRAM_STATUS", "GhosttyTerminalOption", "PROGRAM_STATUS"),
         new("OPT_RESIZE_WINDOW", "GhosttyTerminalOption", "RESIZE_WINDOW"),
 
@@ -779,6 +783,134 @@ internal static class Program
         }
         finally
         {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>
+    /// "title-report": CSI 21 t has to stay silent while the option is off, and once it is on
+    /// the terminal answers with the title it holds, as OSC "l". The reply goes into the pty,
+    /// so this also pins the exact bytes the shell receives.
+    /// </summary>
+    private static unsafe void CheckTitleReportSmoke()
+    {
+        Section("title-report smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        var reply = new StringBuilder();
+        GhosttyNative.WritePtyFn capture = (_, _, data, len) =>
+        {
+            if (len == 0) return;
+            var buffer = new byte[(int)len];
+            Marshal.Copy(data, buffer, 0, buffer.Length);
+            reply.Append(Encoding.UTF8.GetString(buffer));
+        };
+
+        try
+        {
+            IntPtr functionPointer = Marshal.GetFunctionPointerForDelegate(capture);
+            Check("write callback registered",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_WRITE_PTY, (void*)functionPointer)
+                == GhosttyNative.SUCCESS);
+
+            Feed(terminal, "\u001b]2;Gui Title\u001b\\");
+            Feed(terminal, "\u001b[21t");
+            Check("disabled report stays silent", reply.Length == 0,
+                reply.Length == 0 ? "no output" : reply.ToString().Replace("\u001b", "ESC"));
+
+            byte enabled = 1;
+            Check("report option accepted",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_TITLE_REPORT, &enabled)
+                == GhosttyNative.SUCCESS);
+
+            Feed(terminal, "\u001b[21t");
+            const string expected = "\u001b]lGui Title\u001b\\";
+            Check("enabled report answers with OSC l", reply.ToString() == expected,
+                reply.Length == 0 ? "no output" : reply.ToString().Replace("\u001b", "ESC"));
+
+            GC.KeepAlive(capture);
+        }
+        finally
+        {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+
+        static void Feed(IntPtr terminal, string text) => VtWrite(terminal, text);
+    }
+
+    /// <summary>Writes plain text into a terminal through the same entry point the app uses.</summary>
+    private static unsafe void VtWrite(IntPtr terminal, string text)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        fixed (byte* pointer = bytes)
+            GhosttyNative.ghostty_terminal_vt_write(terminal, pointer, (nuint)bytes.Length);
+    }
+
+    /// <summary>
+    /// "enquiry-response": ENQ (0x05) stays silent while the response is empty and writes the
+    /// configured bytes back otherwise. The answer arrives through the write-PTY callback,
+    /// which is where the app's terminals receive it.
+    /// </summary>
+    private static unsafe void CheckEnquirySmoke()
+    {
+        Section("enquiry smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        var reply = new StringBuilder();
+        GhosttyNative.WritePtyFn capture = (_, _, data, len) =>
+        {
+            if (len == 0) return;
+            var buffer = new byte[(int)len];
+            Marshal.Copy(data, buffer, 0, buffer.Length);
+            reply.Append(Encoding.UTF8.GetString(buffer));
+        };
+
+        byte[] response = Array.Empty<byte>();
+        GCHandle pin = default;
+        GhosttyNative.EnquiryFn enquiry = (_, _) => pin.IsAllocated
+            ? new GhosttyNative.GhosttyString
+            {
+                Ptr = pin.AddrOfPinnedObject(),
+                Len = (nuint)response.Length,
+            }
+            : default;
+
+        try
+        {
+            IntPtr capturePointer = Marshal.GetFunctionPointerForDelegate(capture);
+            IntPtr enquiryPointer = Marshal.GetFunctionPointerForDelegate(enquiry);
+            Check("callbacks registered",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_WRITE_PTY, (void*)capturePointer)
+                == GhosttyNative.SUCCESS &&
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_ENQUIRY, (void*)enquiryPointer)
+                == GhosttyNative.SUCCESS);
+
+            VtWrite(terminal, "\u0005");
+            Check("empty response stays silent", reply.Length == 0,
+                reply.Length == 0 ? "no output" : reply.ToString());
+
+            response = Encoding.UTF8.GetBytes("gui");
+            pin = GCHandle.Alloc(response, GCHandleType.Pinned);
+            VtWrite(terminal, "\u0005");
+            Check("configured response reaches the pty", reply.ToString() == "gui",
+                reply.Length == 0 ? "no output" : reply.ToString());
+
+            GC.KeepAlive(capture);
+            GC.KeepAlive(enquiry);
+        }
+        finally
+        {
+            if (pin.IsAllocated) pin.Free();
             GhosttyNative.ghostty_terminal_free(terminal);
         }
     }

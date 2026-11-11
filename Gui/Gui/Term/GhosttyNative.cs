@@ -19,6 +19,7 @@ internal static unsafe class GhosttyNative
     internal const int OPT_USERDATA = 0;
     internal const int OPT_WRITE_PTY = 1;
     internal const int OPT_BELL = 2;
+    internal const int OPT_ENQUIRY = 3;
     internal const int OPT_TITLE_CHANGED = 5;
     internal const int OPT_COLOR_FOREGROUND = 11;
     internal const int OPT_COLOR_BACKGROUND = 12;
@@ -29,6 +30,7 @@ internal static unsafe class GhosttyNative
     internal const int OPT_CLIPBOARD_WRITE = 26;
     internal const int OPT_SCROLLBACK_MAX_BYTES = 27;
     internal const int OPT_SCROLLBACK_MAX_LINES = 28;
+    internal const int OPT_TITLE_REPORT = 32;
     internal const int OPT_CLIPBOARD_READ = 38;
     internal const int OPT_CLIPBOARD_WRITE_MAX_BYTES = 39;
     internal const int OPT_PROGRAM_STATUS = 46;
@@ -435,6 +437,13 @@ internal static unsafe class GhosttyNative
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void NotifyFn(IntPtr terminal, IntPtr userdata);
+
+    /// <summary>
+    /// ENQ (0x05) answer: returns the bytes to write back to the pty. The buffer only has to
+    /// stay valid until the callback returns.
+    /// </summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate GhosttyString EnquiryFn(IntPtr terminal, IntPtr userdata);
 
     /// <summary>OSC 52 / kitty clipboard callback: <paramref name="request"/> is a sized struct.</summary>
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]

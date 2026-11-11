@@ -185,15 +185,15 @@
 - [ ] `quit-after-last-window-closed-delay` — 退出前的延迟时长
 - [ ] `initial-window` — 启动时是否创建初始窗口
 - [ ] `undo-timeout` — 撤销操作的有效期
-- [ ] `title-report` — 是否允许程序用 CSI 21 t 查询标题
+- [x] `title-report` — 是否允许程序用 CSI 21 t 查询标题（默认 `false`；开启后核心以 `ESC ] l <title> ESC \` 回复，见 `TerminalSession.SetTitleReport`）
 - [ ] `image-storage-limit` — 单屏图像数据（Kitty 协议）字节上限
 - [x] `term` — TERM 环境变量值
-- [ ] `enquiry-response` — 收到 ENQ(0x05) 时回复的字符串
+- [x] `enquiry-response` — 收到 ENQ(0x05) 时回复的字符串（默认空，即不回复；见 `TerminalSession.SetEnquiryResponse`）
 - [ ] `vt-kam-allowed` — 是否允许 KAM 模式禁用键盘输入
 - [ ] `vt-window-resize-allowed` — 是否允许程序通过 CSI 8 t 调整窗口大小
 - [ ] `vt-xt-checksum-extension` — XT 校验和扩展的开关
 - [ ] `vt-xt-checksum-report` — 是否回报 XT 校验和
-- [ ] `osc-color-report-format` — OSC 颜色查询的回报格式
+- [x] `osc-color-report-format` — OSC 颜色查询的回报格式（`none` / `8-bit` / `16-bit`，默认 `16-bit`；核心只会发 16 位，另外两种在写回 pty 前改写，见 `Term/ColorReport.cs`）
 - [ ] `async-backend` — 异步 IO 后端（auto/epoll/io_uring 等）
 - [ ] `app-notifications` — 应用内通知（toast）的控制项
 - [ ] `desktop-notifications` — 是否允许 OSC 桌面通知

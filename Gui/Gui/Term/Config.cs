@@ -287,6 +287,28 @@ public sealed class Config
     /// <summary>"clipboard-codepoint-map" entries, later entries taking priority.</summary>
     public List<CodepointMap> ClipboardCodepointMap = new();
 
+    // ---- program queries ---------------------------------------------------
+
+    /// <summary>
+    /// "title-report": whether CSI 21 t may read the title back. Off by default, like
+    /// Ghostty: the reply is written into the shell's own input, so a program could inject
+    /// text (or worse) through a crafted title.
+    /// </summary>
+    public bool TitleReport;
+
+    /// <summary>
+    /// "enquiry-response": the bytes sent back when a program asks with ENQ (0x05). Empty,
+    /// Ghostty's default, means the terminal stays silent.
+    /// </summary>
+    public string EnquiryResponse = string.Empty;
+
+    /// <summary>
+    /// "osc-color-report-format": the shape of OSC 4/10/11 query replies. The terminal core
+    /// always answers with 16-bit components, so "none" and "8-bit" are applied to the reply
+    /// bytes before they reach the pty.
+    /// </summary>
+    public string OscColorReportFormat = ColorReport.SixteenBit;
+
     // ---- shell integration and notifications ------------------------------
 
     public string ShellIntegration = "detect";     // none, detect, or a shell name
@@ -495,6 +517,10 @@ public sealed class Config
         SelectionClearOnTyping = other.SelectionClearOnTyping;
         SelectionWordChars = other.SelectionWordChars;
         ClipboardCodepointMap = new List<CodepointMap>(other.ClipboardCodepointMap);
+
+        TitleReport = other.TitleReport;
+        EnquiryResponse = other.EnquiryResponse;
+        OscColorReportFormat = other.OscColorReportFormat;
 
         ExtraEnvironment = new List<(string, string)>(other.ExtraEnvironment);
         Input = other.Input;
@@ -900,6 +926,9 @@ public sealed class Config
         ClipboardWriteLimitBytes = ParseLimit(Last("clipboard-write-limit-bytes"), ClipboardWriteLimitBytes);
         SelectionClearOnCopy = GetBool("selection-clear-on-copy", false);
         SelectionClearOnTyping = GetBool("selection-clear-on-typing", true);
+        TitleReport = GetBool("title-report", false);
+        EnquiryResponse = Last("enquiry-response") ?? string.Empty;
+        OscColorReportFormat = ColorReport.Normalize(Last("osc-color-report-format"));
         SelectionWordChars = Last("selection-word-chars") ?? DefaultSelectionWordChars;
         ClipboardCodepointMap = ParseCodepointMaps(All("clipboard-codepoint-map"));
         PasteProtection = GetBool("clipboard-paste-protection", true);
