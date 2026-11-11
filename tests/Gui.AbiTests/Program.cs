@@ -69,6 +69,9 @@ internal static class Program
             CheckBellSmoke();
             CheckTitleReportSmoke();
             CheckEnquirySmoke();
+            CheckResizeWindowSmoke();
+            CheckXtChecksumSmoke();
+            CheckDesktopNotificationSmoke();
             CheckSearchSmoke();
             CheckSnapshotSmoke();
         }
@@ -217,6 +220,12 @@ internal static class Program
             new FieldMap("Kind", "kind"), new FieldMap("Progress", "progress"),
             new FieldMap("Id", "id"), new FieldMap("App", "app"),
             new FieldMap("Title", "title"), new FieldMap("Message", "message")),
+        new(typeof(GhosttyNative.GhosttyTerminalResizeWindow), "GhosttyTerminalResizeWindow",
+            new FieldMap("Tag", "tag"), new FieldMap("Rows", "value.grid.rows"),
+            new FieldMap("Columns", "value.grid.columns")),
+        new(typeof(GhosttyNative.GhosttyTerminalDesktopNotification), "GhosttyTerminalDesktopNotification",
+            new FieldMap("Size", "size"), new FieldMap("Title", "title"),
+            new FieldMap("Body", "body")),
         new(typeof(GhosttyNative.GhosttyRenderStateRowSelection), "GhosttyRenderStateRowSelection",
             new FieldMap("Size", "size"), new FieldMap("StartX", "start_x"),
             new FieldMap("EndX", "end_x")),
@@ -375,9 +384,13 @@ internal static class Program
         new("OPT_CLIPBOARD_WRITE_MAX_BYTES", "GhosttyTerminalOption", "CLIPBOARD_WRITE_MAX_BYTES"),
         new("OPT_SCROLLBACK_MAX_BYTES", "GhosttyTerminalOption", "SCROLLBACK_MAX_BYTES"),
         new("OPT_SCROLLBACK_MAX_LINES", "GhosttyTerminalOption", "SCROLLBACK_MAX_LINES"),
+        new("OPT_DESKTOP_NOTIFICATION", "GhosttyTerminalOption", "DESKTOP_NOTIFICATION"),
         new("OPT_TITLE_REPORT", "GhosttyTerminalOption", "TITLE_REPORT"),
+        new("OPT_XT_CHECKSUM_REPORT", "GhosttyTerminalOption", "XT_CHECKSUM_REPORT"),
+        new("OPT_XT_CHECKSUM_EXTENSION", "GhosttyTerminalOption", "XT_CHECKSUM_EXTENSION"),
         new("OPT_PROGRAM_STATUS", "GhosttyTerminalOption", "PROGRAM_STATUS"),
         new("OPT_RESIZE_WINDOW", "GhosttyTerminalOption", "RESIZE_WINDOW"),
+        new("RESIZE_WINDOW_GRID", "GhosttyTerminalResizeWindowTag", "GRID"),
 
         new("PROGRAM_STATUS_IDLE", "GhosttyProgramStatusState", "IDLE"),
         new("PROGRAM_STATUS_WORKING", "GhosttyProgramStatusState", "WORKING"),
@@ -849,6 +862,164 @@ internal static class Program
         byte[] bytes = Encoding.UTF8.GetBytes(text);
         fixed (byte* pointer = bytes)
             GhosttyNative.ghostty_terminal_vt_write(terminal, pointer, (nuint)bytes.Length);
+    }
+
+    /// <summary>
+    /// "vt-xt-checksum-report": DECRQCRA stays silent until the option is enabled, then
+    /// answers with the DEC checksum. "vt-xt-checksum-extension" changes the calculation,
+    /// here by turning off the final negation.
+    /// </summary>
+    private static unsafe void CheckXtChecksumSmoke()
+    {
+        Section("XT checksum smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        var reply = new StringBuilder();
+        GhosttyNative.WritePtyFn capture = (_, _, data, len) =>
+        {
+            if (len == 0) return;
+            var buffer = new byte[(int)len];
+            Marshal.Copy(data, buffer, 0, buffer.Length);
+            reply.Append(Encoding.UTF8.GetString(buffer));
+        };
+
+        try
+        {
+            IntPtr capturePointer = Marshal.GetFunctionPointerForDelegate(capture);
+            Check("write callback registered",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_WRITE_PTY, (void*)capturePointer)
+                == GhosttyNative.SUCCESS);
+
+            VtWrite(terminal, "A");
+            VtWrite(terminal, "\u001b[1;1;1;1;1;1*y");
+            Check("disabled report stays silent", reply.Length == 0,
+                reply.Length == 0 ? "no output" : reply.ToString().Replace("\u001b", "ESC"));
+
+            byte enabled = 1;
+            Check("report option accepted",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_XT_CHECKSUM_REPORT, &enabled)
+                == GhosttyNative.SUCCESS);
+
+            VtWrite(terminal, "\u001b[1;1;1;1;1;1*y");
+            Check("enabled report answers with the DEC checksum", reply.ToString() == "\u001bP1!~FFBF\u001b\\",
+                reply.Length == 0 ? "no output" : reply.ToString().Replace("\u001b", "ESC"));
+            reply.Clear();
+
+            byte extension = 1; // Bit 1: don't negate the sum.
+            Check("extension option accepted",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_XT_CHECKSUM_EXTENSION, &extension)
+                == GhosttyNative.SUCCESS);
+
+            VtWrite(terminal, "\u001b[1;1;1;1;1;1*y");
+            Check("extension changes the calculation", reply.ToString() == "\u001bP1!~0041\u001b\\",
+                reply.Length == 0 ? "no output" : reply.ToString().Replace("\u001b", "ESC"));
+
+            GC.KeepAlive(capture);
+        }
+        finally
+        {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>
+    /// "desktop-notifications": OSC 9 and OSC 777 reach the notification callback. OSC 9
+    /// carries only a body; OSC 777 carries a title and a body.
+    /// </summary>
+    private static unsafe void CheckDesktopNotificationSmoke()
+    {
+        Section("desktop notification smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        int calls = 0;
+        string title = string.Empty;
+        string body = string.Empty;
+        GhosttyNative.DesktopNotificationFn notify = (_, _, request) =>
+        {
+            var value = *(GhosttyNative.GhosttyTerminalDesktopNotification*)request;
+            calls++;
+            title = Text(value.Title);
+            body = Text(value.Body);
+        };
+
+        try
+        {
+            IntPtr pointer = Marshal.GetFunctionPointerForDelegate(notify);
+            Check("notification callback registered",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_DESKTOP_NOTIFICATION, (void*)pointer)
+                == GhosttyNative.SUCCESS);
+
+            VtWrite(terminal, "\u001b]9;Hello world\u001b\\");
+            Check("OSC 9 reaches the callback", calls == 1 && title.Length == 0 && body == "Hello world",
+                $"calls={calls} title='{title}' body='{body}'");
+
+            VtWrite(terminal, "\u001b]777;notify;Title;Body\u001b\\");
+            Check("OSC 777 carries the title", calls == 2 && title == "Title" && body == "Body",
+                $"calls={calls} title='{title}' body='{body}'");
+
+            GC.KeepAlive(notify);
+        }
+        finally
+        {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+
+        static string Text(GhosttyNative.GhosttyString value) =>
+            value.Ptr == IntPtr.Zero || value.Len == 0
+                ? string.Empty
+                : Marshal.PtrToStringUTF8(value.Ptr, (int)value.Len) ?? string.Empty;
+    }
+
+    /// <summary>
+    /// "vt-window-resize-allowed": CSI 8 ; rows ; columns t reaches the resize callback with
+    /// the grid size packed in the union arm the app reads.
+    /// </summary>
+    private static unsafe void CheckResizeWindowSmoke()
+    {
+        Section("resize window smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        int rows = -1, columns = -1, calls = 0;
+        GhosttyNative.ResizeWindowFn resize = (_, _, request) =>
+        {
+            var value = *(GhosttyNative.GhosttyTerminalResizeWindow*)request;
+            calls++;
+            rows = value.Rows;
+            columns = value.Columns;
+        };
+
+        try
+        {
+            IntPtr pointer = Marshal.GetFunctionPointerForDelegate(resize);
+            Check("resize callback registered",
+                GhosttyNative.ghostty_terminal_set(terminal, GhosttyNative.OPT_RESIZE_WINDOW, (void*)pointer)
+                == GhosttyNative.SUCCESS);
+
+            VtWrite(terminal, "\u001b[8;30;100t");
+            Check("CSI 8 t reaches the callback", calls == 1 && rows == 30 && columns == 100,
+                $"calls={calls} rows={rows} columns={columns}");
+
+            GC.KeepAlive(resize);
+        }
+        finally
+        {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
     }
 
     /// <summary>

@@ -53,6 +53,37 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void LoadParsesXtChecksumExtensionBits()
+    {
+        // Ghostty's default is the DEC calculation, which is xterm's CSBITS zero.
+        Assert.Equal(0, Config.Load(Write(string.Empty)).XtChecksumExtension);
+
+        // esctest's --xterm-checksum spelling, xterm's checksumExtension 23.
+        Assert.Equal(23, Config.Load(Write(
+            "vt-xt-checksum-extension = no-negate,no-attributes,no-trim,full\n")).XtChecksumExtension);
+
+        // Later tokens win, and "no-" turns an option back off.
+        Assert.Equal(8, Config.Load(Write(
+            "vt-xt-checksum-extension = undrawn,no-undrawn,undrawn,no-full\n")).XtChecksumExtension);
+    }
+
+    [Fact]
+    public void LoadParsesXtChecksumReport()
+    {
+        Assert.False(Config.Load(Write(string.Empty)).XtChecksumReport);
+        Assert.True(Config.Load(Write("vt-xt-checksum-report = true\n")).XtChecksumReport);
+        Assert.False(Config.Load(Write("vt-xt-checksum-report = false\n")).XtChecksumReport);
+    }
+
+    [Fact]
+    public void LoadParsesDesktopNotifications()
+    {
+        Assert.True(Config.Load(Write(string.Empty)).DesktopNotifications);
+        Assert.False(Config.Load(Write("desktop-notifications = false\n")).DesktopNotifications);
+        Assert.True(Config.Load(Write("desktop-notifications = true\n")).DesktopNotifications);
+    }
+
+    [Fact]
     public void LoadKeepsLeftAndRightRailWidthsIndependent()
     {
         Config config = Config.Load(Write("sidebar-width-left = 300\nsidebar-width-right = 420\n"));

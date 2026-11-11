@@ -57,6 +57,8 @@ public sealed unsafe class TerminalSession : IDisposable
     private readonly GhosttyNative.ClipboardFn _clipboardWrite;
     private readonly GhosttyNative.ClipboardFn _clipboardRead;
     private readonly GhosttyNative.ProgramStatusFn _programStatusFn;
+    private readonly GhosttyNative.DesktopNotificationFn _desktopNotificationFn;
+    private readonly GhosttyNative.ResizeWindowFn _resizeWindowFn;
     private readonly GhosttyNative.EnquiryFn _enquiry;
 
     // "enquiry-response" is answered from native code, so its bytes stay pinned for the
@@ -103,6 +105,15 @@ public sealed unsafe class TerminalSession : IDisposable
     /// <summary>OSC 7501: the record a person should see changed (or went away).</summary>
     public Action? OnProgramStatus;
 
+    /// <summary>OSC 9 / OSC 777: the program asked for a desktop notification.</summary>
+    public Action<string, string>? OnDesktopNotification;
+
+    /// <summary>
+    /// CSI 8 t: the program asked to resize the window to the given rows and columns.
+    /// Zero means "keep the current dimension".
+    /// </summary>
+    public Action<int, int>? OnResizeWindow;
+
     /// <summary>True between the command's output start (C) and its finish (D).</summary>
     public bool CommandRunning => _marks.CommandRunning;
 
@@ -136,6 +147,8 @@ public sealed unsafe class TerminalSession : IDisposable
         _clipboardWrite = OnClipboardWrite;
         _clipboardRead = OnClipboardRead;
         _programStatusFn = OnProgramStatusReport;
+        _desktopNotificationFn = OnDesktopNotificationReport;
+        _resizeWindowFn = OnResizeWindowReport;
         _marks.CommandFinished = (exit, duration) => OnCommandFinished?.Invoke(exit, duration);
         _marks.ProgressChanged = (state, value) => OnProgress?.Invoke(state, value);
         // A new prompt means the command that reported "working"/"blocked" is over.
@@ -172,6 +185,8 @@ public sealed unsafe class TerminalSession : IDisposable
         // Setting the callback also makes the library answer "OSC 7501 ; ?" through the
         // write-PTY callback, so a program can ask whether the protocol is supported.
         SetFunctionPointer(GhosttyNative.OPT_PROGRAM_STATUS, _programStatusFn);
+        SetFunctionPointer(GhosttyNative.OPT_DESKTOP_NOTIFICATION, _desktopNotificationFn);
+        SetFunctionPointer(GhosttyNative.OPT_RESIZE_WINDOW, _resizeWindowFn);
 
         ApplyTheme(Theme.Terminal);
     }
@@ -530,6 +545,25 @@ public sealed unsafe class TerminalSession : IDisposable
     public void AcknowledgeProgramStatus()
     {
         if (_programStatus.Acknowledge()) OnProgramStatus?.Invoke();
+    }
+
+    // ---------------- desktop notifications (OSC 9 / 777) ----------------
+
+    private unsafe void OnDesktopNotificationReport(IntPtr terminal, IntPtr userdata, IntPtr notificationPointer)
+    {
+        if (notificationPointer == IntPtr.Zero) return;
+        var notification = *(GhosttyNative.GhosttyTerminalDesktopNotification*)notificationPointer;
+        OnDesktopNotification?.Invoke(ReadString(notification.Title), ReadString(notification.Body));
+    }
+
+    // ---------------- window resize (CSI 8 t) ----------------
+
+    private unsafe void OnResizeWindowReport(IntPtr terminal, IntPtr userdata, IntPtr requestPointer)
+    {
+        if (requestPointer == IntPtr.Zero) return;
+        var request = *(GhosttyNative.GhosttyTerminalResizeWindow*)requestPointer;
+        if (request.Tag != GhosttyNative.RESIZE_WINDOW_GRID) return;
+        OnResizeWindow?.Invoke(request.Rows, request.Columns);
     }
 
     // ---------------- clipboard (OSC 52 / kitty) ----------------
@@ -1109,6 +1143,23 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     /// <summary>
+    /// True while the running program has KAM (ANSI mode 2, "keyboard action mode") on and
+    /// therefore wants the terminal to stop sending it keyboard input.
+    /// </summary>
+    public bool KeyboardActionMode()
+    {
+        if (_terminal == IntPtr.Zero) return false;
+        var config = new GhosttyNative.GhosttyTerminalModeConfig
+        {
+            Mode = (ushort)(2 | 0x8000), // ANSI mode 2 (KAM)
+            Value = 0,
+        };
+        if (GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_MODE, &config) != GhosttyNative.SUCCESS)
+            return false;
+        return config.Value != 0;
+    }
+
+    /// <summary>
     /// Encodes clipboard text the way the running program expects it (bracketed paste
     /// sequences when mode 2004 is on).
     /// </summary>
@@ -1385,6 +1436,27 @@ public sealed unsafe class TerminalSession : IDisposable
         if (_terminal == IntPtr.Zero) return;
         byte value = enabled ? (byte)1 : (byte)0;
         GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_TITLE_REPORT, &value);
+    }
+
+    /// <summary>
+    /// "vt-xt-checksum-report": allow DECRQCRA to read the screen back through a checksum.
+    /// Off by default; while off, XTCHECKSUM is ignored as well.
+    /// </summary>
+    public void SetXtChecksumReport(bool enabled)
+    {
+        if (_terminal == IntPtr.Zero) return;
+        byte value = enabled ? (byte)1 : (byte)0;
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_XT_CHECKSUM_REPORT, &value);
+    }
+
+    /// <summary>
+    /// "vt-xt-checksum-extension": the XTCHECKSUM bits used for DECRQCRA after a reset.
+    /// Zero is the DEC calculation; the core rejects values above 31.
+    /// </summary>
+    public void SetXtChecksumExtension(byte bits)
+    {
+        if (_terminal == IntPtr.Zero) return;
+        GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_XT_CHECKSUM_EXTENSION, &bits);
     }
 
     /// <summary>

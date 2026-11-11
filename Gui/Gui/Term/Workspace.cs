@@ -442,6 +442,42 @@ public sealed partial class Workspace
     }
 
     /// <summary>
+    /// "vt-window-resize-allowed": a program asked for a grid size with CSI 8 t. Like
+    /// "window-width"/"window-height", the window grows or shrinks by the difference between
+    /// the requested and current grid, so the tab rail and title strip need no modelling.
+    /// A zero dimension keeps the current one; the size is clamped to Ghostty's 40x10 cells.
+    /// </summary>
+    private void ResizeWindowFromProgram(TerminalPane pane, int rows, int columns)
+    {
+        if (_appWindow is null || !pane.LaidOut) return;
+        // The request may have been queued just before its pane closed or moved away.
+        if (!_tabs.Any(tab => TabContainsPane(tab, pane))) return;
+
+        CellMetrics metrics = pane.CellMetricsDip;
+        if (metrics.Width == 0 || metrics.Height == 0) return;
+
+        int targetColumns = columns == 0 ? pane.Columns : Math.Max(columns, 40);
+        int targetRows = rows == 0 ? pane.Rows : Math.Max(rows, 10);
+
+        double scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        if (scale <= 0.0) scale = 1.0;
+
+        SizeInt32 current = _appWindow.Size;
+        int width = current.Width +
+                    (int)Math.Round((targetColumns - pane.Columns) * metrics.Width * scale);
+        int height = current.Height +
+                     (int)Math.Round((targetRows - pane.Rows) * metrics.Height * scale);
+
+        DisplayArea area = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
+        RectInt32 work = area.WorkArea;
+        width = Math.Clamp(width, 400, Math.Max(400, work.Width));
+        height = Math.Clamp(height, 240, Math.Max(240, work.Height));
+
+        if (width != current.Width || height != current.Height)
+            _appWindow.Resize(new SizeInt32(width, height));
+    }
+
+    /// <summary>
     /// True when <paramref name="source"/> sits inside <paramref name="ancestor"/> in the
     /// visual tree. The walk starts at the pressed element, so a press on a palette row
     /// counts as a press inside the palette.
@@ -3813,6 +3849,8 @@ public sealed partial class Workspace
         pane.OnClosePane = _ => CloseFocusedPane();
         pane.OnBellAttention = _ => FlashWindow();
         pane.OnCommandFinished = OnPaneCommandFinished;
+        pane.OnResizeWindow = ResizeWindowFromProgram;
+        pane.OnDesktopNotification = OnPaneDesktopNotification;
         pane.OnSearchFocusReleased = p =>
         {
             // Returning focus to the IME sink lets the find bar stay visible while the

@@ -242,15 +242,18 @@ public sealed partial class Workspace
 
     private static bool _notificationsRegistered;
 
+    private static void EnsureNotificationsRegistered()
+    {
+        if (_notificationsRegistered) return;
+        AppNotificationManager.Default.Register();
+        _notificationsRegistered = true;
+    }
+
     private void ShowCommandNotification(TerminalPane pane, int exitCode)
     {
         try
         {
-            if (!_notificationsRegistered)
-            {
-                AppNotificationManager.Default.Register();
-                _notificationsRegistered = true;
-            }
+            EnsureNotificationsRegistered();
 
             var notification = new AppNotificationBuilder()
                 .AddText(Strings.CommandFinishedTitle)
@@ -261,6 +264,28 @@ public sealed partial class Workspace
         catch (Exception error)
         {
             // Unpackaged hosts can refuse toasts; the taskbar flash is the fallback.
+            Diag.LogException("Workspace.notify", error);
+            FlashWindow();
+        }
+    }
+
+    /// <summary>
+    /// "desktop-notifications": the running program asked for a desktop notification with
+    /// OSC 9 or OSC 777. OSC 9 carries no title, so fall back to the pane's title.
+    /// </summary>
+    private void OnPaneDesktopNotification(TerminalPane pane, string title, string body)
+    {
+        try
+        {
+            EnsureNotificationsRegistered();
+
+            string heading = title.Length > 0 ? title : pane.Title.Length > 0 ? pane.Title : "Gui";
+            var builder = new AppNotificationBuilder().AddText(heading);
+            if (body.Length > 0) builder.AddText(body);
+            AppNotificationManager.Default.Show(builder.BuildNotification());
+        }
+        catch (Exception error)
+        {
             Diag.LogException("Workspace.notify", error);
             FlashWindow();
         }

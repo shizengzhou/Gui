@@ -189,14 +189,14 @@
 - [ ] `image-storage-limit` — 单屏图像数据（Kitty 协议）字节上限
 - [x] `term` — TERM 环境变量值
 - [x] `enquiry-response` — 收到 ENQ(0x05) 时回复的字符串（默认空，即不回复；见 `TerminalSession.SetEnquiryResponse`）
-- [ ] `vt-kam-allowed` — 是否允许 KAM 模式禁用键盘输入
-- [ ] `vt-window-resize-allowed` — 是否允许程序通过 CSI 8 t 调整窗口大小
-- [ ] `vt-xt-checksum-extension` — XT 校验和扩展的开关
-- [ ] `vt-xt-checksum-report` — 是否回报 XT 校验和
+- [x] `vt-kam-allowed` — 是否允许 KAM 模式禁用键盘输入；默认 `false`（与 Ghostty 一致）。开启后 `Term/TerminalPane.cs` 的 `KeyDown()` / `CommitText()` 在写入 pty 前查询 ANSI 模式 2（`Term/TerminalSession.cs` 的 `KeyboardActionMode()` 经 `TDATA_MODE` 读取 `0x8002`），KAM 打开时丢弃按键与 IME 文本；键绑定已在工作区层先行处理，不受影响
+- [x] `vt-window-resize-allowed` — 是否允许程序通过 CSI 8 t 调整窗口大小；默认 `false`（与 Ghostty 一致）。`TerminalSession` 接 `OPT_RESIZE_WINDOW` 回调（`Term/TerminalSession.cs` 的 `OnResizeWindowReport()` 解析 `GhosttyTerminalResizeWindow`），`Term/TerminalPane.cs` 按配置过滤并延迟到 UI 队列，`Term/Workspace.cs` 的 `ResizeWindowFromProgram()` 按请求窗格的单元格尺寸用差值调整窗口；0 表示保持该维度，最小 40×10 格（与 Ghostty 一致）
+- [x] `vt-xt-checksum-extension` — 重置后 DECRQCRA 校验和的算法（xterm 的 CSBITS）；默认 `negate,attributes,trim`（位掩码 0，即 DEC 算法），可用 `no-negate` / `no-attributes` / `no-trim` / `undrawn` / `full` 组合，后出现的项覆盖前面的。`Term/Config.cs` 的 `ParseXtChecksumExtension()` 把名称换算成位掩码，`Term/TerminalSession.cs` 的 `SetXtChecksumExtension()` 经 `OPT_XT_CHECKSUM_EXTENSION` 下发；运行中程序的 XTCHECKSUM（`CSI Ps # y`）仍可在下次重置前覆盖。只有开启 `vt-xt-checksum-report` 后，DECRQCRA 才会真正返回校验和
+- [x] `vt-xt-checksum-report` — 是否回报 XT 校验和；默认 `false`（与 Ghostty 一致，避免程序逐格读取屏幕内容）。开启后 DECRQCRA（`CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y`）以 `DCS Pi ! ~ XXXX ST` 回复，算法由 `vt-xt-checksum-extension` 决定；关闭时 DECRQCRA 与 XTCHECKSUM（`CSI Ps # y`）都被忽略。见 `Term/TerminalSession.cs` 的 `SetXtChecksumReport()`（`OPT_XT_CHECKSUM_REPORT`），配置重载时经 `ApplyProgramQueries()` 重新下发
 - [x] `osc-color-report-format` — OSC 颜色查询的回报格式（`none` / `8-bit` / `16-bit`，默认 `16-bit`；核心只会发 16 位，另外两种在写回 pty 前改写，见 `Term/ColorReport.cs`）
-- [ ] `async-backend` — 异步 IO 后端（auto/epoll/io_uring 等）
+- [ ] `async-backend` — 异步 IO 后端（auto/epoll/io_uring 等）；仅 Linux（macOS 固定 kqueue），Windows 无对应实现，跳过
 - [ ] `app-notifications` — 应用内通知（toast）的控制项
-- [ ] `desktop-notifications` — 是否允许 OSC 桌面通知
+- [x] `desktop-notifications` — 是否允许程序通过 OSC 9 / OSC 777 发起桌面通知；默认 `true`（与 Ghostty 一致）。`TerminalSession` 接 `OPT_DESKTOP_NOTIFICATION` 回调（`OnDesktopNotificationReport()` 解析 `GhosttyTerminalDesktopNotification`），`Term/TerminalPane.cs` 按配置过滤，`Term/Workspace.Window.cs` 的 `OnPaneDesktopNotification()` 用 Windows 应用通知显示：OSC 9 无标题时回退到窗格标题，空正文只显示标题；注册复用命令完成通知的 `AppNotificationManager`，失败时闪烁任务栏
 - [x] `progress-style` — 是否支持 OSC 9;4 图形进度条；默认开启。解析 `ESC ] 9 ; 4 ; state ; value ST`（0 清除 / 1 进行中 / 2 失败 / 3 不确定 / 4 暂停，百分比夹到 0–100），像 Ghostty 一样在终端内容顶部画一条 2 DIP 的细条（普通态用主题强调色，失败/暂停用控件的红/黄色，不确定态脉冲）；命令结束（OSC 133 D）或新提示符（OSC 133 A）时自动清除遗留的进度条
 
 ## 11. 快速终端（9）

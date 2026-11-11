@@ -304,8 +304,8 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   `bell-features`, notify via the Windows app notification, with a taskbar-flash fallback) and
   the running state feeds `confirm-close-surface` at window close.
 - 1.4 additions such as `link` (upstream is itself a TODO),
-  `scrollback-compression`, `clipboard-write-limit-bytes`, `vt-window-resize-allowed`,
-  `vt-xt-checksum-*` and the new `gtk-*` keys are parsed without warnings, but this build has
+  `scrollback-compression`, `clipboard-write-limit-bytes`,
+  and the new `gtk-*` keys are parsed without warnings, but this build has
   no behavior behind them yet.
 - `compact` is `false` (default: panes float as rounded islands with a 6 DIP gap) or `true`
   (panes run edge to edge in a square content area, split only by 1 DIP dividers; the tab

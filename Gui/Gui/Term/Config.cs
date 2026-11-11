@@ -309,6 +309,32 @@ public sealed class Config
     /// </summary>
     public string OscColorReportFormat = ColorReport.SixteenBit;
 
+    /// <summary>
+    /// "vt-kam-allowed": whether a program may turn on KAM (ANSI mode 2) to disable
+    /// keyboard input. Off by default, like Ghostty; keybindings still run.
+    /// </summary>
+    public bool VtKamAllowed;
+
+    /// <summary>
+    /// "vt-window-resize-allowed": whether a program may resize the window with CSI 8 t.
+    /// Off by default, like Ghostty; requests are clamped to 40x10 cells.
+    /// </summary>
+    public bool VtWindowResizeAllowed;
+
+    /// <summary>
+    /// "vt-xt-checksum-extension": xterm's CSBITS for the DECRQCRA checksum, used after a
+    /// reset. Bit 1/2/4 turn off negation, video attributes and blank trimming; bit 8
+    /// counts undrawn cells as spaces; bit 16 uses full codepoints. Zero is the DEC
+    /// calculation, which is Ghostty's default.
+    /// </summary>
+    public byte XtChecksumExtension;
+
+    /// <summary>
+    /// "vt-xt-checksum-report": whether DECRQCRA may read the screen back with a checksum.
+    /// Off by default, like Ghostty; while off, XTCHECKSUM (CSI Ps # y) is ignored too.
+    /// </summary>
+    public bool XtChecksumReport;
+
     // ---- shell integration and notifications ------------------------------
 
     public string ShellIntegration = "detect";     // none, detect, or a shell name
@@ -320,6 +346,12 @@ public sealed class Config
 
     /// <summary>"progress-style": draw OSC 9;4 progress in the tab bar (default on).</summary>
     public bool ProgressStyle = true;
+
+    /// <summary>
+    /// "desktop-notifications": whether the running program may raise a system notification
+    /// with OSC 9 or OSC 777. On by default, like Ghostty.
+    /// </summary>
+    public bool DesktopNotifications = true;
 
     // ---- process ----------------------------------------------------------
 
@@ -521,6 +553,10 @@ public sealed class Config
         TitleReport = other.TitleReport;
         EnquiryResponse = other.EnquiryResponse;
         OscColorReportFormat = other.OscColorReportFormat;
+        VtKamAllowed = other.VtKamAllowed;
+        VtWindowResizeAllowed = other.VtWindowResizeAllowed;
+        XtChecksumExtension = other.XtChecksumExtension;
+        XtChecksumReport = other.XtChecksumReport;
 
         ExtraEnvironment = new List<(string, string)>(other.ExtraEnvironment);
         Input = other.Input;
@@ -533,6 +569,7 @@ public sealed class Config
         NotifyOnCommandFinishToast = other.NotifyOnCommandFinishToast;
         NotifyOnCommandFinishAfter = other.NotifyOnCommandFinishAfter;
         ProgressStyle = other.ProgressStyle;
+        DesktopNotifications = other.DesktopNotifications;
 
         _values.Clear();
         foreach (var pair in other._values)
@@ -929,6 +966,10 @@ public sealed class Config
         TitleReport = GetBool("title-report", false);
         EnquiryResponse = Last("enquiry-response") ?? string.Empty;
         OscColorReportFormat = ColorReport.Normalize(Last("osc-color-report-format"));
+        VtKamAllowed = GetBool("vt-kam-allowed", false);
+        VtWindowResizeAllowed = GetBool("vt-window-resize-allowed", false);
+        XtChecksumExtension = ParseXtChecksumExtension(Last("vt-xt-checksum-extension"));
+        XtChecksumReport = GetBool("vt-xt-checksum-report", false);
         SelectionWordChars = Last("selection-word-chars") ?? DefaultSelectionWordChars;
         ClipboardCodepointMap = ParseCodepointMaps(All("clipboard-codepoint-map"));
         PasteProtection = GetBool("clipboard-paste-protection", true);
@@ -982,6 +1023,7 @@ public sealed class Config
         NotifyOnCommandFinishAfter =
             ParseDuration(Last("notify-on-command-finish-after"), TimeSpan.FromSeconds(5));
         ProgressStyle = GetBool("progress-style", true);
+        DesktopNotifications = GetBool("desktop-notifications", true);
 
         TabPosition = (Last("tab-position") ?? string.Empty).ToLowerInvariant();
         NewTabPosition =
@@ -1788,6 +1830,47 @@ public sealed class Config
                 case "border": BellBorder = enable; break;
             }
         }
+    }
+
+    /// <summary>
+    /// "vt-xt-checksum-extension" is a comma separated list of negate / attributes / trim /
+    /// undrawn / full with "no-" negations. Ghostty's default is the DEC calculation:
+    /// negate, attributes and trim on, undrawn and full off. The result is xterm's CSBITS,
+    /// which turn off the default parts, so the defaults map to zero.
+    /// </summary>
+    private static byte ParseXtChecksumExtension(string? value)
+    {
+        bool negate = true;
+        bool attributes = true;
+        bool trim = true;
+        bool undrawn = false;
+        bool full = false;
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string token = raw.Trim().ToLowerInvariant();
+                bool enable = true;
+                if (token.StartsWith("no-", StringComparison.Ordinal))
+                {
+                    enable = false;
+                    token = token[3..];
+                }
+
+                switch (token)
+                {
+                    case "negate": negate = enable; break;
+                    case "attributes": attributes = enable; break;
+                    case "trim": trim = enable; break;
+                    case "undrawn": undrawn = enable; break;
+                    case "full": full = enable; break;
+                }
+            }
+        }
+
+        return (byte)((!negate ? 1 : 0) | (!attributes ? 2 : 0) | (!trim ? 4 : 0) |
+                      (undrawn ? 8 : 0) | (full ? 16 : 0));
     }
 
     private static string NormalizeShiftCapture(string? value)

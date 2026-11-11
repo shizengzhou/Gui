@@ -30,11 +30,17 @@ internal static unsafe class GhosttyNative
     internal const int OPT_CLIPBOARD_WRITE = 26;
     internal const int OPT_SCROLLBACK_MAX_BYTES = 27;
     internal const int OPT_SCROLLBACK_MAX_LINES = 28;
+    internal const int OPT_DESKTOP_NOTIFICATION = 29;
     internal const int OPT_TITLE_REPORT = 32;
     internal const int OPT_CLIPBOARD_READ = 38;
     internal const int OPT_CLIPBOARD_WRITE_MAX_BYTES = 39;
+    internal const int OPT_XT_CHECKSUM_REPORT = 44;
+    internal const int OPT_XT_CHECKSUM_EXTENSION = 45;
     internal const int OPT_PROGRAM_STATUS = 46;
     internal const int OPT_RESIZE_WINDOW = 47;
+
+    // ---- GhosttyTerminalResizeWindowTag ----
+    internal const int RESIZE_WINDOW_GRID = 0;
 
     // ---- GhosttyProgramStatusState ----
     internal const int PROGRAM_STATUS_IDLE = 0;
@@ -452,6 +458,38 @@ internal static unsafe class GhosttyNative
     /// <summary>OSC 7501 report: <paramref name="report"/> is a sized struct.</summary>
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void ProgramStatusFn(IntPtr terminal, IntPtr userdata, IntPtr report);
+
+    /// <summary>OSC 9 / OSC 777 notification: <paramref name="notification"/> is a sized struct.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void DesktopNotificationFn(IntPtr terminal, IntPtr userdata, IntPtr notification);
+
+    /// <summary>
+    /// A desktop notification request. The strings are borrowed until the callback returns;
+    /// the title is empty when the protocol omits it (OSC 9).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyTerminalDesktopNotification
+    {
+        public nuint Size;
+        public GhosttyString Title;
+        public GhosttyString Body;
+    }
+
+    /// <summary>CSI 8 t request: <paramref name="request"/> is a GhosttyTerminalResizeWindow.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void ResizeWindowFn(IntPtr terminal, IntPtr userdata, IntPtr request);
+
+    /// <summary>
+    /// A program's resize request. The tag selects the union arm at offset 8, which for
+    /// GRID is { uint16 rows; uint16 columns; } at offsets 8 and 10.
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    internal struct GhosttyTerminalResizeWindow
+    {
+        [FieldOffset(0)] public int Tag;
+        [FieldOffset(8)] public ushort Rows;
+        [FieldOffset(10)] public ushort Columns;
+    }
 
     /// <summary>
     /// One validated program status report (OSC 7501). The strings are UTF-8 and only

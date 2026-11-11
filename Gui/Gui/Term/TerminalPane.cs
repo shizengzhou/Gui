@@ -183,6 +183,12 @@ public sealed class TerminalPane
     public Action<TerminalPane, int, TimeSpan>? OnCommandFinished;
     public Action<TerminalPane>? OnSearchFocusReleased;
 
+    /// <summary>CSI 8 t resize request ("vt-window-resize-allowed"): rows, then columns.</summary>
+    public Action<TerminalPane, int, int>? OnResizeWindow;
+
+    /// <summary>OSC 9 / OSC 777 desktop notification ("desktop-notifications"): title, body.</summary>
+    public Action<TerminalPane, string, string>? OnDesktopNotification;
+
     // Split drag and drop ("drag-handle"): the pane hands the pointer to the workspace,
     // which owns the split tree and the drop overlay. Points are in this pane's visual.
     public Action<TerminalPane>? OnDragHandleStart;
@@ -266,6 +272,8 @@ public sealed class TerminalPane
         _session.SetTitleReport(config.TitleReport);
         _session.SetEnquiryResponse(config.EnquiryResponse);
         _session.SetOscColorReportFormat(config.OscColorReportFormat);
+        _session.SetXtChecksumExtension(config.XtChecksumExtension);
+        _session.SetXtChecksumReport(config.XtChecksumReport);
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         _canvas = new CanvasControl
@@ -1429,6 +1437,8 @@ public sealed class TerminalPane
         _session.SetTitleReport(_config.TitleReport);
         _session.SetEnquiryResponse(_config.EnquiryResponse);
         _session.SetOscColorReportFormat(_config.OscColorReportFormat);
+        _session.SetXtChecksumExtension(_config.XtChecksumExtension);
+        _session.SetXtChecksumReport(_config.XtChecksumReport);
 
         WireSession();
         BeginSession();
@@ -1458,6 +1468,8 @@ public sealed class TerminalPane
         session.OnCommandFinished = null;
         session.OnProgress = null;
         session.OnProgramStatus = null;
+        session.OnDesktopNotification = null;
+        session.OnResizeWindow = null;
         session.OnExit = null;
         session.OnTitle = null;
         return session;
@@ -1512,6 +1524,20 @@ public sealed class TerminalPane
         _session.OnBell = RingBell;
         _session.OnCommandFinished = (exit, duration) => OnCommandFinished?.Invoke(this, exit, duration);
         _session.OnProgress = OnProgressReported;
+        _session.OnDesktopNotification = (title, body) =>
+        {
+            if (_config.DesktopNotifications) OnDesktopNotification?.Invoke(this, title, body);
+        };
+        _session.OnResizeWindow = (rows, columns) =>
+        {
+            // "vt-window-resize-allowed": off by default, like Ghostty. Resizing re-lays out
+            // the pane, which resizes the terminal; defer so that work never runs inside the
+            // VT write that produced this request.
+            if (!_config.VtWindowResizeAllowed) return;
+            if (_dispatcher is null) return;
+            _dispatcher.TryEnqueue(() => Diag.Guard("pane.resize_window",
+                () => OnResizeWindow?.Invoke(this, rows, columns)));
+        };
         _session.OnProgramStatus = () =>
         {
             UpdateStatusBadge();
@@ -1564,6 +1590,8 @@ public sealed class TerminalPane
         _session.OnCommandFinished = null;
         _session.OnProgress = null;
         _session.OnProgramStatus = null;
+        _session.OnDesktopNotification = null;
+        _session.OnResizeWindow = null;
         _session.OnExit = null;
         _session.OnTitle = null;
         if (_sessionReleased) return;
@@ -1963,6 +1991,8 @@ public sealed class TerminalPane
         _session.SetTitleReport(_config.TitleReport);
         _session.SetEnquiryResponse(_config.EnquiryResponse);
         _session.SetOscColorReportFormat(_config.OscColorReportFormat);
+        _session.SetXtChecksumExtension(_config.XtChecksumExtension);
+        _session.SetXtChecksumReport(_config.XtChecksumReport);
     }
 
     /// <summary>Re-applies "clipboard-read/write" and the per-write byte limit.</summary>
@@ -2209,6 +2239,9 @@ public sealed class TerminalPane
     {
         if (!_ready || _session is null) return false;
         if (ReadOnly) return true;
+        // Keybindings already ran in the workspace, so KAM only swallows what would have
+        // reached the shell, matching Ghostty's order.
+        if (KamBlocksKeyboard()) return true;
 
         int mods = CurrentMods();
         bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
@@ -2236,12 +2269,17 @@ public sealed class TerminalPane
     {
         if (!_ready || _session is null || text.Length == 0) return;
         if (ReadOnly) return;
+        // IME commits are keyboard input too ("vt-kam-allowed").
+        if (KamBlocksKeyboard()) return;
         HidePointer();
         ClearBellState();
         ClearSelectionOnTyping();
         _session.WriteInput(System.Text.Encoding.UTF8.GetBytes(text));
         if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
     }
+
+    private bool KamBlocksKeyboard() =>
+        _config.VtKamAllowed && _session is not null && _session.KeyboardActionMode();
 
     private void ClearSelectionOnTyping()
     {
