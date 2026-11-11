@@ -1151,10 +1151,9 @@ public sealed partial class Workspace
     private void RunPalette() => RunPaletteItem(ActivePaletteItems(), _paletteSelected);
 
     /// <summary>
-    /// The hamburger menu shared by the title bar and the rail. <paramref name="includeNewTab"/>
-    /// adds the rail's own new-tab action, which the rail button covers while it is visible.
+    /// The hamburger menu shared by the title bar and the rail.
     /// </summary>
-    private MenuFlyout BuildMainMenu(bool includeNewTab)
+    private MenuFlyout BuildMainMenu()
     {
         var menu = new MenuFlyout
         {
@@ -1165,19 +1164,24 @@ public sealed partial class Workspace
                 : Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight,
         };
 
-        if (includeNewTab)
-        {
-            var newTab = new MenuFlyoutItem
-            {
-                Text = Strings.NewTab,
-                KeyboardAcceleratorTextOverride = "Ctrl+Shift+T",
-            };
-            newTab.Click += (_, _) => Activate(IndexOf(NewTab()));
-            menu.Items.Add(newTab);
-            menu.Items.Add(new MenuFlyoutSeparator());
-        }
-
         var file = new MenuFlyoutSubItem { Text = Strings.FileMenu };
+        var newTab = new MenuFlyoutItem
+        {
+            Text = Strings.NewTab,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("new_tab", "Ctrl+Shift+T"),
+        };
+        newTab.Click += (_, _) => Activate(IndexOf(NewTab()));
+        file.Items.Add(newTab);
+
+        var newWindow = new MenuFlyoutItem
+        {
+            Text = Strings.NewWindow,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("new_window", "Ctrl+Shift+N"),
+        };
+        newWindow.Click += (_, _) => OpenNewWindow();
+        file.Items.Add(newWindow);
+        file.Items.Add(new MenuFlyoutSeparator());
+
         var openDirectory = new MenuFlyoutItem
         {
             Text = Strings.OpenDirectory,
@@ -1185,6 +1189,11 @@ public sealed partial class Workspace
         };
         openDirectory.Click += (_, _) => _ = OpenDirectoryAsync();
         file.Items.Add(openDirectory);
+        file.Items.Add(new MenuFlyoutSeparator());
+
+        var exit = new MenuFlyoutItem { Text = Strings.Exit };
+        exit.Click += (_, _) => QuitApplication();
+        file.Items.Add(exit);
         menu.Items.Add(file);
 
         var commandPalette = new MenuFlyoutItem
@@ -1202,12 +1211,6 @@ public sealed partial class Workspace
         };
         settings.Click += (_, _) => OpenConfig();
         menu.Items.Add(settings);
-
-        menu.Items.Add(new MenuFlyoutSeparator());
-
-        var exit = new MenuFlyoutItem { Text = Strings.Exit };
-        exit.Click += (_, _) => QuitApplication();
-        menu.Items.Add(exit);
 
         return menu;
     }

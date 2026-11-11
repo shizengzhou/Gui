@@ -1027,6 +1027,29 @@ public sealed partial class Workspace
 
     private Border ToolButton(char code) => ToolButton(code, ChromeIconFaintBrush());
 
+    /// <summary>
+    /// Hover label for a rail tool button: the action's name above its key chord, the same
+    /// two-line shape the pane's action buttons use.
+    /// </summary>
+    private void RailTip(Border button, string title, string actionId, string fallback)
+    {
+        var tip = new StackPanel { Spacing = 2 };
+        tip.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 12,
+            Foreground = TextStrongBrush(),
+        });
+        tip.Children.Add(new TextBlock
+        {
+            Text = _keybinds.Label(actionId, fallback),
+            FontSize = 11,
+            Foreground = TextFaintBrush(),
+            FontStyle = FontStyle.Italic,
+        });
+        ToolTipService.SetToolTip(button, tip);
+    }
+
     private Border ToolButton(Path icon)
     {
         return new Border
@@ -1522,7 +1545,7 @@ public sealed partial class Workspace
             mainMenu.PointerReleased += (_, args) =>
             {
                 args.Handled = true;
-                BuildMainMenu(false).ShowAt(mainMenu);
+                BuildMainMenu().ShowAt(mainMenu);
             };
             topTools.Children.Add(mainMenu);
 
@@ -1677,6 +1700,7 @@ public sealed partial class Workspace
         // require opening a menu.
         Border collapse = ToolButton(PanelIcon(ChromeIconFaintBrush(), 14, _placement != TabPlacement.Right));
         Hoverable(collapse, ChipHoverBrush);
+        RailTip(collapse, Strings.ToggleSidebar, "toggle_sidebar", "Ctrl+Shift+B");
         collapse.PointerPressed += (_, args) =>
         {
             args.Handled = true;
@@ -1686,6 +1710,7 @@ public sealed partial class Workspace
 
         Border add = ToolButton('\uE710');
         Hoverable(add, ChipHoverBrush);
+        RailTip(add, Strings.NewTab, "new_tab", "Ctrl+Shift+T");
         add.PointerPressed += (_, args) =>
         {
             args.Handled = true;
@@ -1701,12 +1726,12 @@ public sealed partial class Workspace
         mainMenu.PointerReleased += (_, args) =>
         {
             args.Handled = true;
-            BuildMainMenu(false).ShowAt(mainMenu);
+            BuildMainMenu().ShowAt(mainMenu);
         };
         tools.Children.Add(mainMenu);
 
-        // When the rail's top row cannot hold the buttons, the new-tab and menu actions fold
-        // into one overflow button that carries all of them.
+        // When the rail's top row cannot hold the buttons, the new-tab action folds into the
+        // overflow menu, where File > New tab still reaches it.
         Border menu = ToolButton('\uE712');
         Hoverable(menu, ChipHoverBrush);
         // Opening on release: a flyout shown while the button is still down is dismissed by
@@ -1715,7 +1740,7 @@ public sealed partial class Workspace
         menu.PointerReleased += (_, args) =>
         {
             args.Handled = true;
-            BuildMainMenu(true).ShowAt(menu);
+            BuildMainMenu().ShowAt(menu);
         };
         tools.Children.Add(menu);
 
