@@ -3346,12 +3346,12 @@ public sealed class TerminalPane
         float[][,] figures = zoomed
             ? new[]
             {
-                new float[,] { { 13.5f, 2.5f }, { 9.0f, 7.0f } },
-                new float[,] { { 9.0f, 7.0f }, { 12.0f, 7.0f } },
-                new float[,] { { 9.0f, 7.0f }, { 9.0f, 4.0f } },
-                new float[,] { { 2.5f, 13.5f }, { 7.0f, 9.0f } },
-                new float[,] { { 7.0f, 9.0f }, { 4.0f, 9.0f } },
-                new float[,] { { 7.0f, 9.0f }, { 7.0f, 12.0f } },
+                // Same bounds and 4.5-unit arrowheads as the expanded state; only the head
+                // moves to the inner end so the arrows point at the centre.
+                new float[,] { { 14.0f, 2.5f }, { 9.5f, 7.0f } },
+                new float[,] { { 13.5f, 7.0f }, { 9.0f, 7.0f }, { 9.0f, 2.5f } },
+                new float[,] { { 2.0f, 13.5f }, { 6.5f, 9.0f } },
+                new float[,] { { 2.5f, 9.0f }, { 7.0f, 9.0f }, { 7.0f, 13.5f } },
             }
             : new[]
             {
