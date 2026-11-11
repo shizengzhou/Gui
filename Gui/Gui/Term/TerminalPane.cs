@@ -54,6 +54,9 @@ public sealed class TerminalPane
     private readonly TextBlock _pathText;
     private readonly FontIcon _iconFallback;
     private readonly Image _shellIcon;
+
+    /// <summary>OSC 7501 status dot on the header's shell icon, matching the tab chip.</summary>
+    private Ellipse? _iconStatusDot;
     private Path? _zoomIcon;
     private Border? _zoomButton;
     private Border? _closeButton;
@@ -521,6 +524,21 @@ public sealed class TerminalPane
             Visibility = Visibility.Collapsed,
         };
         iconSlot.Children.Add(_shellIcon);
+
+        // Same OSC 7501 dot that the tab chip draws on this icon: the pane header keeps the
+        // shell icon and cwd, so the program's state belongs on that corner rather than in
+        // another badge.
+        _iconStatusDot = new Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, -1, -1),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+        iconSlot.Children.Add(_iconStatusDot);
         info.Children.Add(iconSlot);
 
         _workingDirectory = DefaultWorkingDirectory(config);
@@ -1350,7 +1368,14 @@ public sealed class TerminalPane
         if (reported is not { } status || status.State == ProgramState.Idle)
         {
             _statusBadge.Visibility = Visibility.Collapsed;
+            if (_iconStatusDot is not null) _iconStatusDot.Visibility = Visibility.Collapsed;
             return;
+        }
+
+        if (_iconStatusDot is not null)
+        {
+            _iconStatusDot.Visibility = Visibility.Visible;
+            _iconStatusDot.Fill = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
         }
 
         string text = status.Message.Length > 0 ? status.Message
