@@ -1540,6 +1540,7 @@ public sealed partial class Workspace
             Border add = ToolButton('\uE710', ChromeIconFaintBrush());
             add.Width = 28;
             Hoverable(add, ChromeChipHoverBrush);
+            RailTip(add, Strings.NewTab, "new_tab", "Ctrl+Shift+T");
             add.PointerPressed += (_, args) =>
             {
                 args.Handled = true;
