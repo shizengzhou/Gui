@@ -559,7 +559,7 @@ public sealed class TerminalPane
         _zoomIcon.Data = ZoomGeometry(false, 12.0);
         _zoomButton = AddAction(_zoomIcon, () => Strings.ToggleZoom, "toggle_split_zoom", "ctrl+shift+enter",
             () => OnMaximize?.Invoke(this));
-        _closeButton = AddAction(CloseIcon(iconFaint, 11.0), () => Strings.ClosePane, "close_surface", "ctrl+shift+w",
+        _closeButton = AddAction(CloseIcon(iconFaint, 12.0), () => Strings.ClosePane, "close_surface", "ctrl+shift+w",
             () => OnClosePane?.Invoke(this));
 
         // The action buttons keep the arrow cursor: the header's move cursor stops at this
@@ -3366,8 +3366,8 @@ public sealed class TerminalPane
     private static PathGeometry CloseGeometry(double size) =>
         PolylineGeometry(new[]
         {
-            new float[,] { { 4.4f, 4.4f }, { 11.6f, 11.6f } },
-            new float[,] { { 11.6f, 4.4f }, { 4.4f, 11.6f } },
+            new float[,] { { 4.0f, 4.0f }, { 12.0f, 12.0f } },
+            new float[,] { { 12.0f, 4.0f }, { 4.0f, 12.0f } },
         }, size);
 
     private static Path SplitIcon(bool vertical, Brush stroke, double size)
@@ -3380,6 +3380,12 @@ public sealed class TerminalPane
     private static Path CloseIcon(Brush stroke, double size)
     {
         Path path = StyledIcon(stroke, size);
+        // The X is two short diagonals, so the shared 1.5/16 stroke reads thinner than the
+        // structural split/zoom glyphs. Give it a little more weight and flat tips so it
+        // stays crisp at the small preview size.
+        path.StrokeThickness = size * 2.0 / 16.0;
+        path.StrokeStartLineCap = PenLineCap.Flat;
+        path.StrokeEndLineCap = PenLineCap.Flat;
         path.Data = CloseGeometry(size);
         return path;
     }
