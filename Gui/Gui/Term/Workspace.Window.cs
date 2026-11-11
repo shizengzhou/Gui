@@ -536,6 +536,24 @@ public sealed partial class Workspace
         bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
         bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
 
+        // Ctrl+K starts the "Open Directory" chord. The second key decides: Ctrl+O opens the
+        // picker, Escape cancels silently, and anything else goes on to the normal handlers
+        // (only the prefix itself is consumed).
+        if (_openDirectoryChord != 0)
+        {
+            bool armed = Environment.TickCount64 - _openDirectoryChord < 2000;
+            _openDirectoryChord = 0;
+            if (armed)
+            {
+                if (ctrl && !shift && !alt && args.Key == VirtualKey.O)
+                {
+                    _ = OpenDirectoryAsync();
+                    return true;
+                }
+                if (args.Key == VirtualKey.Escape) return true;
+            }
+        }
+
         // A "keybind" line wins over the built-in chord, and an explicit unbind hands the
         // key back to the shell instead of running the default action.
         KeybindMatch match = _keybinds.Resolve(mods, args.Key, out string? boundAction);
@@ -680,6 +698,10 @@ public sealed partial class Workspace
                         return true;
                     case VirtualKey.Insert:
                         pane?.CopyToClipboard();
+                        return true;
+                    case VirtualKey.K:
+                        // Prefix of the Ctrl+K Ctrl+O chord that opens a directory.
+                        _openDirectoryChord = Environment.TickCount64;
                         return true;
                     case VirtualKey.PageUp:
                         CycleTab(-1);

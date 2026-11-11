@@ -1492,7 +1492,7 @@ public sealed partial class Workspace
             Grid.SetColumn(scroller, 0);
             _headerInner.Children.Add(scroller);
 
-            // New-tab / search stay pinned to the right of the header, whatever the tab
+            // New-tab / main menu stay pinned to the right of the header, whatever the tab
             // strip's width or scroll offset.
             var topTools = new StackPanel
             {
@@ -1512,17 +1512,19 @@ public sealed partial class Workspace
             };
             topTools.Children.Add(add);
 
-            // The magnifier opens the command palette, like the rail's own search command;
-            // the per-pane find bar stays on Ctrl+Shift+F and the palette's Find row.
-            Border palette = ToolButton('\uE721', ChromeIconFaintBrush());
-            palette.Width = 28;
-            Hoverable(palette, ChromeChipHoverBrush);
-            palette.PointerPressed += (_, args) =>
+            // The hamburger holds the window's main menu (File, command palette, settings,
+            // exit). It opens on release: a flyout shown while the button is still down is
+            // dismissed by the same press.
+            Border mainMenu = ToolButton('\uE712', ChromeIconFaintBrush());
+            mainMenu.Width = 28;
+            Hoverable(mainMenu, ChromeChipHoverBrush);
+            mainMenu.PointerPressed += (_, args) => args.Handled = true;
+            mainMenu.PointerReleased += (_, args) =>
             {
                 args.Handled = true;
-                ShowCommandPalette();
+                BuildMainMenu(false).ShowAt(mainMenu);
             };
-            topTools.Children.Add(palette);
+            topTools.Children.Add(mainMenu);
 
             Grid.SetColumn(topTools, 1);
             _headerInner.Children.Add(topTools);
@@ -1691,43 +1693,20 @@ public sealed partial class Workspace
         };
         tools.Children.Add(add);
 
-        Border search = ToolButton('\uE721');
-        Hoverable(search, ChipHoverBrush);
-        search.PointerPressed += (_, args) =>
+        // The hamburger opens the main menu here too; the rail's own new-tab button stays
+        // next to it, so the menu only carries the shared items while the row has room.
+        Border mainMenu = ToolButton('\uE712');
+        Hoverable(mainMenu, ChipHoverBrush);
+        mainMenu.PointerPressed += (_, args) => args.Handled = true;
+        mainMenu.PointerReleased += (_, args) =>
         {
             args.Handled = true;
-            ShowCommandPalette();
+            BuildMainMenu(false).ShowAt(mainMenu);
         };
-        tools.Children.Add(search);
+        tools.Children.Add(mainMenu);
 
-        // The two extra actions become an overflow button only when the rail's top row cannot
-        // hold them. A right-hand rail shares that row with the caption buttons, so it needs
-        // noticeably more width than a left-hand one.
-        var railMenu = new MenuFlyout
-        {
-            // Edge-aligned to the button: centered below it would hang the menu off the
-            // window when the rail is at its narrowest.
-            Placement = _placement == TabPlacement.Right
-                ? Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight
-                : Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft,
-        };
-
-        var newTabItem = new MenuFlyoutItem
-        {
-            Text = "新建标签页",
-            KeyboardAcceleratorTextOverride = "Ctrl+Shift+T",
-        };
-        newTabItem.Click += (_, _) => Activate(IndexOf(NewTab()));
-        railMenu.Items.Add(newTabItem);
-
-        var searchItem = new MenuFlyoutItem
-        {
-            Text = "搜索命令",
-            KeyboardAcceleratorTextOverride = "Ctrl+Shift+P",
-        };
-        searchItem.Click += (_, _) => ShowCommandPalette();
-        railMenu.Items.Add(searchItem);
-
+        // When the rail's top row cannot hold the buttons, the new-tab and menu actions fold
+        // into one overflow button that carries all of them.
         Border menu = ToolButton('\uE712');
         Hoverable(menu, ChipHoverBrush);
         // Opening on release: a flyout shown while the button is still down is dismissed by
@@ -1736,7 +1715,7 @@ public sealed partial class Workspace
         menu.PointerReleased += (_, args) =>
         {
             args.Handled = true;
-            railMenu.ShowAt(menu);
+            BuildMainMenu(true).ShowAt(menu);
         };
         tools.Children.Add(menu);
 
@@ -1748,7 +1727,7 @@ public sealed partial class Workspace
             bool fits = (_sidebar?.ActualWidth ?? 0.0) >= needed;
 
             add.Visibility = fits ? Visibility.Visible : Visibility.Collapsed;
-            search.Visibility = fits ? Visibility.Visible : Visibility.Collapsed;
+            mainMenu.Visibility = fits ? Visibility.Visible : Visibility.Collapsed;
             menu.Visibility = fits ? Visibility.Collapsed : Visibility.Visible;
         }
         _sidebar.SizeChanged += (_, _) => UpdateRailTools();

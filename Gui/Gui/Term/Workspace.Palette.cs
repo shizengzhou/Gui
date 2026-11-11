@@ -1150,6 +1150,96 @@ public sealed partial class Workspace
 
     private void RunPalette() => RunPaletteItem(ActivePaletteItems(), _paletteSelected);
 
+    /// <summary>
+    /// The hamburger menu shared by the title bar and the rail. <paramref name="includeNewTab"/>
+    /// adds the rail's own new-tab action, which the rail button covers while it is visible.
+    /// </summary>
+    private MenuFlyout BuildMainMenu(bool includeNewTab)
+    {
+        var menu = new MenuFlyout
+        {
+            // Edge-aligned to the button: centered below it would hang the menu off the
+            // window when the rail is at its narrowest.
+            Placement = _placement == TabPlacement.Left
+                ? Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft
+                : Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight,
+        };
+
+        if (includeNewTab)
+        {
+            var newTab = new MenuFlyoutItem
+            {
+                Text = Strings.NewTab,
+                KeyboardAcceleratorTextOverride = "Ctrl+Shift+T",
+            };
+            newTab.Click += (_, _) => Activate(IndexOf(NewTab()));
+            menu.Items.Add(newTab);
+            menu.Items.Add(new MenuFlyoutSeparator());
+        }
+
+        var file = new MenuFlyoutSubItem { Text = Strings.FileMenu };
+        var openDirectory = new MenuFlyoutItem
+        {
+            Text = Strings.OpenDirectory,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("open_directory", "Ctrl+K Ctrl+O"),
+        };
+        openDirectory.Click += (_, _) => _ = OpenDirectoryAsync();
+        file.Items.Add(openDirectory);
+        menu.Items.Add(file);
+
+        var commandPalette = new MenuFlyoutItem
+        {
+            Text = Strings.CommandPalette,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("toggle_command_palette", "Ctrl+Shift+P"),
+        };
+        commandPalette.Click += (_, _) => ShowCommandPalette();
+        menu.Items.Add(commandPalette);
+
+        var settings = new MenuFlyoutItem
+        {
+            Text = Strings.Settings,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("open_config", "Ctrl+,"),
+        };
+        settings.Click += (_, _) => OpenConfig();
+        menu.Items.Add(settings);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        var exit = new MenuFlyoutItem { Text = Strings.Exit };
+        exit.Click += (_, _) => QuitApplication();
+        menu.Items.Add(exit);
+
+        return menu;
+    }
+
+    /// <summary>Lets the user pick a folder and moves the focused pane's shell into it.</summary>
+    private async Task OpenDirectoryAsync()
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FolderPicker
+            {
+                SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.ComputerFolder,
+            };
+            // The picker needs a file-type filter even though a folder is selected.
+            picker.FileTypeFilter.Add("*");
+            if (_hwnd != IntPtr.Zero) WinRT.Interop.InitializeWithWindow.Initialize(picker, _hwnd);
+
+            Windows.Storage.StorageFolder? folder = await picker.PickSingleFolderAsync();
+            if (folder is null) return;
+
+            if (ActivePane() is { } pane)
+            {
+                pane.ChangeDirectory(folder.Path);
+                FocusKeyboardAnchor();
+            }
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.OpenDirectory", error);
+        }
+    }
+
     private void OpenConfig()
     {
         string file = Config.ConfigFile();

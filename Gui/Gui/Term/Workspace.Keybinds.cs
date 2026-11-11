@@ -10,6 +10,12 @@ public sealed partial class Workspace
     private Keybinds _keybinds = null!;
 
     /// <summary>
+    /// When nonzero, Ctrl+K was pressed and the next chord (Ctrl+O) opens a directory. Holds
+    /// the tick count of the first key so a stale prefix expires instead of firing later.
+    /// </summary>
+    private long _openDirectoryChord;
+
+    /// <summary>
     /// Handlers keyed by the action ids the "keybind" lines use. The palette registers one
     /// per command row, so a bound action runs exactly the same code as clicking the row.
     /// </summary>

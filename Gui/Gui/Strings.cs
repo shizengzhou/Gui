@@ -88,6 +88,13 @@ public static class Strings
     public static string Copy => Pick("Copy", "复制");
     public static string Paste => Pick("Paste", "粘贴");
 
+    // ---- main menu ----
+    public static string FileMenu => Pick("File", "文件");
+    public static string OpenDirectory => Pick("Open Directory…", "打开目录…");
+    public static string CommandPalette => Pick("Command Palette", "命令面板");
+    public static string Settings => Pick("Settings", "设置");
+    public static string Exit => Pick("Exit", "退出");
+
     // ---- search ----
     public static string StartSearch => Pick("Start Search", "开始搜索");
     public static string SearchSelection => Pick("Search Selection", "搜索选中内容");

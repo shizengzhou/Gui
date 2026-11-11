@@ -2532,6 +2532,18 @@ public sealed class TerminalPane
         if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
     }
 
+    /// <summary>
+    /// Enters a directory by typing a cd command into the running shell. Both cmd and
+    /// PowerShell accept a double-quoted path, and a Windows file name cannot contain a
+    /// double quote.
+    /// </summary>
+    public void ChangeDirectory(string directory)
+    {
+        if (!_ready || _session is null || ReadOnly || directory.Length == 0) return;
+        _session.WriteInput(System.Text.Encoding.UTF8.GetBytes($"cd \"{directory}\"\r"));
+        if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
+    }
+
     /// <summary>Resets the terminal state ("Reset Terminal").</summary>
     public void ResetTerminal()
     {
