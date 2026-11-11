@@ -232,6 +232,10 @@ public static class Theme
         CustomTheme ? Tint(Light ? (byte)0x1A : (byte)0x21, AccentRgb())
                     : Light ? Rgba(0x1A, 0, 95, 184) : Rgba(0x21, 96, 205, 255);
 
+    public static Color AccentStroke() =>
+        CustomTheme ? Tint(Light ? (byte)0x3D : (byte)0x4D, AccentRgb())
+                    : Light ? Rgba(0x3D, 0, 95, 184) : Rgba(0x4D, 96, 205, 255);
+
     /// <summary>
     /// Colour of a program status report (OSC 7501): the theme accent while work runs, and
     /// Windows' semantic amber/red/green for the states that need attention or are done.

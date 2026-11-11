@@ -395,7 +395,8 @@ public sealed partial class Workspace
         foreach (SettingsNavEntry entry in _settingsNavEntries)
         {
             bool active = entry.Page == page;
-            entry.Button.Background = active ? ChipHoverBrush() : ClearBrush();
+            // The same accent wash the command palette marks its selected row with.
+            entry.Button.Background = active ? AccentSoftBrush() : ClearBrush();
             entry.Text.Foreground = active ? TextStrongBrush() : TextBodyBrush();
             entry.Text.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
             entry.Icon.Foreground = active ? AccentBrush() : SurfaceIconFaintBrush();
