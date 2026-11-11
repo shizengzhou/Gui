@@ -636,6 +636,7 @@ public sealed partial class Workspace
             PlaceholderText = Strings.SettingsSearchThemes,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        CenterSettingsValue(box);
 
         void Commit(string name)
         {
@@ -742,7 +743,7 @@ public sealed partial class Workspace
         ComboBox fontFamilies = SettingsEditableSelect(
             families,
             _config.FontFamily.Length > 0 ? _config.FontFamily : DefaultFontFamily,
-            200,
+            240,
             ApplyFontFamilyChoice);
 
         page.Children.Add(SettingsGroup(Strings.SettingsFont, SettingsCard(
@@ -1318,6 +1319,40 @@ public sealed partial class Workspace
         return host;
     }
 
+    /// <summary>
+    /// The single-line TextBox inside AutoSuggestBox/NumberBox takes its padding from the theme
+    /// style, so setting Padding on the outer control does nothing, and a control-level
+    /// Resources override cannot replace a ThemeResource either. Nudge only the inner box's
+    /// vertical padding by 2 DIP: that centres the glyphs in the 32 DIP field without changing
+    /// its height or its horizontal padding. Pinning the field shorter or rewriting the
+    /// horizontal padding clips the value and pushes the spin buttons out of place.
+    /// </summary>
+    private static void CenterSettingsValue(Control box)
+    {
+        bool applied = false;
+        box.Loaded += (_, _) =>
+        {
+            if (applied) return;
+            box.ApplyTemplate();
+            if (FirstDescendant<TextBox>(box) is not { } inner) return;
+            applied = true;
+            Thickness p = inner.Padding;
+            inner.Padding = new Thickness(p.Left, p.Top + 2, p.Right, Math.Max(0, p.Bottom - 2));
+        };
+    }
+
+    private static T? FirstDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            if (FirstDescendant<T>(child) is { } nested) return nested;
+        }
+        return null;
+    }
+
     private ComboBox SettingsSelect(
         IReadOnlyList<string> items, int selectedIndex, double width, Action<int> changed)
     {
@@ -1431,12 +1466,13 @@ public sealed partial class Workspace
             SmallChange = 1,
             LargeChange = 5,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
-            Width = 140,
+            Width = 150,
             FontSize = 11,
             BorderBrush = PanelStrokeBrush(),
             CornerRadius = new CornerRadius(7),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        CenterSettingsValue(box);
         box.ValueChanged += (_, args) =>
         {
             // A cleared or half-typed field evaluates to NaN; keep the last good size.
