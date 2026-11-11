@@ -21,6 +21,17 @@ public class StringsTests
         .Where(property => property.PropertyType == typeof(string))
         .ToArray();
 
+    // Program names and other literals read the same in both languages, so the script check
+    // below skips them.
+    private static readonly string[] Untranslated =
+    {
+        nameof(Strings.SettingsCommandAuto),
+    };
+
+    private static PropertyInfo[] TranslatedProperties => TextProperties
+        .Where(property => !Untranslated.Contains(property.Name))
+        .ToArray();
+
     [Fact]
     public void EveryStringIsProvidedInBothLanguages()
     {
@@ -46,11 +57,11 @@ public class StringsTests
         try
         {
             Strings.Use(Language.English);
-            foreach (PropertyInfo property in TextProperties)
+            foreach (PropertyInfo property in TranslatedProperties)
                 Assert.DoesNotMatch(Chinese, (string)property.GetValue(null)!);
 
             Strings.Use(Language.Chinese);
-            foreach (PropertyInfo property in TextProperties)
+            foreach (PropertyInfo property in TranslatedProperties)
                 Assert.Matches(Chinese, (string)property.GetValue(null)!);
         }
         finally
