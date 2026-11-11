@@ -975,6 +975,11 @@ public sealed partial class Workspace
         Border row = items[_paletteSelected].Row;
         if (row.Visibility != Visibility.Visible) return;
 
+        // Filtering hides rows and scrolls in the same turn, so the panel can still be laid out
+        // from before the filter: the measured row offsets would be stale and the selection
+        // would end up half hidden under the search bar. Settle the layout first.
+        _paletteRows.UpdateLayout();
+
         Point origin = row.TransformToVisual(_paletteRows).TransformPoint(new Point(0, 0));
         double height = row.ActualHeight;
         if (height <= 0.0) height = 36.0;
