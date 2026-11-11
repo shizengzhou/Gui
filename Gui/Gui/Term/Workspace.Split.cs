@@ -606,8 +606,10 @@ public sealed partial class Workspace
         // to keep clear of whatever sits on top of them: the caption buttons on the right,
         // and the rail's own buttons when the rail is collapsed — on the left when it lives on
         // the left, on the right when it lives on the right.
-        TerminalPane? left = TopLeftPane(tab.Root);
-        TerminalPane? right = TopRightPane(tab.Root);
+        // Zooming paints the focused pane alone, so it is the one sitting in the corners the
+        // floating chrome covers, whatever the split tree says.
+        TerminalPane? left = tab.Zoomed ? tab.Focused : TopLeftPane(tab.Root);
+        TerminalPane? right = tab.Zoomed ? tab.Focused : TopRightPane(tab.Root);
         bool collapsed = _sidebarCollapsed;
 
         // The caption buttons only hover over the pane while the island runs to the window's
