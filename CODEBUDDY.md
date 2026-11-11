@@ -11,6 +11,7 @@ Gui/Gui/                          # WinUI 3 application project (Gui.csproj) —
   MainWindow.xaml(.cs)            # thin shell: sizes/centers the window, attaches the Workspace
   Diag.cs                         # startup/crash logging (%TEMP%\gui-startup.log)
   Term/                           # the terminal application (see the table below)
+  Assets/app.ico                  # app icon, embedded in Gui.exe and the setup
   Assets/Fonts/                   # bundled JetBrainsMono Nerd Font (4 faces)
   Assets/Themes/light|dark/       # ~890 bundled Ghostty themes, split by background brightness
   native/<platform>/ghostty-vt.dll# prebuilt libghostty-vt (see native/build-ghostty-vt.sh)
@@ -43,6 +44,10 @@ dotnet run --project tests/Gui.AbiTests -c Release
 
 # Unit tests (no WinUI; includes the repository encoding check)
 dotnet test tests/Gui.LogicTests -c Release
+
+# Installer: tests, self-contained publish and Inno Setup in one step; the version is
+# stamped into the exe, the setup and the file name -> dist/Gui-<version>-x64-setup.exe
+./build-installer.ps1 1.2.3
 ```
 
 `tests/Gui.AbiTests` compiles the real `Term/GhosttyNative.cs` and verifies every struct
