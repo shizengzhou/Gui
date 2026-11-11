@@ -1429,7 +1429,8 @@ public sealed partial class Workspace
         {
             Width = 14,
             Height = 14,
-            CornerRadius = new CornerRadius(Theme.RadiusField),
+            // Half the side: the knob is a circle, so it is not on the radius scale.
+            CornerRadius = new CornerRadius(7),
             Background = new SolidColorBrush(Microsoft.UI.Colors.White),
             HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1439,7 +1440,8 @@ public sealed partial class Workspace
         {
             Width = 36,
             Height = 20,
-            CornerRadius = new CornerRadius(Theme.RadiusField),
+            // Half the height: the track is a pill, so it is not on the radius scale.
+            CornerRadius = new CornerRadius(10),
             Background = on ? AccentBrush() : StrokeStrongBrush(),
             Child = knob,
             VerticalAlignment = VerticalAlignment.Center,
