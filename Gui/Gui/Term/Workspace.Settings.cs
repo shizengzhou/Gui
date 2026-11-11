@@ -256,14 +256,16 @@ public sealed partial class Workspace
 
     private Border SettingsNavItem(string page, char glyph, string label)
     {
+        // The bar keeps its slot whether or not this row is the active one: collapsing it
+        // would pull the icon and label 12 DIP to the left and make every row jump sideways
+        // as the selection moves.
         var accent = new Border
         {
             Width = 3,
             Height = 14,
             CornerRadius = new CornerRadius(Theme.RadiusPill),
-            Background = AccentBrush(),
+            Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
-            Visibility = Visibility.Collapsed,
         };
         FontIcon icon = Glyph(glyph, 14, ChromeIconFaintBrush());
         TextBlock text = Label(label, 12, TextBodyBrush());
@@ -397,7 +399,7 @@ public sealed partial class Workspace
             entry.Text.Foreground = active ? TextStrongBrush() : TextBodyBrush();
             entry.Text.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
             entry.Icon.Foreground = active ? AccentBrush() : ChromeIconFaintBrush();
-            entry.Accent.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+            entry.Accent.Background = active ? AccentBrush() : ClearBrush();
             if (active && _settingsTitle is not null) _settingsTitle.Text = entry.Label;
         }
 
