@@ -76,7 +76,7 @@ public sealed partial class Workspace
 
         var card = new Border
         {
-            CornerRadius = new CornerRadius(CompactDensity ? 0 : 12),
+            CornerRadius = new CornerRadius(CompactDensity ? 0 : Theme.RadiusSurface),
             Background = TermBgBrush(),
             BorderBrush = PanelStrokeBrush(),
             BorderThickness = new Thickness(CompactDensity ? 0 : 1),
@@ -179,7 +179,7 @@ public sealed partial class Workspace
         var back = new Border
         {
             Height = 32,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = ClearBrush(),
             Padding = new Thickness(10, 0, 10, 0),
             Margin = new Thickness(0, 0, 0, 6),
@@ -205,7 +205,7 @@ public sealed partial class Workspace
         panel.Children.Add(new TextBlock
         {
             Text = Strings.SettingsTitle,
-            FontSize = 12.5,
+            FontSize = Theme.FontBody,
             FontWeight = FontWeights.SemiBold,
             Foreground = TextStrongBrush(),
             Margin = new Thickness(10, 2, 0, 8),
@@ -219,7 +219,7 @@ public sealed partial class Workspace
         var foot = new Border
         {
             Height = 32,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = ClearBrush(),
             Padding = new Thickness(10, 0, 10, 0),
             Margin = new Thickness(0, 0, 0, 2),
@@ -260,7 +260,7 @@ public sealed partial class Workspace
         {
             Width = 3,
             Height = 14,
-            CornerRadius = new CornerRadius(2),
+            CornerRadius = new CornerRadius(Theme.RadiusPill),
             Background = AccentBrush(),
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
@@ -282,7 +282,7 @@ public sealed partial class Workspace
         var button = new Border
         {
             Height = 32,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = ClearBrush(),
             Padding = new Thickness(7, 0, 10, 0),
             Child = row,
@@ -332,7 +332,7 @@ public sealed partial class Workspace
 
         _settingsTitle = new TextBlock
         {
-            FontSize = 13,
+            FontSize = Theme.FontTitle,
             FontWeight = FontWeights.SemiBold,
             Foreground = TextStrongBrush(),
             VerticalAlignment = VerticalAlignment.Center,
@@ -536,7 +536,7 @@ public sealed partial class Workspace
         var opacityValue = new TextBlock
         {
             Text = Math.Round(_config.BackgroundOpacity * 100).ToString(CultureInfo.InvariantCulture) + "%",
-            FontSize = 10.5,
+            FontSize = Theme.FontCaption,
             Foreground = TextFaintBrush(),
             Width = 38,
             TextAlignment = TextAlignment.Right,
@@ -627,11 +627,11 @@ public sealed partial class Workspace
         {
             Width = width,
             MinHeight = 26,
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             Padding = new Thickness(9, 0, 9, 0),
             BorderBrush = PanelStrokeBrush(),
             Background = ClearBrush(),
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Text = selected,
             PlaceholderText = Strings.SettingsSearchThemes,
             VerticalAlignment = VerticalAlignment.Center,
@@ -783,7 +783,7 @@ public sealed partial class Workspace
         page.Children.Add(new TextBlock
         {
             Text = Strings.SettingsKeysDescription,
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             Foreground = TextFaintBrush(),
             Margin = new Thickness(2, 0, 2, 0),
             TextWrapping = TextWrapping.Wrap,
@@ -952,33 +952,33 @@ public sealed partial class Workspace
             Content = new TextBlock
             {
                 Text = AppVersion(),
-                FontSize = 12,
+                FontSize = Theme.FontBody,
                 Foreground = TextFaintBrush(),
                 VerticalAlignment = VerticalAlignment.Center,
             },
             IsExpanded = false,
         };
-        expander.Resources["ControlCornerRadius"] = new CornerRadius(10);
+        expander.Resources["ControlCornerRadius"] = new CornerRadius(Theme.RadiusField);
 
         var repository = new SettingsCard
         {
             Header = Strings.AboutRepository,
             IsClickEnabled = true,
             ActionIconToolTip = Strings.AboutCopyRepository,
-            ActionIcon = new FontIcon { Glyph = "\uE8C8", FontSize = 12 },
+            ActionIcon = new FontIcon { Glyph = "\uE8C8", FontSize = Theme.FontBody },
             Content = new HyperlinkButton
             {
                 Content = RepositoryUrl,
                 NavigateUri = new Uri(RepositoryUrl),
                 FontFamily = new FontFamily("Cascadia Mono"),
-                FontSize = 12,
+                FontSize = Theme.FontBody,
                 Padding = new Thickness(0),
                 MinWidth = 0,
                 VerticalAlignment = VerticalAlignment.Center,
             },
         };
         repository.Click += (_, _) => ClipboardAccess.TryWriteText(RepositoryUrl);
-        repository.Resources["ControlCornerRadius"] = new CornerRadius(10);
+        repository.Resources["ControlCornerRadius"] = new CornerRadius(Theme.RadiusField);
         expander.Items.Add(repository);
 
         var license = new SettingsCard
@@ -987,12 +987,12 @@ public sealed partial class Workspace
             Content = new TextBlock
             {
                 Text = "MIT License",
-                FontSize = 12,
+                FontSize = Theme.FontBody,
                 Foreground = TextFaintBrush(),
                 VerticalAlignment = VerticalAlignment.Center,
             },
         };
-        license.Resources["ControlCornerRadius"] = new CornerRadius(10);
+        license.Resources["ControlCornerRadius"] = new CornerRadius(Theme.RadiusField);
         expander.Items.Add(license);
 
         page.Children.Add(SettingsGroup(null, expander));
@@ -1180,7 +1180,7 @@ public sealed partial class Workspace
             group.Children.Add(new TextBlock
             {
                 Text = title,
-                FontSize = 10.5,
+                FontSize = Theme.FontCaption,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = TextFaintBrush(),
                 Margin = new Thickness(2, 0, 2, 0),
@@ -1210,7 +1210,7 @@ public sealed partial class Workspace
 
         return new Border
         {
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             BorderThickness = new Thickness(1),
             BorderBrush = PanelStrokeBrush(),
             Child = stack,
@@ -1232,7 +1232,7 @@ public sealed partial class Workspace
         label.Children.Add(new TextBlock
         {
             Text = title,
-            FontSize = 12,
+            FontSize = Theme.FontBody,
             Foreground = TextStrongBrush(),
             TextWrapping = TextWrapping.Wrap,
         });
@@ -1241,7 +1241,7 @@ public sealed partial class Workspace
             label.Children.Add(new TextBlock
             {
                 Text = description,
-                FontSize = 10.5,
+                FontSize = Theme.FontCaption,
                 Foreground = TextFaintBrush(),
                 TextWrapping = TextWrapping.Wrap,
             });
@@ -1263,7 +1263,7 @@ public sealed partial class Workspace
     {
         var host = new Border
         {
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = ChipHoverBrush(),
             Padding = new Thickness(2),
             VerticalAlignment = VerticalAlignment.Center,
@@ -1293,7 +1293,7 @@ public sealed partial class Workspace
             var text = new TextBlock
             {
                 Text = options[i],
-                FontSize = 11,
+                FontSize = Theme.FontSmall,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -1301,7 +1301,7 @@ public sealed partial class Workspace
             {
                 Height = 22,
                 Padding = new Thickness(10, 0, 10, 0),
-                CornerRadius = new CornerRadius(5),
+                CornerRadius = new CornerRadius(Theme.RadiusControl),
                 Background = ClearBrush(),
                 Child = text,
             };
@@ -1360,10 +1360,10 @@ public sealed partial class Workspace
         {
             Width = width,
             MinHeight = 26,
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             Padding = new Thickness(9, 0, 26, 0),
             BorderBrush = PanelStrokeBrush(),
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             VerticalAlignment = VerticalAlignment.Center,
         };
         foreach (string item in items) box.Items.Add(item);
@@ -1382,10 +1382,10 @@ public sealed partial class Workspace
         {
             Width = width,
             MinHeight = 26,
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             Padding = new Thickness(9, 0, 26, 0),
             BorderBrush = PanelStrokeBrush(),
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             IsEditable = true,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -1429,7 +1429,7 @@ public sealed partial class Workspace
         {
             Width = 14,
             Height = 14,
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = new SolidColorBrush(Microsoft.UI.Colors.White),
             HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1439,7 +1439,7 @@ public sealed partial class Workspace
         {
             Width = 36,
             Height = 20,
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = on ? AccentBrush() : StrokeStrongBrush(),
             Child = knob,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1467,9 +1467,9 @@ public sealed partial class Workspace
             LargeChange = 5,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
             Width = 150,
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             BorderBrush = PanelStrokeBrush(),
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             VerticalAlignment = VerticalAlignment.Center,
         };
         CenterSettingsValue(box);
@@ -1532,13 +1532,13 @@ public sealed partial class Workspace
             Width = width,
             Height = 26,
             MinHeight = 26,
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             // The stock control lays single-line text out from the top of its content box;
             // a 5 DIP top inset is what centres an 11 px line in the 26 DIP field.
             Padding = new Thickness(9, 5, 9, 0),
             BorderBrush = PanelStrokeBrush(),
             Background = ClearBrush(),
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
         // The stock template reserves a 32 DIP content box, which would push the text up
@@ -1573,7 +1573,7 @@ public sealed partial class Workspace
         var button = new Border
         {
             Padding = new Thickness(9, 4, 9, 4),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(Theme.RadiusControl),
             BorderThickness = new Thickness(1),
             BorderBrush = PanelStrokeBrush(),
             Background = ClearBrush(),
@@ -1603,13 +1603,13 @@ public sealed partial class Workspace
         var label = new TextBlock
         {
             Text = text,
-            FontSize = 9.5,
+            FontSize = Theme.FontCaption,
             FontFamily = new FontFamily("Cascadia Mono"),
             Foreground = TextFaintBrush(),
         };
         return new Border
         {
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(Theme.RadiusChip),
             Padding = new Thickness(5, 3, 5, 3),
             Background = ChipHoverBrush(),
             Child = label,

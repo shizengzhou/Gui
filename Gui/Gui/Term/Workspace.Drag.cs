@@ -208,7 +208,7 @@ public sealed partial class Workspace
         {
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = new SolidColorBrush(Theme.AccentSoft()),
             BorderBrush = new SolidColorBrush(Theme.Accent()),
             BorderThickness = new Thickness(1.5),
@@ -255,7 +255,7 @@ public sealed partial class Workspace
             {
                 Glyph = "\uE756",
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 13,
+                FontSize = Theme.FontTitle,
                 Foreground = new SolidColorBrush(Theme.TextFaint()),
                 VerticalAlignment = VerticalAlignment.Center,
             });
@@ -264,7 +264,7 @@ public sealed partial class Workspace
         content.Children.Add(new TextBlock
         {
             Text = pane.Title.Length > 0 ? pane.Title : ShellDisplayName(pane.ShellCommand()),
-            FontSize = 12,
+            FontSize = Theme.FontBody,
             MaxWidth = 260,
             TextTrimming = TextTrimming.CharacterEllipsis,
             Foreground = new SolidColorBrush(Theme.TextStrong()),
@@ -278,7 +278,7 @@ public sealed partial class Workspace
             Height = 32,
             MinWidth = 72,
             Padding = new Thickness(10, 0, 12, 0),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = new SolidColorBrush(Theme.TermSurfaceBg()),
             BorderBrush = new SolidColorBrush(Theme.Accent()),
             BorderThickness = new Thickness(1),

@@ -9,6 +9,20 @@ namespace Gui.Term;
 /// </summary>
 public static class Theme
 {
+    // --- scales ---------------------------------------------------------------
+    // Corner radii, from the thin accent bar up to the window's own surfaces.
+    public const double RadiusPill = 2;
+    public const double RadiusChip = 4;
+    public const double RadiusControl = 6;
+    public const double RadiusField = 8;
+    public const double RadiusSurface = 12;
+
+    // Chrome type scale: captions, small labels, body text and titles.
+    public const double FontCaption = 10;
+    public const double FontSmall = 11;
+    public const double FontBody = 12;
+    public const double FontTitle = 13;
+
     /// <summary>Design palette in use (config "theme", or the theme's background brightness).</summary>
     public static bool Light;
 

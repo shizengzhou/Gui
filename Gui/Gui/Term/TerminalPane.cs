@@ -300,7 +300,7 @@ public sealed class TerminalPane
         // hovered. It never takes input, so the Ctrl+click underneath keeps working.
         _linkPreviewText = new TextBlock
         {
-            FontSize = 12,
+            FontSize = Theme.FontBody,
             Foreground = new SolidColorBrush(Theme.TextStrong()),
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxLines = 1,
@@ -312,7 +312,7 @@ public sealed class TerminalPane
             VerticalAlignment = VerticalAlignment.Top,
             IsHitTestVisible = false,
             Visibility = Visibility.Collapsed,
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(Theme.RadiusControl),
             Padding = new Thickness(8, 4, 8, 4),
             Background = new SolidColorBrush(Theme.PaletteBg()),
             BorderBrush = new SolidColorBrush(Theme.Stroke()),
@@ -326,7 +326,7 @@ public sealed class TerminalPane
             MinWidth = 90,
             Height = 26,
             MinHeight = 26,
-            FontSize = 12,
+            FontSize = Theme.FontBody,
             BorderThickness = new Thickness(0),
             Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
             Foreground = new SolidColorBrush(Theme.TextStrong()),
@@ -377,7 +377,7 @@ public sealed class TerminalPane
 
         _searchCount = new TextBlock
         {
-            FontSize = 11.5,
+            FontSize = Theme.FontSmall,
             Foreground = new SolidColorBrush(Theme.TextFaint()),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
@@ -397,7 +397,7 @@ public sealed class TerminalPane
         {
             Height = 26,
             VerticalAlignment = VerticalAlignment.Center,
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(Theme.RadiusControl),
             Background = new SolidColorBrush(Theme.ChipHover()),
             Child = searchFieldGrid,
         };
@@ -432,7 +432,7 @@ public sealed class TerminalPane
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, 8, 40, 0),
             Padding = new Thickness(8, 5, 3, 5),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = new SolidColorBrush(Theme.PaletteTint()),
             BorderBrush = new SolidColorBrush(Theme.Stroke()),
             BorderThickness = new Thickness(1),
@@ -510,7 +510,7 @@ public sealed class TerminalPane
         {
             Glyph = "\uE756",
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 13,
+            FontSize = Theme.FontTitle,
             Foreground = faint,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -545,7 +545,7 @@ public sealed class TerminalPane
         _pathText = new TextBlock
         {
             Text = _workingDirectory,
-            FontSize = 11.5,
+            FontSize = Theme.FontSmall,
             Foreground = faint,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
@@ -604,13 +604,13 @@ public sealed class TerminalPane
         {
             Glyph = "\uE73E",
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             Foreground = faint,
             VerticalAlignment = VerticalAlignment.Center,
         };
         _statusText = new TextBlock
         {
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             FontWeight = FontWeights.SemiBold,
             Foreground = faint,
             MaxWidth = 240,
@@ -673,7 +673,7 @@ public sealed class TerminalPane
         {
             // Matches the content island's radius: the pane runs to the island's edges, and a
             // tighter radius would leave a crescent of island colour at every shared corner.
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(Theme.RadiusSurface),
             Background = new SolidColorBrush(SurfaceColor()),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Theme.PaneStroke()),
@@ -903,30 +903,13 @@ public sealed class TerminalPane
         {
             Width = 24,
             Height = 24,
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(Theme.RadiusControl),
             Background = TransparentBrush(),
             Child = icon,
         };
 
-        // Hover tooltip: the action's name and its keybinding, the same two-line shape
-        // the tab chips use.
-        var tooltip = new StackPanel { Spacing = 2 };
-        var tipTitle = new TextBlock
-        {
-            Text = tip(),
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Theme.TextStrong()),
-        };
-        var tipKey = new TextBlock
-        {
-            Text = _keybinds.Label(actionId, shortcut),
-            FontSize = 11,
-            Foreground = new SolidColorBrush(Theme.TextFaint()),
-            FontStyle = FontStyle.Italic,
-        };
-        tooltip.Children.Add(tipTitle);
-        tooltip.Children.Add(tipKey);
-        ToolTipService.SetToolTip(button, tooltip);
+        // Hover tooltip: the action and the keys it is bound to.
+        var (tipTitle, tipKey) = Tips.Set(button, tip(), _keybinds.Label(actionId, shortcut));
 
         // Hover colors are resolved from the current theme instead of captured brushes,
         // so a theme switch cannot leave stale colors behind.
@@ -974,7 +957,7 @@ public sealed class TerminalPane
         {
             Glyph = glyph.ToString(),
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 11,
+            FontSize = Theme.FontSmall,
             Foreground = _searchGlyphBrush,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -983,11 +966,11 @@ public sealed class TerminalPane
         {
             Width = 24,
             Height = 24,
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(Theme.RadiusChip),
             Background = TransparentBrush(),
             Child = icon,
         };
-        ToolTipService.SetToolTip(button, new ToolTip { Content = tip });
+        Tips.Set(button, tip);
 
         button.PointerEntered += (_, _) =>
         {
@@ -2031,7 +2014,7 @@ public sealed class TerminalPane
     /// </summary>
     public void SetCompact(bool compact)
     {
-        _frame.CornerRadius = new CornerRadius(compact ? 0 : 12);
+        _frame.CornerRadius = new CornerRadius(compact ? 0 : Theme.RadiusSurface);
         _frame.BorderThickness = new Thickness(compact ? 0 : 1);
     }
 
@@ -2133,8 +2116,6 @@ public sealed class TerminalPane
         {
             action.Icon.Stroke = new SolidColorBrush(Theme.PaneIconFaint());
             action.Button.Background = TransparentBrush();
-            action.TipTitle.Foreground = new SolidColorBrush(Theme.TextStrong());
-            action.TipKey.Foreground = new SolidColorBrush(Theme.TextFaint());
         }
 
         ApplyFocusState();

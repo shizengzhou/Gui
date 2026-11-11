@@ -168,7 +168,7 @@ public sealed partial class Workspace
         return new Border
         {
             Height = RowHeight,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Padding = new Thickness(10, 0, 10, 0),
             BorderThickness = new Thickness(1),
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
@@ -200,7 +200,7 @@ public sealed partial class Workspace
         {
             var keyChip = new Border
             {
-                CornerRadius = new CornerRadius(4),
+                CornerRadius = new CornerRadius(Theme.RadiusChip),
                 Padding = new Thickness(5, 3, 5, 3),
                 Background = ChipHoverBrush(),
                 HorizontalAlignment = HorizontalAlignment.Right,
@@ -262,7 +262,7 @@ public sealed partial class Workspace
 
         var valueChip = new Border
         {
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(Theme.RadiusChip),
             Padding = new Thickness(5, 3, 5, 3),
             Background = ChipHoverBrush(),
             VerticalAlignment = VerticalAlignment.Center,
@@ -381,7 +381,7 @@ public sealed partial class Workspace
             Width = 520,
             MaxWidth = 520,
             MaxHeight = 520,
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(Theme.RadiusSurface),
             Background = new AcrylicBrush
             {
                 TintColor = Theme.PaletteTint(),
@@ -428,7 +428,7 @@ public sealed partial class Workspace
         // Breadcrumb chip: shows the submenu's name while a second level is open.
         _paletteChip = new Border
         {
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(Theme.RadiusChip),
             Padding = new Thickness(6, 2, 6, 2),
             Background = ChipHoverBrush(),
             VerticalAlignment = VerticalAlignment.Center,
@@ -450,7 +450,7 @@ public sealed partial class Workspace
             BorderThickness = new Thickness(0),
             FocusVisualPrimaryThickness = new Thickness(0),
             FocusVisualSecondaryThickness = new Thickness(0),
-            FontSize = 13,
+            FontSize = Theme.FontTitle,
             Foreground = TextStrongBrush(),
             PlaceholderText = _paletteRootPlaceholder,
             VerticalAlignment = VerticalAlignment.Center,

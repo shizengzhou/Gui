@@ -648,7 +648,7 @@ public sealed partial class Workspace
         }
 
         _contentCard.Margin = ContentCardMargin();
-        _contentCard.CornerRadius = new CornerRadius(CompactDensity ? 0 : 12);
+        _contentCard.CornerRadius = new CornerRadius(CompactDensity ? 0 : Theme.RadiusSurface);
         _surfaceHost.Margin = SurfaceMargin();
         if (_sidebar is not null) _sidebar.Padding = SidebarPadding();
         if (_header is not null)
@@ -849,6 +849,9 @@ public sealed partial class Workspace
     {
         foreach (var entry in _themedBrushes)
             entry.Brush.Color = entry.Color();
+
+        // Tooltips own shared brushes too; recolor them with the same pass.
+        Tips.RefreshBrushes();
     }
 
     private SolidColorBrush ClearBrush() => new(Color.FromArgb(0, 0, 0, 0));
@@ -949,31 +952,12 @@ public sealed partial class Workspace
     }
 
     /// <summary>
-    /// Rounds the close button only where it covers the pane's own top-right corner, which is
-    /// the side layouts. Two cases keep a square corner: the top layout (a normal title bar)
-    /// and a right-hand rail that is open, because then the corner belongs to the rail and
-    /// the captions sit over chrome, not over the pane.
-    /// </summary>
-    /// <summary>
     /// Hover label for a caption button: the same shape the pane's action buttons use, so the
     /// chrome reads consistently. Returns the label so the maximize button can follow the
     /// window state.
     /// </summary>
-    private TextBlock CaptionTip(Border button, string text)
-    {
-        var label = new TextBlock
-        {
-            Text = text,
-            FontSize = 12,
-            // Shared themed brush: a theme switch repaints it in place, a captured
-            // SolidColorBrush would keep the old theme's color.
-            Foreground = TextStrongBrush(),
-        };
-        var tip = new StackPanel { Spacing = 2 };
-        tip.Children.Add(label);
-        ToolTipService.SetToolTip(button, tip);
-        return label;
-    }
+    private static TextBlock CaptionTip(Border button, string text) =>
+        Tips.Set(button, text).Title;
 
     /// <summary>
     /// Labels the three window buttons; the middle one says "maximize" or "restore"
@@ -1026,7 +1010,7 @@ public sealed partial class Workspace
         {
             Width = ToolButtonWidth,
             Height = ToolButtonHeight,
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
             Child = Glyph(code, 13, foreground),
@@ -1036,27 +1020,10 @@ public sealed partial class Workspace
     private Border ToolButton(char code) => ToolButton(code, ChromeIconFaintBrush());
 
     /// <summary>
-    /// Hover label for a rail tool button: the action's name above its key chord, the same
-    /// two-line shape the pane's action buttons use.
+    /// Hover label for a rail tool button: the action's name above its key chord.
     /// </summary>
-    private void RailTip(Border button, string title, string actionId, string fallback)
-    {
-        var tip = new StackPanel { Spacing = 2 };
-        tip.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontSize = 12,
-            Foreground = TextStrongBrush(),
-        });
-        tip.Children.Add(new TextBlock
-        {
-            Text = _keybinds.Label(actionId, fallback),
-            FontSize = 11,
-            Foreground = TextFaintBrush(),
-            FontStyle = FontStyle.Italic,
-        });
-        ToolTipService.SetToolTip(button, tip);
-    }
+    private void RailTip(Border button, string title, string actionId, string fallback) =>
+        Tips.Set(button, title, _keybinds.Label(actionId, fallback));
 
     private Border ToolButton(Path icon)
     {
@@ -1064,7 +1031,7 @@ public sealed partial class Workspace
         {
             Width = ToolButtonWidth,
             Height = ToolButtonHeight,
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
             Child = icon,
@@ -1972,7 +1939,7 @@ public sealed partial class Workspace
         _contentCard = new Border
         {
             Margin = ContentCardMargin(),
-            CornerRadius = new CornerRadius(CompactDensity ? 0 : 12),
+            CornerRadius = new CornerRadius(CompactDensity ? 0 : Theme.RadiusSurface),
             Background = CardFillBrush(),
         };
 
@@ -2059,7 +2026,7 @@ public sealed partial class Workspace
         // surface; a rail row keeps its four corners, it sits beside the surface, not above it.
         tab.Chip.CornerRadius = CompactDensity && top
             ? new CornerRadius(8, 8, 0, 0)
-            : new CornerRadius(8);
+            : new CornerRadius(Theme.RadiusField);
         // Symmetric insets: the shell icon (16 DIP) and the close button (16 DIP) sit the
         // same distance from their edge, so the chip reads as one balanced row.
         tab.Chip.Padding = top ? new Thickness(11, 0, 11, 0) : new Thickness(8, 0, 8, 0);
@@ -2662,7 +2629,7 @@ public sealed partial class Workspace
         tab.ChipEditor = new TextBox
         {
             FontFamily = TitleFontFamily(),
-            FontSize = 12,
+            FontSize = Theme.FontBody,
             MaxLength = 256,
             MinWidth = 60,
             // The stock style's 32 DIP minimum would override the height and leave the text
@@ -2703,7 +2670,7 @@ public sealed partial class Workspace
         {
             Width = 16,
             Height = 16,
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(Theme.RadiusChip),
             Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Right,
