@@ -606,6 +606,10 @@ public sealed partial class Workspace
             ForEachPane(tab, pane => pane.ApplyLanguage());
 
         UpdateHeaders();
+
+        // The settings page draws its own labels, so it is rebuilt in the new language. It
+        // stays on the same category and keeps its active state.
+        if (_settingsLayer is not null) Diag.Guard("ws.settings.language", BuildSettings);
     }
 
     /// <summary>
@@ -706,6 +710,7 @@ public sealed partial class Workspace
 
         // The strip scroll offset belongs to the old rail.
         _stripOffset = 0;
+        bool settingsActive = _settingsActive;
 
         _root.Children.Clear();
         BuildChrome();
@@ -715,6 +720,9 @@ public sealed partial class Workspace
 
         // The running shells move into the new surface host.
         if (_tabs.Count > 0) Activate(_active);
+
+        // The page survives a rail move; Activate above is for the terminal underneath.
+        if (settingsActive) ActivateSettingsTab();
 
         if (_placement != TabPlacement.Top) SetSidebarCollapsed(_sidebarCollapsed);
 
@@ -1311,6 +1319,10 @@ public sealed partial class Workspace
         EnsureTimers();
 
         BuildPalette();
+
+        // The settings page is a layer over the body, built with the same chrome so a rebuild
+        // (tab rail move, config reload) keeps it reachable.
+        BuildSettings();
     }
 
     /// <summary>
@@ -3900,6 +3912,10 @@ public sealed partial class Workspace
     {
         if (index < 0 || index >= _tabs.Count) return;
         SettleZoomTransition();
+
+        // Choosing a terminal tab leaves the settings page, the same way the design's
+        // setActive() switches away from its settings tab.
+        DeactivateSettings();
 
         Diag.Debug("tab", $"activate {index}");
         if (_active != index) _lastActive = _active;

@@ -95,6 +95,71 @@ public static class Strings
     public static string Settings => Pick("Settings", "设置");
     public static string Exit => Pick("Exit", "退出");
 
+    // ---- settings ----
+    public static string SettingsTitle => Pick("Settings", "设置");
+    public static string SettingsNavAppearance => Pick("Appearance", "外观");
+    public static string SettingsNavTerminal => Pick("Terminal", "终端");
+    public static string SettingsNavKeys => Pick("Key bindings", "键位");
+    public static string SettingsNavAbout => Pick("About", "关于");
+    public static string SettingsLanguage => Pick("Language", "语言");
+    public static string SettingsWindowAppearance => Pick("Window theme", "窗口外观");
+    public static string SettingsTabPosition => Pick("Tab bar position", "标签栏位置");
+    public static string SettingsTabTop => Pick("Top", "顶部");
+    public static string SettingsTabLeft => Pick("Left", "左侧");
+    public static string SettingsTabRight => Pick("Right", "右侧");
+    public static string SettingsCompact => Pick("Compact mode", "紧凑模式");
+
+    public static string SettingsCompactDescription => Pick(
+        "Drop the pane gaps and rounded corners so the terminal fills the window edges.",
+        "去掉窗格间距与圆角，终端内容贴满窗口边缘。");
+
+    public static string SettingsThemes => Pick("Themes", "主题");
+    public static string SettingsSearchThemes => Pick("Search themes", "搜索主题");
+    public static string SettingsLightTheme => Pick("Light theme", "浅色主题");
+    public static string SettingsDarkTheme => Pick("Dark theme", "深色主题");
+    public static string SettingsBackground => Pick("Background", "背景");
+    public static string SettingsBackgroundOpacity => Pick("Background opacity", "背景透明度");
+    public static string SettingsBackgroundBlur => Pick("Background blur", "背景模糊");
+    public static string SettingsBackgroundImage => Pick("Background image", "背景图片");
+    public static string SettingsBrowse => Pick("Browse…", "浏览…");
+    public static string SettingsRemove => Pick("Remove", "移除");
+    public static string SettingsStartup => Pick("Startup", "启动");
+    public static string SettingsCommand => Pick("Command", "启动命令");
+    public static string SettingsCommandAuto => "pwsh/powershell/cmd";
+    public static string SettingsWorkingDirectory => Pick("Working directory", "工作目录");
+
+    public static string SettingsStartupDescription => Pick(
+        "Applies to new tabs.", "应用于新建的标签页。");
+
+    public static string SettingsFont => Pick("Font", "字体");
+    public static string SettingsFontFamily => Pick("Font family", "字体族");
+    public static string SettingsFontSize => Pick("Font size", "字号");
+    public static string SettingsCursor => Pick("Cursor", "光标");
+    public static string SettingsCursorShape => Pick("Cursor shape", "光标形状");
+    public static string SettingsCursorBlock => Pick("Block", "方块");
+    public static string SettingsCursorBar => Pick("Bar", "竖线");
+    public static string SettingsCursorUnderline => Pick("Underline", "下划线");
+    public static string SettingsCursorBlink => Pick("Blink cursor", "光标闪烁");
+    public static string SettingsKeysDescription => Pick(
+        "Shortcuts come from the current keybind configuration.", "快捷键来自当前的键位配置。");
+    public static string SettingsKeysUnbound => Pick("None", "未绑定");
+    public static string SettingsKeysGroupTabs => Pick("Tabs", "标签页");
+    public static string SettingsKeysGroupPanes => Pick("Panes", "窗格");
+    public static string SettingsKeysGroupTerminal => Pick("Terminal", "终端");
+    public static string SettingsKeysGroupClipboard => Pick("Clipboard", "剪贴板");
+    public static string SettingsKeysGroupSearch => Pick("Search", "搜索");
+    public static string SettingsKeysGroupWindow => Pick("Window", "窗口");
+    public static string SettingsKeysGroupApp => Pick("Application", "应用");
+    public static string SettingsKeysGroupOther => Pick("Other", "其他");
+    public static string SettingsBack => Pick("Back", "返回");
+    public static string SettingsOpenConfig => Pick("Open config file", "打开配置文件");
+    public static string AboutRepository => Pick("Repository", "仓库地址");
+    public static string AboutCopyRepository => Pick("Copy repository URL", "复制仓库地址");
+    public static string AboutLicense => Pick("Open source license", "开源协议");
+    public static string AboutCopyright(int year) => Pick(
+        $"\u00a9 {year} Gui. All rights reserved.", $"\u00a9 {year} Gui. 保留所有权利。");
+
+
     // ---- search ----
     public static string StartSearch => Pick("Start Search", "开始搜索");
     public static string SearchSelection => Pick("Search Selection", "搜索选中内容");
@@ -110,6 +175,13 @@ public static class Strings
     public static string ScrollToSelection => Pick("Scroll to Selection", "滚动到选中内容");
     public static string ScrollPageUp => Pick("Scroll Page Up", "向上翻页");
     public static string ScrollPageDown => Pick("Scroll Page Down", "向下翻页");
+    public static string JumpToPreviousPrompt => Pick("Jump to Previous Prompt", "跳转到上一个提示符");
+    public static string JumpToNextPrompt => Pick("Jump to Next Prompt", "跳转到下一个提示符");
+    public static string AdjustSelectionLeft => Pick("Extend Selection Left", "向左扩展选中");
+    public static string AdjustSelectionRight => Pick("Extend Selection Right", "向右扩展选中");
+    public static string AdjustSelectionUp => Pick("Extend Selection Up", "向上扩展选中");
+    public static string AdjustSelectionDown => Pick("Extend Selection Down", "向下扩展选中");
+    public static string GoToTab(int slot) => Pick($"Go to Tab {slot}", $"切换到标签页 {slot}");
 
     // ---- export to a temporary file ----
     public static string WriteScreenFile(string action, string emit) =>
@@ -217,7 +289,7 @@ public static class Strings
     public static string TabBarLeft => Pick("Move tab bar to left", "标签栏移到左侧");
     public static string TabBarRight => Pick("Move tab bar to right", "标签栏移到右侧");
 
-    public static string FollowSystem => Pick("Follow system", "跟随系统");
+    public static string FollowSystem => Pick("System", "系统");
     public static string Light => Pick("Light", "浅色");
     public static string Dark => Pick("Dark", "深色");
 

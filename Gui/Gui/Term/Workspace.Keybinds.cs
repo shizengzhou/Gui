@@ -75,6 +75,7 @@ public sealed partial class Workspace
 
         if (label == Strings.NewWindow) return "new_window";
         if (label == Strings.NewTab) return "new_tab";
+        if (label == Strings.Settings) return "open_config";
         if (label == Strings.MoveTabLeft) return "move_tab:-1";
         if (label == Strings.MoveTabRight) return "move_tab:1";
         if (label == Strings.MoveTabToNewWindow) return "move_tab_to_new_window";
@@ -107,7 +108,7 @@ public sealed partial class Workspace
 
         if (label == Strings.ResetWindowSize) return "reset_window_size";
         if (label == Strings.ShowOnScreenKeyboard) return "show_on_screen_keyboard";
-        if (label == Strings.OpenConfigOs) return "open_config";
+        if (label == Strings.OpenConfigOs) return "open_config_file";
         if (label == Strings.OpenConfigNewWindow) return "open_config:new_window";
         if (label == Strings.ReloadConfig) return "reload_config";
 

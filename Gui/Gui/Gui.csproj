@@ -40,6 +40,7 @@
 
   <ItemGroup>
     <!-- Same versions as the native project's packages.config. -->
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" Version="8.2.251219" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
@@ -106,15 +107,11 @@
   </Target>
 
   <Target Name="CopyCliOutputToBuild" AfterTargets="Build" DependsOnTargets="CollectCliOutput">
-    <Copy SourceFiles="@(_CliOutputFiles)"
-          DestinationFiles="@(_CliOutputFiles->'$(OutDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CliOutputFiles)" DestinationFiles="@(_CliOutputFiles->'$(OutDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="CopyCliOutputToPublish" AfterTargets="Publish" DependsOnTargets="CollectCliOutput">
-    <Copy SourceFiles="@(_CliOutputFiles)"
-          DestinationFiles="@(_CliOutputFiles->'$(PublishDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CliOutputFiles)" DestinationFiles="@(_CliOutputFiles->'$(PublishDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
   <!-- A self-contained publish has an app-local hostfxr and no installed framework, so a
@@ -133,13 +130,10 @@
     <Copy SourceFiles="@(_XamlResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="PublishCliSelfContained" AfterTargets="CopyCliOutputToPublish"
-          Condition="'$(SelfContained)' == 'true'">
+  <Target Name="PublishCliSelfContained" AfterTargets="CopyCliOutputToPublish" Condition="'$(SelfContained)' == 'true'">
     <PropertyGroup>
       <_CliPublishDir>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(PublishDir)'))))))</_CliPublishDir>
     </PropertyGroup>
-    <MSBuild Projects="..\Gui.Cli\Gui.Cli.csproj" Targets="Publish"
-             RemoveProperties="PublishProfile"
-             Properties="Configuration=$(Configuration);Platform=$(Platform);SelfContained=true;PublishDir=$(_CliPublishDir);PublishReadyToRun=false;PublishTrimmed=false;PublishSingleFile=false" />
+    <MSBuild Projects="..\Gui.Cli\Gui.Cli.csproj" Targets="Publish" RemoveProperties="PublishProfile" Properties="Configuration=$(Configuration);Platform=$(Platform);SelfContained=true;PublishDir=$(_CliPublishDir);PublishReadyToRun=false;PublishTrimmed=false;PublishSingleFile=false" />
   </Target>
 </Project>

@@ -503,6 +503,11 @@ public sealed partial class Workspace
         if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible)
             return OnPaletteKey(args);
 
+        // The settings page closes on Esc; every other key goes to the focused setting instead
+        // of the shell or a window shortcut.
+        if (_settingsLayer is not null && _settingsLayer.Visibility == Visibility.Visible)
+            return OnSettingsKey(args);
+
         // The inline tab rename editor owns the keyboard. Enter and Esc are decided here,
         // before the text box swallows them; arrows, Home/End and Delete stay with the box,
         // which is why every other key is passed through untouched.
@@ -713,11 +718,11 @@ public sealed partial class Workspace
             }
         }
 
-        // Ghostty's open_config: Ctrl+, opens the config with the OS editor. Ctrl+Shift+,
-        // reloads it (handled below).
+        // Ghostty's open_config: Ctrl+, opens the settings page, which offers the raw config
+        // file from its sidebar. Ctrl+Shift+, reloads the file (handled below).
         if (ctrl && !alt && !shift && (int)args.Key == 0xBC)
         {
-            OpenConfig();
+            ShowSettings();
             return true;
         }
 

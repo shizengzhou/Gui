@@ -532,6 +532,7 @@ public sealed partial class Workspace
         // ---- window & tabs ----
         MakeRow(Strings.NewWindow, "Ctrl+Shift+N", _paletteItems, OpenNewWindow);
         MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems, () => Activate(IndexOf(NewTab())));
+        MakeRow(Strings.Settings, "Ctrl+,", _paletteItems, ShowSettings);
         MakeRow(Strings.MoveTabLeft, "Ctrl+Shift+PageUp", _paletteItems, () => MoveTab(_active, _active - 1));
         MakeRow(Strings.MoveTabRight, "Ctrl+Shift+PageDown", _paletteItems, () => MoveTab(_active, _active + 1));
         MakeRow(Strings.MoveTabToNewWindow, string.Empty, _paletteItems, () =>
@@ -1209,7 +1210,7 @@ public sealed partial class Workspace
             Text = Strings.Settings,
             KeyboardAcceleratorTextOverride = _keybinds.Label("open_config", "Ctrl+,"),
         };
-        settings.Click += (_, _) => OpenConfig();
+        settings.Click += (_, _) => ShowSettings();
         menu.Items.Add(settings);
 
         return menu;

@@ -46,6 +46,16 @@ internal sealed class Keybinds
         ["move_tab:-1"] = new[] { "ctrl+shift+page_up" },
         ["move_tab:1"] = new[] { "ctrl+shift+page_down" },
         ["last_tab"] = new[] { "alt+9" },
+        // The Alt+1..8 slots are hardcoded in the key handler; listing them here keeps the
+        // shortcut page and "+list-keybinds" complete and lets a config line rebind them.
+        ["goto_tab:1"] = new[] { "alt+1" },
+        ["goto_tab:2"] = new[] { "alt+2" },
+        ["goto_tab:3"] = new[] { "alt+3" },
+        ["goto_tab:4"] = new[] { "alt+4" },
+        ["goto_tab:5"] = new[] { "alt+5" },
+        ["goto_tab:6"] = new[] { "alt+6" },
+        ["goto_tab:7"] = new[] { "alt+7" },
+        ["goto_tab:8"] = new[] { "alt+8" },
         ["toggle_sidebar"] = new[] { "ctrl+shift+b" },
 
         ["new_split:right"] = new[] { "ctrl+shift+o", "alt+shift+plus" },
@@ -221,6 +231,18 @@ internal sealed class Keybinds
             if (action == actionId) return Pretty(chord);
 
         return defaults.Length > 0 ? string.Empty : fallback;
+    }
+
+    /// <summary>
+    /// Every chord the config currently leaves active for one action, in display spelling.
+    /// Empty when the action was never bound or the config unbound all of it.
+    /// </summary>
+    public List<string> Chords(string actionId)
+    {
+        var chords = new List<string>();
+        foreach ((string chord, string action) in Effective())
+            if (action == actionId) chords.Add(Pretty(chord));
+        return chords;
     }
 
     private bool IsDefaultActive(string trigger, string actionId)

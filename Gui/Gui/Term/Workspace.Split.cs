@@ -549,6 +549,7 @@ public sealed partial class Workspace
         StopChipSpring(closing);
 
         int previous = _active;
+        bool settingsActive = _settingsActive;
         _chipHost.Children.RemoveAt(index);
         _tabs.RemoveAt(index);
 
@@ -556,6 +557,10 @@ public sealed partial class Workspace
         // closed index would jump the selection forward (close the tab next to the active
         // one and the tab after it took over).
         Activate(TabSelection.AfterClose(previous, index, _tabs.Count));
+
+        // The settings page sits in front of the tabs, so a close underneath it does not
+        // switch it away.
+        if (settingsActive) ActivateSettingsTab();
         App.MarkSessionDirty();
     }
 
@@ -778,7 +783,11 @@ public sealed partial class Workspace
         if (title.Length == 0)
         {
             title = "Terminal";
-            if (_tabs.Count > 0)
+            if (_settingsActive)
+            {
+                title = Strings.SettingsTitle;
+            }
+            else if (_tabs.Count > 0)
             {
                 Tab tab = _tabs[_active];
                 if (tab.Focused is not null && tab.Focused.Title.Length > 0) title = tab.Focused.Title;
