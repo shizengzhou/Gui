@@ -139,7 +139,6 @@ public sealed partial class Workspace
     private sealed class PaletteItem
     {
         public Border Row = null!;
-        public Border Accent = null!;
         public TextBlock Title = null!;
         public string Label = string.Empty;
         public Action? Action;
@@ -869,6 +868,8 @@ public sealed partial class Workspace
     private Brush TextBodyBrush() => ThemedBrush(Theme.TextBody);
     private Brush TextFaintBrush() => ThemedBrush(Theme.TextFaint);
     private Brush AccentBrush() => ThemedBrush(Theme.Accent);
+    private Brush AccentSoftBrush() => ThemedBrush(Theme.AccentSoft);
+    private Brush AccentStrokeBrush() => ThemedBrush(Theme.AccentStroke);
     private Brush ChipHoverBrush() => ThemedBrush(Theme.ChipHover);
     private Brush ControlFillOffBrush() => ThemedBrush(Theme.ControlFillOff);
     private Brush ChromeTextStrongBrush() => ThemedBrush(Theme.ChromeTextStrong);

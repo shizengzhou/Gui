@@ -169,38 +169,10 @@ public sealed partial class Workspace
         {
             Height = RowHeight,
             CornerRadius = new CornerRadius(Theme.RadiusField),
-            // The indicator's 3 DIP sit inside this inset, so the label starts at the 10 DIP
-            // it always had (7 + 3).
-            Padding = new Thickness(7, 0, 10, 0),
+            Padding = new Thickness(10, 0, 10, 0),
             BorderThickness = new Thickness(1),
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
         };
-    }
-
-    /// <summary>
-    /// Row content with the selection bar's slot in front of it. The bar is laid out whether
-    /// or not the row is selected - dropping it from the layout would pull the label sideways
-    /// as the selection moves - and only its colour changes.
-    /// </summary>
-    private static Grid PaletteRowContent(FrameworkElement content, out Border indicator)
-    {
-        var host = new Grid();
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        AddStarColumn(host);
-
-        indicator = new Border
-        {
-            Width = 3,
-            Height = 14,
-            CornerRadius = new CornerRadius(Theme.RadiusPill),
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        host.Children.Add(indicator);
-
-        Grid.SetColumn(content, 1);
-        host.Children.Add(content);
-        return host;
     }
 
     private PaletteItem MakeRow(string text, string shortcut, List<PaletteItem> owner, Action? action)
@@ -240,16 +212,9 @@ public sealed partial class Workspace
             Grid.SetColumn(keyChip, 1);
             grid.Children.Add(keyChip);
         }
-        row.Child = PaletteRowContent(grid, out Border indicator);
+        row.Child = grid;
 
-        var item = new PaletteItem
-        {
-            Row = row,
-            Accent = indicator,
-            Title = title,
-            Label = text,
-            Action = action,
-        };
+        var item = new PaletteItem { Row = row, Title = title, Label = text, Action = action };
         int index = owner.Count;
         WirePaletteRow(row, title, owner, index);
         _paletteRows.Children.Add(row);
@@ -313,17 +278,9 @@ public sealed partial class Workspace
         chevron.Margin = new Thickness(6, 0, 0, 0);
         Grid.SetColumn(chevron, 2);
         grid.Children.Add(chevron);
-        row.Child = PaletteRowContent(grid, out Border indicator);
+        row.Child = grid;
 
-        var item = new PaletteItem
-        {
-            Row = row,
-            Accent = indicator,
-            Title = title,
-            Label = text,
-            Action = action,
-            Submenu = true,
-        };
+        var item = new PaletteItem { Row = row, Title = title, Label = text, Action = action, Submenu = true };
         int index = items.Count;
         WirePaletteRow(row, title, items, index);
         _paletteRows.Children.Add(row);
@@ -348,12 +305,11 @@ public sealed partial class Workspace
         check.HorizontalAlignment = HorizontalAlignment.Right;
         Grid.SetColumn(check, 1);
         grid.Children.Add(check);
-        row.Child = PaletteRowContent(grid, out Border indicator);
+        row.Child = grid;
 
         var item = new PaletteItem
         {
             Row = row,
-            Accent = indicator,
             Title = title,
             Label = text,
             Action = action,
@@ -1163,8 +1119,8 @@ public sealed partial class Workspace
         {
             PaletteItem item = items[current];
             bool selected = current == index;
-            item.Row.Background = selected ? ChipHoverBrush() : ClearBrush();
-            item.Accent.Background = selected ? AccentBrush() : ClearBrush();
+            item.Row.Background = selected ? AccentSoftBrush() : ClearBrush();
+            item.Row.BorderBrush = selected ? AccentStrokeBrush() : ClearBrush();
             item.Title.Foreground = selected ? TextStrongBrush() : TextBodyBrush();
         }
 
