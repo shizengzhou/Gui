@@ -252,6 +252,15 @@ public static class Theme
     // --- hover fills -----------------------------------------------------------
     public static Color ChipHover() => ChipHoverFor(Light);
 
+    /// <summary>
+    /// Track of a switch that is off: a real fill, not a stroke, and heavy enough that the
+    /// white knob keeps 3:1 against it in both palettes. The strong stroke this used to take
+    /// left the knob at 1.4:1 on the light palette, which read as white on white.
+    /// </summary>
+    public static Color ControlFillOff() =>
+        CustomTheme ? Tint(Light ? (byte)0x73 : (byte)0x66, Terminal.Foreground)
+                    : Light ? Rgba(0x73, 0, 0, 0) : Rgba(0x66, 255, 255, 255);
+
     public static Color CloseButtonHover() =>
         CustomTheme ? Tint(Light ? (byte)0x1A : (byte)0x24, Terminal.Foreground)
                     : Light ? Rgba(0x1A, 0, 0, 0) : Rgba(0x24, 255, 255, 255);

@@ -190,7 +190,7 @@ public sealed partial class Workspace
             Spacing = 9,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        backRow.Children.Add(Glyph('\uE72B', 14, ChromeIconFaintBrush()));
+        backRow.Children.Add(Glyph('\uE72B', 14, SurfaceIconFaintBrush()));
         backRow.Children.Add(Label(Strings.SettingsBack, 12, TextBodyBrush()));
         back.Child = backRow;
         back.PointerEntered += (_, _) => back.Background = ChipHoverBrush();
@@ -230,7 +230,7 @@ public sealed partial class Workspace
             Spacing = 9,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        footRow.Children.Add(Glyph('\uE8E5', 14, ChromeIconFaintBrush()));
+        footRow.Children.Add(Glyph('\uE8E5', 14, SurfaceIconFaintBrush()));
         footRow.Children.Add(Label(Strings.SettingsOpenConfig, 12, TextBodyBrush()));
         foot.Child = footRow;
         foot.PointerEntered += (_, _) => foot.Background = ChipHoverBrush();
@@ -267,7 +267,7 @@ public sealed partial class Workspace
             Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        FontIcon icon = Glyph(glyph, 14, ChromeIconFaintBrush());
+        FontIcon icon = Glyph(glyph, 14, SurfaceIconFaintBrush());
         TextBlock text = Label(label, 12, TextBodyBrush());
         text.VerticalAlignment = VerticalAlignment.Center;
 
@@ -398,7 +398,7 @@ public sealed partial class Workspace
             entry.Button.Background = active ? ChipHoverBrush() : ClearBrush();
             entry.Text.Foreground = active ? TextStrongBrush() : TextBodyBrush();
             entry.Text.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
-            entry.Icon.Foreground = active ? AccentBrush() : ChromeIconFaintBrush();
+            entry.Icon.Foreground = active ? AccentBrush() : SurfaceIconFaintBrush();
             entry.Accent.Background = active ? AccentBrush() : ClearBrush();
             if (active && _settingsTitle is not null) _settingsTitle.Text = entry.Label;
         }
@@ -1433,6 +1433,8 @@ public sealed partial class Workspace
             Height = 14,
             // Half the side: the knob is a circle, so it is not on the radius scale.
             CornerRadius = new CornerRadius(7),
+            // White in both palettes: it sits on the accent when on and on ControlFillOff
+            // when off, and both keep 3:1 against it.
             Background = new SolidColorBrush(Microsoft.UI.Colors.White),
             HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1444,7 +1446,7 @@ public sealed partial class Workspace
             Height = 20,
             // Half the height: the track is a pill, so it is not on the radius scale.
             CornerRadius = new CornerRadius(10),
-            Background = on ? AccentBrush() : StrokeStrongBrush(),
+            Background = on ? AccentBrush() : ControlFillOffBrush(),
             Child = knob,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -1452,7 +1454,7 @@ public sealed partial class Workspace
         {
             args.Handled = true;
             on = !on;
-            track.Background = on ? AccentBrush() : StrokeStrongBrush();
+            track.Background = on ? AccentBrush() : ControlFillOffBrush();
             knob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
             knob.Margin = new Thickness(on ? 0 : 3, 0, on ? 3 : 0, 0);
             changed(on);

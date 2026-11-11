@@ -871,12 +871,19 @@ public sealed partial class Workspace
     private Brush AccentSoftBrush() => ThemedBrush(Theme.AccentSoft);
     private Brush AccentStrokeBrush() => ThemedBrush(Theme.AccentStroke);
     private Brush ChipHoverBrush() => ThemedBrush(Theme.ChipHover);
+    private Brush ControlFillOffBrush() => ThemedBrush(Theme.ControlFillOff);
     private Brush ChromeTextStrongBrush() => ThemedBrush(Theme.ChromeTextStrong);
     private Brush ChromeTextBodyBrush() => ThemedBrush(Theme.ChromeTextBody);
     private Brush ChromeTextFaintBrush() => ThemedBrush(Theme.ChromeTextFaint);
     private Brush ChromeIconStrongBrush() => ThemedBrush(Theme.ChromeIconStrong);
     private Brush ChromeIconBodyBrush() => ThemedBrush(Theme.ChromeIconBody);
     private Brush ChromeIconFaintBrush() => ThemedBrush(Theme.ChromeIconFaint);
+
+    /// <summary>
+    /// Neutral icon grey for chrome that sits on the content surface itself (the settings
+    /// page): that surface follows "theme", so its icons must not follow the window brightness.
+    /// </summary>
+    private Brush SurfaceIconFaintBrush() => ThemedBrush(Theme.PaneIconFaint);
     private Brush ChromeChipHoverBrush() => ThemedBrush(Theme.ChromeChipHover);
     private Brush ChromeCloseButtonHoverBrush() => ThemedBrush(Theme.ChromeCloseButtonHover);
     private Brush ChromeStrokeBrush() => ThemedBrush(Theme.ChromeStroke);
