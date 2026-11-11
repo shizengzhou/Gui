@@ -1119,8 +1119,9 @@ public sealed partial class Workspace
         {
             PaletteItem item = items[current];
             bool selected = current == index;
-            item.Row.Background = selected ? AccentSoftBrush() : ClearBrush();
-            item.Row.BorderBrush = selected ? AccentStrokeBrush() : ClearBrush();
+            // The same subtle fill a button or a rail row takes on hover: Windows Terminal's
+            // palette row is a stock list selection, so it is not tinted with the accent.
+            item.Row.Background = selected ? ChipHoverBrush() : ClearBrush();
             item.Title.Foreground = selected ? TextStrongBrush() : TextBodyBrush();
         }
 
