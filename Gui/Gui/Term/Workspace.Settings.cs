@@ -134,12 +134,14 @@ public sealed partial class Workspace
         _settingsLayer.Resources["SettingsCardForegroundPressed"] = cardForegroundActive;
         _settingsLayer.Resources["SettingsCardForegroundDisabled"] = TextFaintBrush();
 
-        Brush cardFill = ClearBrush();
-        Brush cardFillActive = ChipHoverBrush();
+        // Measured with a diagnostic build: the sheet under the open expander is this pair - the
+        // toolkit paints an expanded card as "pointer over", so a hover tint covers the whole
+        // panel. Keep all four states on the card's own fill.
+        Brush cardFill = TermBgBrush();
         _settingsLayer.Resources["SettingsCardBackground"] = cardFill;
         _settingsLayer.Resources["SettingsCardBackgroundDisabled"] = cardFill;
-        _settingsLayer.Resources["SettingsCardBackgroundPointerOver"] = cardFillActive;
-        _settingsLayer.Resources["SettingsCardBackgroundPressed"] = cardFillActive;
+        _settingsLayer.Resources["SettingsCardBackgroundPointerOver"] = cardFill;
+        _settingsLayer.Resources["SettingsCardBackgroundPressed"] = cardFill;
 
         Brush cardEdge = PanelStrokeBrush();
         Brush cardEdgeActive = StrokeStrongBrush();
