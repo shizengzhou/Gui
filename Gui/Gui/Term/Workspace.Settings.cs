@@ -162,8 +162,10 @@ public sealed partial class Workspace
         _settingsLayer.Resources["ExpanderChevronBackground"] = ClearBrush();
 
         // The panel the expander opens is Fluent's layer fill, which reads as a white sheet on
-        // this card; let the card show through instead and keep only the theme's stroke.
-        _settingsLayer.Resources["ExpanderContentBackground"] = ClearBrush();
+        // this card. A transparent panel is not enough: its host sits outside the settings card,
+        // so clearing it shows the content island instead. Paint the card's own colour and keep
+        // the theme's stroke.
+        _settingsLayer.Resources["ExpanderContentBackground"] = TermBgBrush();
         _settingsLayer.Resources["ExpanderContentBorderBrush"] = PanelStrokeBrush();
 
         // The About card's repository link is a HyperlinkButton, which takes the system accent.
