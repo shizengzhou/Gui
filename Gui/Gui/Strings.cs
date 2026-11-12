@@ -99,7 +99,7 @@ public static class Strings
     public static string SettingsTitle => Pick("Settings", "设置");
     public static string SettingsNavAppearance => Pick("Appearance", "外观");
     public static string SettingsNavTerminal => Pick("Terminal", "终端");
-    public static string SettingsNavKeys => Pick("Key bindings", "键位");
+    public static string SettingsNavKeys => Pick("Key bindings", "快捷键");
     public static string SettingsNavAbout => Pick("About", "关于");
     public static string SettingsLanguage => Pick("Language", "语言");
     public static string SettingsWindowAppearance => Pick("Window theme", "窗口外观");
@@ -140,8 +140,6 @@ public static class Strings
     public static string SettingsCursorBar => Pick("Bar", "竖线");
     public static string SettingsCursorUnderline => Pick("Underline", "下划线");
     public static string SettingsCursorBlink => Pick("Blink cursor", "光标闪烁");
-    public static string SettingsKeysDescription => Pick(
-        "Shortcuts come from the current keybind configuration.", "快捷键来自当前的键位配置。");
     public static string SettingsKeysUnbound => Pick("None", "未绑定");
     public static string SettingsKeysGroupTabs => Pick("Tabs", "标签页");
     public static string SettingsKeysGroupPanes => Pick("Panes", "窗格");

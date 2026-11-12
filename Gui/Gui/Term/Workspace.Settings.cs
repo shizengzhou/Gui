@@ -880,14 +880,6 @@ public sealed partial class Workspace
     private FrameworkElement BuildKeysSettingsPage()
     {
         var page = SettingsPageStack();
-        page.Children.Add(new TextBlock
-        {
-            Text = Strings.SettingsKeysDescription,
-            FontSize = Theme.FontSmall,
-            Foreground = TextFaintBrush(),
-            Margin = new Thickness(2, 0, 2, 0),
-            TextWrapping = TextWrapping.Wrap,
-        });
 
         Dictionary<string, string> labels = KeybindActionLabels();
         var listed = new HashSet<string>(StringComparer.Ordinal);
