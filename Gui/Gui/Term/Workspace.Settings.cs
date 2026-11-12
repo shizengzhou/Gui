@@ -148,6 +148,13 @@ public sealed partial class Workspace
         _settingsLayer.Resources["SettingsCardBorderBrushPointerOver"] = cardEdgeActive;
         _settingsLayer.Resources["SettingsCardBorderBrushPressed"] = cardEdgeActive;
 
+        // The expander's own header and description do not go through SettingsCardForeground:
+        // they take Fluent's primary and secondary text fills, which is why the title stayed a
+        // neutral grey while the items under it took the theme's green-grey.
+        _settingsLayer.Resources["TextFillColorPrimaryBrush"] = TextStrongBrush();
+        _settingsLayer.Resources["TextFillColorSecondaryBrush"] = TextBodyBrush();
+        _settingsLayer.Resources["TextFillColorTertiaryBrush"] = TextFaintBrush();
+
         // The About card's repository link is a HyperlinkButton, which takes the system accent.
         Brush linkAccent = AccentBrush();
         _settingsLayer.Resources["HyperlinkButtonForeground"] = linkAccent;
