@@ -1627,6 +1627,20 @@ public sealed class TerminalPane
     private float _lastDrawScale = -1f;
     private System.Numerics.Matrix3x2 _lastDrawTransform;
 
+    /// <summary>Debug aid: the composition opacity of the canvas and the ancestors above it.</summary>
+    private string OpacityChain()
+    {
+        var parts = new List<string>();
+        DependencyObject? node = _canvas;
+        for (int depth = 0; depth < 5 && node is UIElement element; depth++)
+        {
+            var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(element);
+            parts.Add($"{element.GetType().Name}:{visual.Opacity:0.##}");
+            node = VisualTreeHelper.GetParent(element);
+        }
+        return string.Join(" < ", parts);
+    }
+
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
         if (!_ready) return;
@@ -1901,7 +1915,8 @@ public sealed class TerminalPane
             _slotOpacity = slot.Opacity;
             Diag.Debug("canvas.slot",
                 $"offset={slot.Offset.X:0.###},{slot.Offset.Y:0.###} size={_canvas.ActualWidth:0.###}x{_canvas.ActualHeight:0.###} " +
-                $"opacity={slot.Opacity:0.###} elementOpacity={_canvas.Opacity:0.###} margin={_canvas.Margin.Left:0.###},{_canvas.Margin.Top:0.###}");
+                $"opacity={slot.Opacity:0.###} elementOpacity={_canvas.Opacity:0.###} margin={_canvas.Margin.Left:0.###},{_canvas.Margin.Top:0.###} " +
+                $"chain={OpacityChain()}");
         }
     }
 
