@@ -180,7 +180,7 @@
 
 - [x] `config-file` — 追加读取的配置文件（可重复）；`Term/Config.cs` 的 `LoadFile()` 按 Ghostty 语义在被包含文件之后加载（后者覆盖前者），路径相对声明它的文件，`?` 前缀表示缺失可忽略，循环引用只记警告
 - [ ] `config-default-files` — 是否加载默认路径的配置文件；Ghostty 本身仅限 CLI 参数，写入配置文件无效果
-- [x] `confirm-close-surface` — 关闭窗口前是否需要确认（默认 true）；`true` 只在 shell 集成报告仍有命令运行时询问，`false` 从不询问，`always` 每次关闭都询问；确认框为应用内的 ContentDialog
+- [x] `confirm-close-surface` — 关闭窗口、标签页或分割窗格前是否需要确认（默认 true）；`true` 只在 shell 集成报告仍有命令运行时询问，`false` 从不询问，`always` 每次关闭都询问；确认框为应用内的 ContentDialog
 - [ ] `quit-after-last-window-closed` — 最后一个窗口关闭后是否退出；本构建为单窗口应用，关闭窗口即退出
 - [ ] `quit-after-last-window-closed-delay` — 退出前的延迟时长
 - [ ] `initial-window` — 启动时是否创建初始窗口

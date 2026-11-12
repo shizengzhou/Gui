@@ -141,7 +141,25 @@ public partial class App : Application
 
         var windows = new Window[app._windows.Count];
         app._windows.CopyTo(windows);
-        foreach (Window window in windows) window.Close();
+
+        // "quit" is one action: ask once, in the window that can show the dialog, then
+        // close the rest without their own prompts.
+        foreach (Window window in windows)
+        {
+            if (window is MainWindow { Workspace: { } workspace } && workspace.WantsCloseConfirmation())
+            {
+                _ = workspace.ConfirmQuitAsync(windows);
+                return;
+            }
+        }
+
+        foreach (Window window in windows)
+        {
+            if (window is MainWindow { Workspace: { } workspace })
+                workspace.CloseWithoutConfirmation();
+            else
+                window.Close();
+        }
     }
 
     /// <summary>

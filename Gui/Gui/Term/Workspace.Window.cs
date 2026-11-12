@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -164,7 +165,40 @@ public sealed partial class Workspace
     }
 
     /// <summary>Ghostty's "close_window": closes this window (still honours confirm-close-surface).</summary>
-    private void CloseWindow() => _window?.Close();
+    private void CloseWindow() => RequestClose();
+
+    /// <summary>
+    /// Closes the window after "confirm-close-surface" has been honoured. The custom caption
+    /// button and the "close_window" action call Window.Close() programmatically, and
+    /// AppWindow.Closing only fires for a system affordance (Alt+F4, the taskbar menu), so
+    /// the policy has to be applied here as well.
+    /// </summary>
+    private void RequestClose()
+    {
+        if (!_allowClose)
+        {
+            if (NeedsCloseConfirm(AnyCommandRunning()))
+            {
+                _ = ConfirmWindowCloseAsync();
+                return;
+            }
+            _allowClose = true;
+        }
+        _window?.Close();
+    }
+
+    /// <summary>True when a window close would have to ask first.</summary>
+    internal bool WantsCloseConfirmation()
+    {
+        return !_allowClose && NeedsCloseConfirm(AnyCommandRunning());
+    }
+
+    /// <summary>Closes without asking; used by "quit" after its one shared prompt.</summary>
+    internal void CloseWithoutConfirmation()
+    {
+        _allowClose = true;
+        _window?.Close();
+    }
 
     /// <summary>Ghostty's "quit": closes every window, which is how the app exits.</summary>
     private void QuitApplication() => App.CloseAllWindows();
@@ -298,16 +332,25 @@ public sealed partial class Workspace
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (_allowClose) return;
-
-        string policy = _config.ConfirmCloseSurface;
-        if (policy == "false") return;
-        if (policy == "true" && !AnyCommandRunning()) return;
+        if (!NeedsCloseConfirm(AnyCommandRunning())) return;
 
         // The confirmation is asynchronous, so hold the close and ask.
         args.Cancel = true;
-        if (_closePromptOpen) return;
-        _closePromptOpen = true;
         _ = ConfirmWindowCloseAsync();
+    }
+
+    /// <summary>
+    /// "confirm-close-surface": false never asks, true asks only while a command is still
+    /// running, and always asks on every close of a surface or window.
+    /// </summary>
+    private bool NeedsCloseConfirm(bool commandRunning)
+    {
+        return _config.ConfirmCloseSurface switch
+        {
+            "false" => false,
+            "always" => true,
+            _ => commandRunning,
+        };
     }
 
     private bool AnyCommandRunning()
@@ -326,15 +369,40 @@ public sealed partial class Workspace
 
     private async Task ConfirmWindowCloseAsync()
     {
+        if (!await AskCloseWindowAsync()) return;
+
+        _allowClose = true;
+        _window?.Close();
+    }
+
+    /// <summary>
+    /// "quit" is one action: the question is asked once, then every window closes without
+    /// asking again. Quitting must not leave some windows alive behind the dialog, and
+    /// WinUI refuses a second ContentDialog anyway.
+    /// </summary>
+    internal async Task ConfirmQuitAsync(IReadOnlyList<Window> windows)
+    {
+        if (!await AskCloseWindowAsync()) return;
+
+        foreach (Window window in windows)
+        {
+            if (window is MainWindow { Workspace: { } workspace })
+                workspace._allowClose = true;
+            window.Close();
+        }
+    }
+
+    /// <summary>Shows the window-close question; true when the close may go ahead.</summary>
+    private async Task<bool> AskCloseWindowAsync()
+    {
+        // One dialog at a time: a second close request while the prompt is open is dropped
+        // instead of closing without asking.
+        if (_closePromptOpen) return false;
+        _closePromptOpen = true;
         try
         {
             XamlRoot? root = _root.XamlRoot;
-            if (root is null)
-            {
-                _allowClose = true;
-                _window?.Close();
-                return;
-            }
+            if (root is null) return true;
 
             var dialog = new ContentDialog
             {
@@ -350,16 +418,55 @@ public sealed partial class Workspace
                 CloseButtonText = Strings.Cancel,
                 DefaultButton = ContentDialogButton.Close,
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-            _allowClose = true;
-            _window?.Close();
+            return await dialog.ShowAsync() == ContentDialogResult.Primary;
         }
         catch (Exception error)
         {
+            // Never fall back to closing: that would stop the running command without an
+            // answer.
             Diag.LogException("Workspace.confirmClose", error);
-            _allowClose = true;
-            _window?.Close();
+            return false;
+        }
+        finally
+        {
+            _closePromptOpen = false;
+        }
+    }
+
+    /// <summary>
+    /// Asks before a tab or split with a running command goes away. The prompt shares the
+    /// one-dialog guard with the window close, so it never stacks a second ContentDialog.
+    /// </summary>
+    private async Task<bool> ConfirmCloseTerminalAsync()
+    {
+        if (_closePromptOpen) return false;
+
+        XamlRoot? root = _root.XamlRoot;
+        if (root is null) return true;
+
+        _closePromptOpen = true;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = root,
+                Title = Strings.CloseTerminalWarningTitle,
+                Content = new TextBlock
+                {
+                    Text = Strings.CloseTerminalWarningBody,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 420,
+                },
+                PrimaryButtonText = Strings.CloseTerminal,
+                CloseButtonText = Strings.Cancel,
+                DefaultButton = ContentDialogButton.Close,
+            };
+            return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.confirmCloseTerminal", error);
+            return true;
         }
         finally
         {

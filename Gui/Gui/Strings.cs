@@ -265,6 +265,12 @@ public static class Strings
         "A command is still running in this window. Closing it will stop the command.",
         "此窗口中仍有命令正在运行，关闭窗口会终止该命令。");
 
+    public static string CloseTerminalWarningTitle => Pick("Close terminal?", "关闭终端？");
+
+    public static string CloseTerminalWarningBody => Pick(
+        "A command is still running in this terminal. Closing it will stop the command.",
+        "此终端中仍有命令正在运行，关闭会终止该命令。");
+
     public static string CommandFinishedTitle => Pick("Command finished", "命令已完成");
 
     public static string CommandFinishedNotification(string title, int exitCode)

@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
@@ -227,6 +228,7 @@ public sealed partial class Workspace
     private IntPtr _hwnd;
 
     // "confirm-close-surface": the window close is cancelled once, then a dialog decides.
+    // The same flag guards the tab and split close prompts, so only one dialog is open.
     private bool _allowClose;
     private bool _closePromptOpen;
 
@@ -1624,7 +1626,11 @@ public sealed partial class Workspace
         close.PointerPressed += (_, args) =>
         {
             args.Handled = true;
-            _window?.Close();
+            // Window.Close() does not raise AppWindow.Closing (that is only for system
+            // affordances like Alt+F4), so the confirmation is requested from here. Posting
+            // keeps the dialog out of the pointer dispatch.
+            if (_dispatcher is null) RequestClose();
+            else _dispatcher.TryEnqueue(RequestClose);
         };
 
         captions.Children.Add(minimize);
@@ -2107,20 +2113,65 @@ public sealed partial class Workspace
 
     private void CloseOtherTabs(Tab tab)
     {
-        for (int index = _tabs.Count - 1; index >= 0; index--)
+        var targets = new List<Tab>(_tabs.Count);
+        foreach (Tab other in _tabs)
         {
-            if (ReferenceEquals(_tabs[index], tab)) continue;
-            CloseTab(index);
+            if (!ReferenceEquals(other, tab)) targets.Add(other);
         }
-        int remaining = IndexOf(tab);
-        if (remaining >= 0) Activate(remaining);
+        CloseTabsWithConfirm(targets, tab);
     }
 
     private void CloseTabsToTheRight(Tab tab)
     {
         int index = IndexOf(tab);
         if (index < 0) return;
-        for (int closing = _tabs.Count - 1; closing > index; closing--) CloseTab(closing);
+
+        var targets = new List<Tab>(_tabs.Count - index - 1);
+        for (int next = index + 1; next < _tabs.Count; next++) targets.Add(_tabs[next]);
+        CloseTabsWithConfirm(targets, null);
+    }
+
+    /// <summary>
+    /// Closes a set of tabs as one action: a single "still running" prompt covers the batch
+    /// instead of stacking one dialog per tab. <paramref name="keep"/> is activated after
+    /// the batch when given.
+    /// </summary>
+    private void CloseTabsWithConfirm(List<Tab> targets, Tab? keep)
+    {
+        if (targets.Count == 0) return;
+
+        bool running = false;
+        foreach (Tab target in targets)
+        {
+            if (!TabHasRunningCommand(target)) continue;
+            running = true;
+            break;
+        }
+
+        if (!NeedsCloseConfirm(running))
+        {
+            CloseTabsNow(targets, keep);
+            return;
+        }
+        _ = ConfirmAndCloseTabsAsync(targets, keep);
+    }
+
+    private async Task ConfirmAndCloseTabsAsync(List<Tab> targets, Tab? keep)
+    {
+        if (!await ConfirmCloseTerminalAsync()) return;
+        CloseTabsNow(targets, keep);
+    }
+
+    private void CloseTabsNow(List<Tab> targets, Tab? keep)
+    {
+        foreach (Tab target in targets)
+        {
+            int index = IndexOf(target);
+            if (index >= 0) CloseTab(index, false);
+        }
+
+        int remaining = keep is null ? -1 : IndexOf(keep);
+        if (remaining >= 0) Activate(remaining);
     }
 
     /// <summary>
@@ -3798,7 +3849,8 @@ public sealed partial class Workspace
                 // The tree root is a leaf only while the tab has a single pane.
                 if (tab.Root is null || tab.Root.Pane is not null)
                 {
-                    CloseTab(index);
+                    // The shell exited on its own: there is nothing left to confirm.
+                    CloseTab(index, false);
                     return;
                 }
 

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Text;
@@ -180,16 +181,46 @@ public sealed partial class Workspace
             return;
         }
 
-        bool vertical = false, closingFirst = false;
-        if (tab.Zoomed || !SplitAxisForPane(tab.Root, tab.Focused, ref vertical, ref closingFirst))
+        TerminalPane pane = tab.Focused;
+        if (NeedsCloseConfirm(pane.CommandRunning))
         {
-            FinishPaneRemoval(tab.Focused);
+            _ = ConfirmAndClosePaneAsync(tab, pane);
+            return;
+        }
+        RemovePane(tab, pane);
+    }
+
+    private async Task ConfirmAndClosePaneAsync(Tab tab, TerminalPane pane)
+    {
+        if (!await ConfirmCloseTerminalAsync()) return;
+
+        // The tab or the pane may have gone away while the dialog was open.
+        if (!_tabs.Contains(tab) || !TabContainsPane(tab, pane)) return;
+        RemovePane(tab, pane);
+    }
+
+    private void RemovePane(Tab tab, TerminalPane pane)
+    {
+        if (tab.Root is null || PaneIsClosing(pane)) return;
+
+        // The tab collapsed to a single pane meanwhile: close it like a tab. The user has
+        // already answered the prompt for this close, so it is not asked again.
+        if (tab.Root.Pane is not null)
+        {
+            int index = IndexOf(tab);
+            if (index >= 0) CloseTab(index, false);
             return;
         }
 
-        TerminalPane target = tab.Focused;
-        _closingPanes.Add(target);
-        AnimatePaneExit(target, vertical, closingFirst);
+        bool vertical = false, closingFirst = false;
+        if (tab.Zoomed || !SplitAxisForPane(tab.Root, pane, ref vertical, ref closingFirst))
+        {
+            FinishPaneRemoval(pane);
+            return;
+        }
+
+        _closingPanes.Add(pane);
+        AnimatePaneExit(pane, vertical, closingFirst);
     }
 
     /// <summary>
@@ -331,7 +362,8 @@ public sealed partial class Workspace
 
             if (tab.Root is null || tab.Root.Pane is not null)
             {
-                CloseTab(index);
+                // The close was already approved (or the shell exited on its own).
+                CloseTab(index, false);
                 return;
             }
 
@@ -517,7 +549,41 @@ public sealed partial class Workspace
         transition.Tab.ResumePaneLayout();
     }
 
-    private void CloseTab(int index)
+    private void CloseTab(int index, bool confirm = true)
+    {
+        if (index < 0 || index >= _tabs.Count) return;
+
+        Tab closing = _tabs[index];
+        // The last tab takes the window with it; its close handler does the asking.
+        if (confirm && _tabs.Count > 1 && NeedsCloseConfirm(TabHasRunningCommand(closing)))
+        {
+            _ = ConfirmAndCloseTabAsync(closing);
+            return;
+        }
+
+        CloseTabNow(index);
+    }
+
+    private async Task ConfirmAndCloseTabAsync(Tab tab)
+    {
+        if (!await ConfirmCloseTerminalAsync()) return;
+
+        // The tab may have gone away while the dialog was open.
+        int index = IndexOf(tab);
+        if (index >= 0) CloseTabNow(index);
+    }
+
+    private static bool TabHasRunningCommand(Tab tab)
+    {
+        bool running = false;
+        ForEachPane(tab, pane =>
+        {
+            if (pane.CommandRunning) running = true;
+        });
+        return running;
+    }
+
+    private void CloseTabNow(int index)
     {
         if (index < 0 || index >= _tabs.Count) return;
         SettleZoomTransition();
