@@ -74,6 +74,34 @@ public sealed partial class Workspace
             if (IsInertPress(args.OriginalSource, _settingsLayer)) FocusSettingsOwner();
         };
 
+        // Stock inputs (text box, combo box, number box) draw their border from Fluent's fixed
+        // greys and take the accent for the focused state; neither follows a Ghostty theme. Point
+        // those resources at the page's own stroke and accent so every field on the page matches
+        // the cards around it. The page root carries them, so each control inherits the set.
+        Brush fieldStroke = PanelStrokeBrush();
+        Brush fieldStrokeStrong = StrokeStrongBrush();
+        Brush fieldAccent = AccentBrush();
+        foreach (string key in new[]
+                 {
+                     "TextControlBorderBrush", "TextControlBorderBrushDisabled",
+                     "ComboBoxBorderBrush", "ComboBoxBorderBrushDisabled",
+                 })
+        {
+            _settingsLayer.Resources[key] = fieldStroke;
+        }
+        foreach (string key in new[]
+                 {
+                     "TextControlBorderBrushPointerOver", "ComboBoxBorderBrushPointerOver",
+                     "ComboBoxBorderBrushPressed",
+                 })
+        {
+            _settingsLayer.Resources[key] = fieldStrokeStrong;
+        }
+        foreach (string key in new[] { "TextControlBorderBrushFocused" })
+        {
+            _settingsLayer.Resources[key] = fieldAccent;
+        }
+
         var card = new Border
         {
             CornerRadius = new CornerRadius(CompactDensity ? 0 : Theme.RadiusSurface),
