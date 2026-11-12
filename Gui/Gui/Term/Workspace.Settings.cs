@@ -143,12 +143,14 @@ public sealed partial class Workspace
         _settingsLayer.Resources["SettingsCardBackgroundPointerOver"] = cardFill;
         _settingsLayer.Resources["SettingsCardBackgroundPressed"] = cardFill;
 
-        Brush cardEdge = PanelStrokeBrush();
-        Brush cardEdgeActive = StrokeStrongBrush();
+        // The cards also draw an edge of their own; inside our group borders it shows up the
+        // moment the expander opens, as a line where there was card. The groups already carry
+        // the theme stroke, so the cards go borderless in every state.
+        Brush cardEdge = ClearBrush();
         _settingsLayer.Resources["SettingsCardBorderBrush"] = cardEdge;
         _settingsLayer.Resources["SettingsCardBorderBrushDisabled"] = cardEdge;
-        _settingsLayer.Resources["SettingsCardBorderBrushPointerOver"] = cardEdgeActive;
-        _settingsLayer.Resources["SettingsCardBorderBrushPressed"] = cardEdgeActive;
+        _settingsLayer.Resources["SettingsCardBorderBrushPointerOver"] = cardEdge;
+        _settingsLayer.Resources["SettingsCardBorderBrushPressed"] = cardEdge;
 
         // The expander's own header and description do not go through SettingsCardForeground:
         // they take Fluent's primary and secondary text fills, which is why the title stayed a
@@ -167,7 +169,7 @@ public sealed partial class Workspace
         // this cream card is exactly the #F7F5EE sheet that reads as white. The toolkit's own
         // keys did not reach it, so take the WinUI card fills as well.
         _settingsLayer.Resources["ExpanderContentBackground"] = TermBgBrush();
-        _settingsLayer.Resources["ExpanderContentBorderBrush"] = PanelStrokeBrush();
+        _settingsLayer.Resources["ExpanderContentBorderBrush"] = ClearBrush();
         _settingsLayer.Resources["CardBackgroundFillColorDefaultBrush"] = TermBgBrush();
         _settingsLayer.Resources["CardBackgroundFillColorSecondaryBrush"] = TermBgBrush();
         _settingsLayer.Resources["CardStrokeColorDefaultBrush"] = PanelStrokeBrush();
