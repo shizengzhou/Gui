@@ -66,6 +66,7 @@ internal static class Program
             CheckCoverage();
             CheckScrollbackSmoke();
             CheckMouseSmoke();
+            CheckKittyKeyboardSmoke();
             CheckBellSmoke();
             CheckTitleReportSmoke();
             CheckEnquirySmoke();
@@ -409,6 +410,7 @@ internal static class Program
 
         new("TDATA_COLS", "GhosttyTerminalData", "COLS"),
         new("TDATA_ROWS", "GhosttyTerminalData", "ROWS"),
+        new("TDATA_KITTY_KEYBOARD_FLAGS", "GhosttyTerminalData", "KITTY_KEYBOARD_FLAGS"),
         new("TDATA_SCROLLBAR", "GhosttyTerminalData", "SCROLLBAR"),
         new("TDATA_MOUSE_TRACKING", "GhosttyTerminalData", "MOUSE_TRACKING"),
         new("TDATA_TITLE", "GhosttyTerminalData", "TITLE"),
@@ -538,7 +540,9 @@ internal static class Program
         new("MOUSE_BUTTON_FOUR", "GhosttyMouseButton", "FOUR"),
         new("MOUSE_BUTTON_FIVE", "GhosttyMouseButton", "FIVE"),
 
+        new("KEY_ACTION_RELEASE", "GhosttyKeyAction", "RELEASE"),
         new("KEY_ACTION_PRESS", "GhosttyKeyAction", "PRESS"),
+        new("KEY_ACTION_REPEAT", "GhosttyKeyAction", "REPEAT"),
         new("FORMAT_PLAIN", "GhosttyFormatterFormat", "PLAIN"),
         new("FORMAT_VT", "GhosttyFormatterFormat", "VT"),
         new("FMT_OPT_EMIT", "GhosttyFormatterOption", "EMIT"),
@@ -566,6 +570,9 @@ internal static class Program
         "STYLE_FLAG_BOLD", "STYLE_FLAG_ITALIC", "STYLE_FLAG_FAINT", "STYLE_FLAG_BLINK",
         "STYLE_FLAG_INVERSE", "STYLE_FLAG_INVISIBLE", "STYLE_FLAG_STRIKETHROUGH",
         "STYLE_FLAG_OVERLINE", "STYLE_UNDERLINE_SHIFT",
+        // GhosttyKittyKeyFlags is a u8 bitmask alias; the kitty keyboard smoke pins the bits.
+        "KITTY_KEY_DISAMBIGUATE", "KITTY_KEY_REPORT_EVENTS", "KITTY_KEY_REPORT_ALTERNATES",
+        "KITTY_KEY_REPORT_ALL", "KITTY_KEY_REPORT_ASSOCIATED",
         // Formatter extra bits are a plain uint32 bitmask.
         "FMT_EXTRA_PALETTE", "FMT_EXTRA_MODES", "FMT_EXTRA_SCROLLING_REGION",
         "FMT_EXTRA_TABSTOPS", "FMT_EXTRA_PWD", "FMT_EXTRA_KEYBOARD", "FMT_EXTRA_CURSOR",
@@ -844,6 +851,61 @@ internal static class Program
 
             Check("BEL reaches the callback", fired == 1, $"fired {fired} time(s)");
             GC.KeepAlive(callback);
+        }
+        finally
+        {
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>
+    /// Reads the terminal's kitty keyboard protocol flags, -1 when the option is rejected.
+    /// </summary>
+    private static unsafe int KittyFlags(IntPtr terminal)
+    {
+        byte flags = 0;
+        return GhosttyNative.ghostty_terminal_get(
+            terminal, GhosttyNative.TDATA_KITTY_KEYBOARD_FLAGS, &flags) == GhosttyNative.SUCCESS
+            ? flags
+            : -1;
+    }
+
+    /// <summary>
+    /// The KITTY_KEY_* constants describe GhosttyKittyKeyFlags, which the manifest only
+    /// publishes as a u8 alias, so their bit positions are pinned here instead: "CSI &gt; flags u"
+    /// is what a program sends to push the flags, and the terminal reports back exactly the
+    /// bits it accepted. A constant that drifts from the protocol fails this section.
+    /// </summary>
+    private static unsafe void CheckKittyKeyboardSmoke()
+    {
+        Section("kitty keyboard smoke");
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        try
+        {
+            Check("flags start clear", KittyFlags(terminal) == 0, $"{KittyFlags(terminal)}");
+
+            VtWrite(terminal, "\u001b[>1u");
+            Check("disambiguate is bit 0", KittyFlags(terminal) == GhosttyNative.KITTY_KEY_DISAMBIGUATE,
+                $"{KittyFlags(terminal)}");
+
+            VtWrite(terminal, "\u001b[>3u");
+            Check("report event types is bit 1",
+                KittyFlags(terminal) ==
+                (GhosttyNative.KITTY_KEY_DISAMBIGUATE | GhosttyNative.KITTY_KEY_REPORT_EVENTS),
+                $"{KittyFlags(terminal)}");
+
+            int all = GhosttyNative.KITTY_KEY_DISAMBIGUATE | GhosttyNative.KITTY_KEY_REPORT_EVENTS |
+                GhosttyNative.KITTY_KEY_REPORT_ALTERNATES | GhosttyNative.KITTY_KEY_REPORT_ALL |
+                GhosttyNative.KITTY_KEY_REPORT_ASSOCIATED;
+            VtWrite(terminal, "\u001b[>31u");
+            Check("all five flags fill a byte", KittyFlags(terminal) == all && all == 31,
+                $"{KittyFlags(terminal)} of {all}");
         }
         finally
         {
