@@ -1090,13 +1090,6 @@ public sealed partial class Workspace
         };
 
         var body = new StackPanel();
-        body.Children.Add(new TextBlock
-        {
-            Text = AppVersion(),
-            FontSize = Theme.FontBody,
-            Foreground = TextFaintBrush(),
-            Margin = new Thickness(13, 10, 13, 8),
-        });
         body.Children.Add(SettingsRow(Strings.AboutRepository, null, RepositoryControl()));
         body.Children.Add(SettingsRow(Strings.AboutLicense, null,
             Label("MIT License", Theme.FontBody, TextFaintBrush())));
@@ -1114,6 +1107,11 @@ public sealed partial class Workspace
         titles.Children.Add(Label("Gui", Theme.FontBody, TextStrongBrush()));
         titles.Children.Add(Label(Strings.AboutCopyright(DateTime.Now.Year), Theme.FontCaption, TextFaintBrush()));
 
+        // The version sits at the end of the header row, where the toolkit expander put its
+        // content, rather than inside the part that opens.
+        TextBlock version = Label(AppVersion(), Theme.FontBody, TextFaintBrush());
+        version.VerticalAlignment = VerticalAlignment.Center;
+
         FontIcon chevron = Glyph('\uE76C', 10, TextFaintBrush());
         chevron.VerticalAlignment = VerticalAlignment.Center;
 
@@ -1121,10 +1119,13 @@ public sealed partial class Workspace
         AddAutoColumn(headerGrid);
         AddStarColumn(headerGrid);
         AddAutoColumn(headerGrid);
+        AddAutoColumn(headerGrid);
         headerGrid.Children.Add(icon);
         Grid.SetColumn(titles, 1);
         headerGrid.Children.Add(titles);
-        Grid.SetColumn(chevron, 2);
+        Grid.SetColumn(version, 2);
+        headerGrid.Children.Add(version);
+        Grid.SetColumn(chevron, 3);
         headerGrid.Children.Add(chevron);
 
         var header = new Border
