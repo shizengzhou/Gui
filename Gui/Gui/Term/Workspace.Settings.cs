@@ -839,19 +839,32 @@ public sealed partial class Workspace
         // in memory, so both would fill a field the user never set.
         Config stored = Config.Load();
 
+        // A missing key is written straight away as "no-cursor", not just shown in the field:
+        // the prompt then keeps the configured cursor shape instead of switching to a bar
+        // while the shell integration is active, and the page shows what is really in the file.
+        string storedShellFeatures = StoredValue(stored, "shell-integration-features");
+        if (storedShellFeatures.Length == 0)
+        {
+            storedShellFeatures = "no-cursor";
+            Config.SaveValue("shell-integration-features", storedShellFeatures);
+            _config.ShellFeatures = Config.ParseShellFeatures(storedShellFeatures);
+        }
+
         page.Children.Add(SettingsGroup(Strings.SettingsStartup, SettingsCard(
-            SettingsRow(Strings.SettingsCommand, Strings.SettingsStartupDescription,
+            SettingsRow(Strings.SettingsCommand, null,
                 SettingsText(StoredValue(stored, "command"), Strings.SettingsCommandAuto, 260, value =>
                 {
                     _config.Command = value;
                     Config.SaveValue("command", value);
                 })),
-            SettingsRow(Strings.SettingsWorkingDirectory, Strings.SettingsStartupDescription,
+            SettingsRow(Strings.SettingsWorkingDirectory, null,
                 SettingsText(StoredValue(stored, "working-directory"), "%USERPROFILE%", 260, value =>
                 {
                     _config.WorkingDirectory = value;
                     Config.SaveValue("working-directory", value);
-                })))));
+                })),
+            SettingsRow(Strings.SettingsShellFeatures, null,
+                SettingsText(storedShellFeatures, "no-cursor", 260, ApplyShellFeatureList)))));
 
         IReadOnlyList<string> families = MonospaceFontFamilies();
         ComboBox fontFamilies = SettingsEditableSelect(
@@ -864,20 +877,29 @@ public sealed partial class Workspace
             SettingsRow(Strings.SettingsFontFamily, null, fontFamilies),
             SettingsRow(Strings.SettingsFontSize, null,
                 SettingsNumber(_config.FontSize, Config.MinFontSizePoints, Config.MaxFontSizePoints,
-                    ApplyFontSizeChoice)))));
+                    ApplyFontSizeChoice)),
+            SettingsRow(Strings.SettingsFontFeatures, null,
+                SettingsText(StoredValue(stored, "font-feature"), "ss01, -calt", 260,
+                    ApplyFontFeatureList)))));
 
         int cursorIndex = _config.CursorStyle switch
         {
-            "bar" => 1,
-            "underline" => 2,
+            "block_hollow" => 1,
+            "bar" => 2,
+            "underline" => 3,
             _ => 0,
         };
         FrameworkElement cursorShape = SettingsSegmented(
-            new[] { Strings.SettingsCursorBlock, Strings.SettingsCursorBar, Strings.SettingsCursorUnderline },
+            new[]
+            {
+                Strings.SettingsCursorBlock, Strings.SettingsCursorBlockHollow,
+                Strings.SettingsCursorBar, Strings.SettingsCursorUnderline,
+            },
             cursorIndex, index => ApplyCursorStyle(index switch
             {
-                1 => "bar",
-                2 => "underline",
+                1 => "block_hollow",
+                2 => "bar",
+                3 => "underline",
                 _ => "block",
             }));
 
@@ -1270,6 +1292,20 @@ public sealed partial class Workspace
         _config.FontSize = (float)size;
         Config.SaveValue("font-size", size.ToString(CultureInfo.InvariantCulture));
         RefreshPaneFonts();
+    }
+
+    private void ApplyFontFeatureList(string value)
+    {
+        _config.FontFeatures = Config.ParseFontFeatures(new[] { value });
+        Config.SaveValue("font-feature", value);
+        RefreshPaneFonts();
+    }
+
+    private void ApplyShellFeatureList(string value)
+    {
+        // Existing panes already started their shell, so this only reaches new tabs.
+        _config.ShellFeatures = Config.ParseShellFeatures(value);
+        Config.SaveValue("shell-integration-features", value);
     }
 
     private void ApplyCursorStyle(string style)

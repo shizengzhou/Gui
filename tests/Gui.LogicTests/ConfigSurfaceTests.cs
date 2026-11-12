@@ -228,6 +228,11 @@ public class ConfigSurfaceTests : IDisposable
         Assert.True(config.HasBoldColor);
         Assert.Equal(new Rgb(0xAA, 0xBB, 0xCC), config.BoldColor);
         Assert.Equal(0.4f, config.FaintOpacity);
+
+        // An unset "cursor-style-blink" is steady: the cursor does not blink by default.
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.False(defaults.CursorBlink);
+        Assert.True(Config.Load(Write("cursor-style-blink = true\n")).CursorBlink);
     }
 
     [Fact]

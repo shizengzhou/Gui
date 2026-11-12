@@ -271,16 +271,19 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
-    public void SaveValueStripsComments()
+    public void SaveValueKeepsCommentsAndBlankLines()
     {
-        string path = Write("# theme = dark\n# a note\ntheme = light\n");
+        string path = Write("# theme = dark\n# a note\n\ntheme = light\n");
 
         Config.SaveValue(path, "theme", "dark");
 
-        string text = File.ReadAllText(path);
-        Assert.DoesNotContain("#", text);
-        Assert.Contains("theme = dark", text);
-        Assert.DoesNotContain("theme = light", text);
+        // Only the active line changes: commented-out settings, notes and blank lines stay
+        // exactly where the user put them.
+        Assert.Equal("# theme = dark\n# a note\n\ntheme = dark\n", File.ReadAllText(path));
+
+        Config.SaveValue(path, "font-size", "15");
+        Assert.Equal("# theme = dark\n# a note\n\ntheme = dark\nfont-size = 15\n",
+            File.ReadAllText(path));
     }
 
     [Fact]

@@ -248,7 +248,7 @@ public sealed class Config
     // ---- cursor -----------------------------------------------------------
 
     public string CursorStyle = string.Empty;      // empty: whatever the program asked for
-    public bool? CursorBlink;                      // null: whatever the program asked for
+    public bool? CursorBlink = false;              // cursor-style-blink; null: whatever the program asked for
 
     // ---- layout -----------------------------------------------------------
 
@@ -863,7 +863,7 @@ public sealed class Config
         FontStyleBold = Last("font-style-bold") ?? string.Empty;
         FontStyleItalic = Last("font-style-italic") ?? string.Empty;
         FontStyleBoldItalic = Last("font-style-bold-italic") ?? string.Empty;
-        FontFeatures = All("font-feature");
+        FontFeatures = ParseFontFeatures(All("font-feature"));
         FontCodepointMap = ParseFontCodepointMaps(All("font-codepoint-map"));
         FontVariations = ParseVariations(All("font-variation"));
         FontVariationsBold = ParseVariations(All("font-variation-bold"));
@@ -1714,17 +1714,23 @@ public sealed class Config
     /// "shell-integration-features" is a comma/space separated list with "no-" negations.
     /// "true" enables every feature and "false" disables every feature, like Ghostty.
     /// </summary>
-    private void ApplyShellFeatures(string? value)
+    private void ApplyShellFeatures(string? value) => ShellFeatures = ParseShellFeatures(value);
+
+    /// <summary>
+    /// The same parse for callers that only hold the value, like the settings page, which
+    /// has to turn what the user typed into flags without reloading the file.
+    /// </summary>
+    public static ShellIntegrationFeatures ParseShellFeatures(string? value)
     {
-        ShellFeatures = ShellIntegrationFeatures.Default;
-        if (string.IsNullOrWhiteSpace(value)) return;
+        ShellIntegrationFeatures features = ShellIntegrationFeatures.Default;
+        if (string.IsNullOrWhiteSpace(value)) return features;
 
         foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
         {
             string token = raw.Trim().ToLowerInvariant();
             if (token == "true")
             {
-                ShellFeatures = ShellFeatures with
+                features = features with
                 {
                     Cursor = true, Title = true, Sudo = true,
                     SshEnv = true, SshTerminfo = true, Path = true,
@@ -1733,7 +1739,7 @@ public sealed class Config
             }
             if (token == "false")
             {
-                ShellFeatures = ShellFeatures with
+                features = features with
                 {
                     Cursor = false, CursorSteady = false, Title = false,
                     Sudo = false, SshEnv = false, SshTerminfo = false, Path = false,
@@ -1756,15 +1762,17 @@ public sealed class Config
             switch (token)
             {
                 case "cursor":
-                    ShellFeatures = ShellFeatures with { Cursor = enable, CursorSteady = enable && steady };
+                    features = features with { Cursor = enable, CursorSteady = enable && steady };
                     break;
-                case "title": ShellFeatures = ShellFeatures with { Title = enable }; break;
-                case "sudo": ShellFeatures = ShellFeatures with { Sudo = enable }; break;
-                case "ssh-env": ShellFeatures = ShellFeatures with { SshEnv = enable }; break;
-                case "ssh-terminfo": ShellFeatures = ShellFeatures with { SshTerminfo = enable }; break;
-                case "path": ShellFeatures = ShellFeatures with { Path = enable }; break;
+                case "title": features = features with { Title = enable }; break;
+                case "sudo": features = features with { Sudo = enable }; break;
+                case "ssh-env": features = features with { SshEnv = enable }; break;
+                case "ssh-terminfo": features = features with { SshTerminfo = enable }; break;
+                case "path": features = features with { Path = enable }; break;
             }
         }
+
+        return features;
     }
 
     /// <summary>"notify-on-command-finish": unfocused (default), always, or never.</summary>
@@ -2083,6 +2091,25 @@ public sealed class Config
     }
 
     /// <summary>
+    /// "font-feature" is repeatable, and one line may list several features separated by
+    /// commas ("ss01, -calt") — which is the form the settings page writes back when the
+    /// field is committed.
+    /// </summary>
+    public static List<string> ParseFontFeatures(IEnumerable<string> entries)
+    {
+        var result = new List<string>();
+        foreach (string entry in entries)
+        {
+            foreach (string part in entry.Split(','))
+            {
+                string feature = part.Trim();
+                if (feature.Length > 0) result.Add(feature);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Parses "font-variation" entries: each one is "axis=value", and a single line may
     /// carry several axes separated by commas ("wght=600,opsz=12").
     /// </summary>
@@ -2245,17 +2272,16 @@ public sealed class Config
         if (string.IsNullOrEmpty(file)) return;
         EnsureDefault(file);
 
-        // The config file carries active settings only. Read it back without comments or
-        // blank lines so a save cannot reintroduce a commented template.
+        // The file belongs to the user: comments, blank lines and their order all survive,
+        // and only the lines that set this key are rewritten. The newline style is the one
+        // the file already uses, so a save never mixes endings.
         var lines = new List<string>();
+        string newline = "\n";
         try
         {
-            foreach (string raw in File.ReadAllText(file, Encoding.UTF8).Split('\n'))
-            {
-                string line = raw.Trim(' ', '\t', '\r');
-                if (line.Length == 0 || line[0] == '#') continue;
-                lines.Add(line);
-            }
+            string text = File.ReadAllText(file, Encoding.UTF8);
+            if (text.Contains("\r\n", StringComparison.Ordinal)) newline = "\r\n";
+            foreach (string raw in text.Split('\n')) lines.Add(raw.TrimEnd('\r'));
         }
         catch
         {
@@ -2263,22 +2289,32 @@ public sealed class Config
         }
 
         string wanted = key.ToLowerInvariant();
+        string replacement = key + " = " + value;
         bool replaced = false;
         for (int i = 0; i < lines.Count; i++)
         {
-            int separator = lines[i].IndexOf('=');
+            string line = lines[i];
+            string trimmed = line.Trim(' ', '\t');
+            if (trimmed.Length == 0 || trimmed[0] == '#') continue;
+
+            int separator = trimmed.IndexOf('=');
             if (separator < 0) continue;
-            if (lines[i][..separator].Trim(' ', '\t').ToLowerInvariant() == wanted)
-            {
-                lines[i] = key + " = " + value;
-                replaced = true;
-            }
+            if (trimmed[..separator].Trim(' ', '\t').ToLowerInvariant() != wanted) continue;
+
+            lines[i] = replacement;
+            replaced = true;
         }
-        if (!replaced) lines.Add(key + " = " + value);
+        if (!replaced)
+        {
+            // Append after the last setting, so a trailing blank line stays trailing.
+            int insert = lines.Count;
+            while (insert > 0 && lines[insert - 1].Trim().Length == 0) insert--;
+            lines.Insert(insert, replacement);
+        }
 
         try
         {
-            File.WriteAllText(file, string.Join("\n", lines), new UTF8Encoding(false));
+            File.WriteAllText(file, string.Join(newline, lines), new UTF8Encoding(false));
         }
         catch
         {

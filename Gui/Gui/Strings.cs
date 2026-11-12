@@ -127,18 +127,18 @@ public static class Strings
     public static string SettingsCommand => Pick("Command", "启动命令");
     public static string SettingsCommandAuto => "pwsh/powershell/cmd";
     public static string SettingsWorkingDirectory => Pick("Working directory", "工作目录");
-
-    public static string SettingsStartupDescription => Pick(
-        "Applies to new tabs.", "应用于新建的标签页。");
+    public static string SettingsShellFeatures => Pick("Shell integration features", "Shell 集成特性");
 
     public static string SettingsFont => Pick("Font", "字体");
     public static string SettingsFontFamily => Pick("Font family", "字体族");
     public static string SettingsFontSize => Pick("Font size", "字号");
+    public static string SettingsFontFeatures => Pick("Font features", "字体特性");
     public static string SettingsCursor => Pick("Cursor", "光标");
     public static string SettingsCursorShape => Pick("Cursor shape", "光标形状");
     public static string SettingsCursorBlock => Pick("Block", "方块");
     public static string SettingsCursorBar => Pick("Bar", "竖线");
     public static string SettingsCursorUnderline => Pick("Underline", "下划线");
+    public static string SettingsCursorBlockHollow => Pick("Hollow block", "空心方块");
     public static string SettingsCursorBlink => Pick("Blink cursor", "光标闪烁");
     public static string SettingsKeysUnbound => Pick("None", "未绑定");
     public static string SettingsKeysGroupTabs => Pick("Tabs", "标签页");

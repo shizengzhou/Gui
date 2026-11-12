@@ -97,7 +97,7 @@ public static class ConfigSchema
         new("cursor-color", ConfigKind.Color, ConfigPlatform.All, "cursor color"),
         new("cursor-opacity", ConfigKind.Float, ConfigPlatform.All, "cursor opacity"),
         new("cursor-style", ConfigKind.Enum, ConfigPlatform.All, "default cursor style"),
-        new("cursor-style-blink", ConfigKind.Bool, ConfigPlatform.All, "cursor blinks by default"),
+        new("cursor-style-blink", ConfigKind.Bool, ConfigPlatform.All, "cursor blink"),
         new("cursor-text", ConfigKind.Color, ConfigPlatform.All, "text color under the cursor"),
         new("cursor-click-to-move", ConfigKind.Bool, ConfigPlatform.All, "click prompt to move cursor"),
         new("mouse-hide-while-typing", ConfigKind.Bool, ConfigPlatform.All, "hide pointer while typing"),
