@@ -415,17 +415,13 @@ public sealed unsafe class TerminalSession : IDisposable
                 terminal == IntPtr.Zero)
                 return null;
 
-            var options = new GhosttyNative.GhosttyFormatterTerminalOptions
-            {
-                Size = (nuint)Marshal.SizeOf<GhosttyNative.GhosttyFormatterTerminalOptions>(),
-                Emit = GhosttyNative.FORMAT_VT,
-                Extra = new GhosttyNative.GhosttyFormatterTerminalExtra
-                {
-                    Size = (nuint)Marshal.SizeOf<GhosttyNative.GhosttyFormatterTerminalExtra>(),
-                },
-            };
-            if (GhosttyNative.ghostty_formatter_terminal_new(IntPtr.Zero, out formatter, terminal, options) != 0)
+            if (GhosttyNative.ghostty_formatter_terminal_new(IntPtr.Zero, out formatter, terminal) != 0)
                 return null;
+            unsafe
+            {
+                int emit = GhosttyNative.FORMAT_VT;
+                GhosttyNative.ghostty_formatter_set(formatter, GhosttyNative.FMT_OPT_EMIT, &emit);
+            }
 
             unsafe
             {
@@ -783,8 +779,9 @@ public sealed unsafe class TerminalSession : IDisposable
     public bool SearchSelect(bool next)
     {
         if (_search == IntPtr.Zero) return false;
-        int option = next ? GhosttyNative.SEARCH_OPT_SELECT_NEXT : GhosttyNative.SEARCH_OPT_SELECT_PREV;
-        return GhosttyNative.ghostty_search_set(_search, option, null) == GhosttyNative.SUCCESS;
+        return next
+            ? GhosttyNative.ghostty_search_select_next(_search) == GhosttyNative.SUCCESS
+            : GhosttyNative.ghostty_search_select_prev(_search) == GhosttyNative.SUCCESS;
     }
 
     /// <summary>Total matches and the selected match index (0 = newest); null when none is selected.</summary>
@@ -832,10 +829,7 @@ public sealed unsafe class TerminalSession : IDisposable
                 AddSelectionSpans(spans, match, cols, offset, len, false);
         }
 
-        var selected = new GhosttyNative.GhosttySelection
-        {
-            Size = (nuint)sizeof(GhosttyNative.GhosttySelection),
-        };
+        var selected = new GhosttyNative.GhosttySelection();
         if (GhosttyNative.ghostty_search_get(_search, GhosttyNative.SEARCH_DATA_SELECTED_MATCH, &selected)
             == GhosttyNative.SUCCESS)
         {
@@ -987,15 +981,12 @@ public sealed unsafe class TerminalSession : IDisposable
     {
         GhosttyNative.GhosttyGridRef start = default;
         GhosttyNative.GhosttyGridRef end = default;
-        start.Size = (nuint)sizeof(GhosttyNative.GhosttyGridRef);
-        end.Size = (nuint)sizeof(GhosttyNative.GhosttyGridRef);
 
         if (GhosttyNative.ghostty_terminal_grid_ref(_terminal, anchor, &start) != GhosttyNative.SUCCESS) return false;
         if (GhosttyNative.ghostty_terminal_grid_ref(_terminal, cursor, &end) != GhosttyNative.SUCCESS) return false;
 
         var selection = new GhosttyNative.GhosttySelection
         {
-            Size = (nuint)sizeof(GhosttyNative.GhosttySelection),
             Start = start,
             End = end,
             Rectangle = 0,
@@ -1012,7 +1003,7 @@ public sealed unsafe class TerminalSession : IDisposable
     public bool HasSelection()
     {
         if (_terminal == IntPtr.Zero) return false;
-        var selection = new GhosttyNative.GhosttySelection { Size = (nuint)sizeof(GhosttyNative.GhosttySelection) };
+        var selection = new GhosttyNative.GhosttySelection();
         return GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_SELECTION, &selection) == GhosttyNative.SUCCESS;
     }
 
@@ -1028,7 +1019,7 @@ public sealed unsafe class TerminalSession : IDisposable
     {
         if (_terminal == IntPtr.Zero) return Array.Empty<byte>();
 
-        var selection = new GhosttyNative.GhosttySelection { Size = (nuint)sizeof(GhosttyNative.GhosttySelection) };
+        var selection = new GhosttyNative.GhosttySelection();
         bool hasSelection = false;
         if (selectionOnly)
         {
@@ -1037,24 +1028,22 @@ public sealed unsafe class TerminalSession : IDisposable
             if (!hasSelection) return Array.Empty<byte>();
         }
 
-        var options = new GhosttyNative.GhosttyFormatterTerminalOptions
-        {
-            Size = (nuint)sizeof(GhosttyNative.GhosttyFormatterTerminalOptions),
-            Emit = emit,
-            Unwrap = 1,
-            Trim = 1,
-            Extra = new GhosttyNative.GhosttyFormatterTerminalExtra
-            {
-                Size = (nuint)sizeof(GhosttyNative.GhosttyFormatterTerminalExtra),
-            },
-        };
-
-        GhosttyNative.GhosttySelection* selectionPtr = &selection;
-        if (hasSelection) options.Selection = (IntPtr)selectionPtr;
-
         IntPtr formatter = IntPtr.Zero;
-        if (GhosttyNative.ghostty_formatter_terminal_new(IntPtr.Zero, out formatter, _terminal, options) != GhosttyNative.SUCCESS)
+        if (GhosttyNative.ghostty_formatter_terminal_new(IntPtr.Zero, out formatter, _terminal) != GhosttyNative.SUCCESS)
             return Array.Empty<byte>();
+
+        unsafe
+        {
+            int emitValue = emit;
+            GhosttyNative.ghostty_formatter_set(formatter, GhosttyNative.FMT_OPT_EMIT, &emitValue);
+            byte unwrapValue = 1;
+            byte trimValue = 1;
+            GhosttyNative.ghostty_formatter_set(formatter, GhosttyNative.FMT_OPT_UNWRAP, &unwrapValue);
+            GhosttyNative.ghostty_formatter_set(formatter, GhosttyNative.FMT_OPT_TRIM, &trimValue);
+            GhosttyNative.GhosttySelection* selectionPtr = &selection;
+            GhosttyNative.ghostty_formatter_set(
+                formatter, GhosttyNative.FMT_OPT_SELECTION, hasSelection ? (void*)selectionPtr : null);
+        }
 
         try
         {
@@ -1120,7 +1109,7 @@ public sealed unsafe class TerminalSession : IDisposable
         row = 0;
         if (_terminal == IntPtr.Zero) return false;
 
-        var selection = new GhosttyNative.GhosttySelection { Size = (nuint)sizeof(GhosttyNative.GhosttySelection) };
+        var selection = new GhosttyNative.GhosttySelection();
         if (GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_SELECTION, &selection) != GhosttyNative.SUCCESS)
             return false;
 
@@ -1205,7 +1194,7 @@ public sealed unsafe class TerminalSession : IDisposable
         if (_keyEncoder == IntPtr.Zero || _terminal == IntPtr.Zero) return;
 
         // Pick up current terminal modes (cursor key application, kitty flags...).
-        GhosttyNative.ghostty_key_encoder_setopt_from_terminal(_keyEncoder, _terminal);
+        GhosttyNative.ghostty_key_encoder_set_from_terminal(_keyEncoder, _terminal);
 
         if (GhosttyNative.ghostty_key_event_new(IntPtr.Zero, out IntPtr keyEvent) != GhosttyNative.SUCCESS || keyEvent == IntPtr.Zero)
             return;
@@ -1347,7 +1336,7 @@ public sealed unsafe class TerminalSession : IDisposable
             return false;
 
         // Tracking mode and wire format come from the terminal's current modes.
-        if (GhosttyNative.ghostty_mouse_encoder_setopt_from_terminal(_mouseEncoder, _terminal)
+        if (GhosttyNative.ghostty_mouse_encoder_set_from_terminal(_mouseEncoder, _terminal)
             != GhosttyNative.SUCCESS)
         {
             return false;
@@ -1397,7 +1386,6 @@ public sealed unsafe class TerminalSession : IDisposable
             Y = y,
         };
         var gridRef = default(GhosttyNative.GhosttyGridRef);
-        gridRef.Size = (nuint)sizeof(GhosttyNative.GhosttyGridRef);
         if (GhosttyNative.ghostty_terminal_grid_ref(_terminal, point, &gridRef)
             != GhosttyNative.SUCCESS)
         {

@@ -167,13 +167,13 @@ internal static class Program
         new(typeof(GhosttyNative.GhosttyClipboardContent), "GhosttyClipboardContent",
             new FieldMap("Mime", "mime"), new FieldMap("Data", "data")),
         new(typeof(GhosttyNative.GhosttyClipboardWrite), "GhosttyClipboardWrite",
-            new FieldMap("Size", "size"), new FieldMap("Location", "location"),
+            new FieldMap("Location", "location"),
             new FieldMap("Contents", "contents"), new FieldMap("ContentsLen", "contents_len"),
             new FieldMap("Name", "name"), new FieldMap("Granted", "granted"),
             new FieldMap("CanRemember", "can_remember"), new FieldMap("Ctx", "ctx"),
             new FieldMap("Reply", "reply")),
         new(typeof(GhosttyNative.GhosttyClipboardRead), "GhosttyClipboardRead",
-            new FieldMap("Size", "size"), new FieldMap("Location", "location"),
+            new FieldMap("Location", "location"),
             new FieldMap("Mimes", "mimes"), new FieldMap("MimesLen", "mimes_len"),
             new FieldMap("List", "list"), new FieldMap("Name", "name"),
             new FieldMap("Granted", "granted"), new FieldMap("CanRemember", "can_remember"),
@@ -186,24 +186,20 @@ internal static class Program
             new FieldMap("Contents", "contents"), new FieldMap("ContentsLen", "contents_len"),
             new FieldMap("Available", "available"), new FieldMap("AvailableLen", "available_len"),
             new FieldMap("Remember", "remember")),
-        new(typeof(GhosttyNative.GhosttyStyleColor), "GhosttyStyleColor",
-            new FieldMap("Tag", "tag"), new FieldMap("Value", "value")),
         new(typeof(GhosttyNative.GhosttyStyle), "GhosttyStyle",
-            new FieldMap("Size", "size"),
             new FieldMap("FgColor", "fg_color"), new FieldMap("BgColor", "bg_color"),
-            new FieldMap("UnderlineColor", "underline_color"),
-            new FieldMap("Bold", "bold"), new FieldMap("Italic", "italic"),
-            new FieldMap("Faint", "faint"), new FieldMap("Blink", "blink"),
-            new FieldMap("Inverse", "inverse"), new FieldMap("Invisible", "invisible"),
-            new FieldMap("Strikethrough", "strikethrough"), new FieldMap("Overline", "overline"),
-            new FieldMap("Underline", "underline")),
+            new FieldMap("UnderlineColor", "underline_color"), new FieldMap("Flags", "flags"),
+            new FieldMap("Reserved", "reserved")),
+        new(typeof(GhosttyNative.GhosttyStyleColor), "GhosttyStyleColor",
+            new FieldMap("Tag", "tag"), new FieldMap("V0", "value.rgb.r"),
+            new FieldMap("V1", "value.rgb.g"), new FieldMap("V2", "value.rgb.b")),
         new(typeof(GhosttyNative.GhosttyTerminalScrollViewport), "GhosttyTerminalScrollViewport",
             new FieldMap("Tag", "tag"), new FieldMap("Delta", "value.delta")),
         new(typeof(GhosttyNative.GhosttyTerminalScrollbar), "GhosttyTerminalScrollbar",
             new FieldMap("Total", "total"), new FieldMap("Offset", "offset"),
             new FieldMap("Len", "len")),
         new(typeof(GhosttyNative.GhosttyGridRef), "GhosttyGridRef",
-            new FieldMap("Size", "size"), new FieldMap("Node", "node"),
+            new FieldMap("Node", "node"),
             new FieldMap("X", "x"), new FieldMap("Y", "y")),
         new(typeof(GhosttyNative.GhosttyMousePosition), "GhosttyMousePosition",
             new FieldMap("X", "x"), new FieldMap("Y", "y")),
@@ -215,12 +211,12 @@ internal static class Program
             new FieldMap("Tag", "tag"),
             new FieldMap("X", "value.coordinate.x"), new FieldMap("Y", "value.coordinate.y")),
         new(typeof(GhosttyNative.GhosttySelection), "GhosttySelection",
-            new FieldMap("Size", "size"), new FieldMap("Start", "start"),
+            new FieldMap("Start", "start"),
             new FieldMap("End", "end"), new FieldMap("Rectangle", "rectangle")),
         new(typeof(GhosttyNative.GhosttyTerminalModeConfig), "GhosttyTerminalModeConfig",
             new FieldMap("Mode", "mode"), new FieldMap("Value", "value")),
         new(typeof(GhosttyNative.GhosttyTerminalProgramStatus), "GhosttyTerminalProgramStatus",
-            new FieldMap("Size", "size"), new FieldMap("State", "state"),
+            new FieldMap("State", "state"),
             new FieldMap("Kind", "kind"), new FieldMap("Progress", "progress"),
             new FieldMap("Id", "id"), new FieldMap("App", "app"),
             new FieldMap("Title", "title"), new FieldMap("Message", "message")),
@@ -228,7 +224,7 @@ internal static class Program
             new FieldMap("Tag", "tag"), new FieldMap("Rows", "value.grid.rows"),
             new FieldMap("Columns", "value.grid.columns")),
         new(typeof(GhosttyNative.GhosttyTerminalDesktopNotification), "GhosttyTerminalDesktopNotification",
-            new FieldMap("Size", "size"), new FieldMap("Title", "title"),
+            new FieldMap("Title", "title"),
             new FieldMap("Body", "body")),
         new(typeof(GhosttyNative.GhosttyRenderStateRowSelection), "GhosttyRenderStateRowSelection",
             new FieldMap("Size", "size"), new FieldMap("StartX", "start_x"),
@@ -240,21 +236,8 @@ internal static class Program
             new FieldMap("WideTail", "wide_tail"), new FieldMap("Visible", "visible"),
             new FieldMap("Blinking", "blinking"), new FieldMap("PasswordInput", "password_input"),
             new FieldMap("VisualStyle", "visual_style")),
-        // The C# declaration leaves the trailing screen-extra bytes zeroed via Size = 32
-        // instead of declaring GhosttyFormatterScreenExtra; that omission is intentional.
-        new(typeof(GhosttyNative.GhosttyFormatterTerminalExtra), "GhosttyFormatterTerminalExtra",
-            new[]
-            {
-                new FieldMap("Size", "size"), new FieldMap("Palette", "palette"),
-                new FieldMap("Modes", "modes"), new FieldMap("ScrollingRegion", "scrolling_region"),
-                new FieldMap("Tabstops", "tabstops"), new FieldMap("Pwd", "pwd"),
-                new FieldMap("Keyboard", "keyboard"),
-            },
-            new[] { "screen" }),
-        new(typeof(GhosttyNative.GhosttyFormatterTerminalOptions), "GhosttyFormatterTerminalOptions",
-            new FieldMap("Size", "size"), new FieldMap("Emit", "emit"),
-            new FieldMap("Unwrap", "unwrap"), new FieldMap("Trim", "trim"),
-            new FieldMap("Extra", "extra"), new FieldMap("Selection", "selection")),
+        // The formatter no longer takes an options struct: options are set through
+        // ghostty_formatter_set(), and GhosttyFormatterExtras is a plain uint32 bitmask.
         // The C ABI declares bits[4]; the C# side spells the four words out.
         new(typeof(GhosttyNative.ColorPaletteMask), "GhosttyColorPaletteMask",
             new FieldMap("Bits0", "bits[0]"), new FieldMap("Bits1", "bits[1]"),
@@ -427,6 +410,7 @@ internal static class Program
         new("TDATA_COLS", "GhosttyTerminalData", "COLS"),
         new("TDATA_ROWS", "GhosttyTerminalData", "ROWS"),
         new("TDATA_SCROLLBAR", "GhosttyTerminalData", "SCROLLBAR"),
+        new("TDATA_MOUSE_TRACKING", "GhosttyTerminalData", "MOUSE_TRACKING"),
         new("TDATA_TITLE", "GhosttyTerminalData", "TITLE"),
         new("TDATA_PWD", "GhosttyTerminalData", "PWD"),
         new("TDATA_KITTY_GRAPHICS", "GhosttyTerminalData", "KITTY_GRAPHICS"),
@@ -472,9 +456,9 @@ internal static class Program
         new("RENDER_IMAGE_SOURCE_HEIGHT", "GhosttyRenderStateImageData", "SOURCE_HEIGHT"),
 
         new("IMAGE_PROTOCOL_KITTY", "GhosttyImageProtocol", "KITTY"),
-        new("IMAGE_LAYER_BELOW_BACKGROUND", "GhosttyRenderStateImageLayer", "BELOW_BACKGROUND"),
-        new("IMAGE_LAYER_BELOW_TEXT", "GhosttyRenderStateImageLayer", "BELOW_TEXT"),
-        new("IMAGE_LAYER_ABOVE_TEXT", "GhosttyRenderStateImageLayer", "ABOVE_TEXT"),
+        new("IMAGE_LAYER_BELOW_BACKGROUND", "GhosttyImageLayer", "BELOW_BACKGROUND"),
+        new("IMAGE_LAYER_BELOW_TEXT", "GhosttyImageLayer", "BELOW_TEXT"),
+        new("IMAGE_LAYER_ABOVE_TEXT", "GhosttyImageLayer", "ABOVE_TEXT"),
 
         new("KITTY_IMAGE_DATA_ID", "GhosttyKittyGraphicsImageData", "ID"),
         new("KITTY_IMAGE_DATA_NUMBER", "GhosttyKittyGraphicsImageData", "NUMBER"),
@@ -482,8 +466,8 @@ internal static class Program
         new("KITTY_IMAGE_DATA_HEIGHT", "GhosttyKittyGraphicsImageData", "HEIGHT"),
         new("KITTY_IMAGE_DATA_FORMAT", "GhosttyKittyGraphicsImageData", "FORMAT"),
         new("KITTY_IMAGE_DATA_COMPRESSION", "GhosttyKittyGraphicsImageData", "COMPRESSION"),
-        new("KITTY_IMAGE_DATA_PTR", "GhosttyKittyGraphicsImageData", "DATA_PTR"),
-        new("KITTY_IMAGE_DATA_LEN", "GhosttyKittyGraphicsImageData", "DATA_LEN"),
+        new("KITTY_IMAGE_DATA_PIXELS", "GhosttyKittyGraphicsImageData", "PIXELS"),
+        new("KITTY_IMAGE_DATA_EXPECTED_LEN", "GhosttyKittyGraphicsImageData", "EXPECTED_LEN"),
         new("KITTY_IMAGE_DATA_GENERATION", "GhosttyKittyGraphicsImageData", "GENERATION"),
 
         new("KITTY_IMAGE_FORMAT_RGB", "GhosttyKittyImageFormat", "RGB"),
@@ -539,12 +523,11 @@ internal static class Program
         new("SEARCH_DATA_SELECT_SCROLL", "GhosttySearchData", "SELECT_SCROLL"),
 
         new("SEARCH_OPT_NEEDLE", "GhosttySearchOption", "NEEDLE"),
-        new("SEARCH_OPT_SELECT_NEXT", "GhosttySearchOption", "SELECT_NEXT"),
-        new("SEARCH_OPT_SELECT_PREV", "GhosttySearchOption", "SELECT_PREV"),
         new("SEARCH_OPT_SELECT_SCROLL", "GhosttySearchOption", "SELECT_SCROLL"),
 
         new("SEARCH_SCROLL_IF_NEEDED", "GhosttySearchScroll", "IF_NEEDED"),
         new("SEARCH_SCROLL_NONE", "GhosttySearchScroll", "NONE"),
+
 
         new("MOUSE_ACTION_PRESS", "GhosttyMouseAction", "PRESS"),
         new("MOUSE_ACTION_RELEASE", "GhosttyMouseAction", "RELEASE"),
@@ -558,13 +541,19 @@ internal static class Program
         new("KEY_ACTION_PRESS", "GhosttyKeyAction", "PRESS"),
         new("FORMAT_PLAIN", "GhosttyFormatterFormat", "PLAIN"),
         new("FORMAT_VT", "GhosttyFormatterFormat", "VT"),
+        new("FMT_OPT_EMIT", "GhosttyFormatterOption", "EMIT"),
+        new("FMT_OPT_UNWRAP", "GhosttyFormatterOption", "UNWRAP"),
+        new("FMT_OPT_TRIM", "GhosttyFormatterOption", "TRIM"),
+        new("FMT_OPT_SELECTION", "GhosttyFormatterOption", "SELECTION"),
+        new("FMT_OPT_EXTRAS", "GhosttyFormatterOption", "EXTRAS"),
 
-        new("CURSOR_BAR", "GhosttyRenderStateCursorVisualStyle", "BAR"),
-        new("CURSOR_BLOCK", "GhosttyRenderStateCursorVisualStyle", "BLOCK"),
-        new("CURSOR_UNDERLINE", "GhosttyRenderStateCursorVisualStyle", "UNDERLINE"),
-        new("CURSOR_BLOCK_HOLLOW", "GhosttyRenderStateCursorVisualStyle", "BLOCK_HOLLOW"),
+        new("CURSOR_BAR", "GhosttyCursorStyle", "BAR"),
+        new("CURSOR_BLOCK", "GhosttyCursorStyle", "BLOCK"),
+        new("CURSOR_UNDERLINE", "GhosttyCursorStyle", "UNDERLINE"),
+        new("CURSOR_BLOCK_HOLLOW", "GhosttyCursorStyle", "BLOCK_HOLLOW"),
 
         new("SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES", "GhosttySnapshotDecoderOption", "MAX_CONTINUATION_BYTES"),
+        new("SNAPSHOT_DECODER_OPT_KITTY_IMAGE_STORAGE_LIMIT", "GhosttySnapshotDecoderOption", "KITTY_IMAGE_STORAGE_LIMIT"),
         new("SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION", "GhosttySnapshotDecoderOption", "RETAIN_CONTINUATION"),
         new("SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY", "GhosttySnapshotDecoderOption", "COMPRESS_HISTORY"),
     };
@@ -573,6 +562,15 @@ internal static class Program
     private static readonly string[] UnmappedConstants =
     {
         "MODS_SHIFT", "MODS_CTRL", "MODS_ALT", "MODS_SUPER", "MODS_CAPS_LOCK", "MODS_NUM_LOCK",
+        // GhosttyStyleFlags is a bitmask alias like GhosttyMods: no manifest values.
+        "STYLE_FLAG_BOLD", "STYLE_FLAG_ITALIC", "STYLE_FLAG_FAINT", "STYLE_FLAG_BLINK",
+        "STYLE_FLAG_INVERSE", "STYLE_FLAG_INVISIBLE", "STYLE_FLAG_STRIKETHROUGH",
+        "STYLE_FLAG_OVERLINE", "STYLE_UNDERLINE_SHIFT",
+        // Formatter extra bits are a plain uint32 bitmask.
+        "FMT_EXTRA_PALETTE", "FMT_EXTRA_MODES", "FMT_EXTRA_SCROLLING_REGION",
+        "FMT_EXTRA_TABSTOPS", "FMT_EXTRA_PWD", "FMT_EXTRA_KEYBOARD", "FMT_EXTRA_CURSOR",
+        "FMT_EXTRA_STYLE", "FMT_EXTRA_HYPERLINK", "FMT_EXTRA_PROTECTION",
+        "FMT_EXTRA_KITTY_KEYBOARD", "FMT_EXTRA_CHARSETS",
     };
 
     private static void CheckConstants()
@@ -682,7 +680,7 @@ internal static class Program
             }
 
             Check("encoder follows terminal modes",
-                GhosttyNative.ghostty_mouse_encoder_setopt_from_terminal(encoder, terminal)
+                GhosttyNative.ghostty_mouse_encoder_set_from_terminal(encoder, terminal)
                 == GhosttyNative.SUCCESS);
 
             GhosttyNative.ghostty_mouse_event_set_action(mouseEvent, GhosttyNative.MOUSE_ACTION_PRESS);
@@ -757,7 +755,7 @@ internal static class Program
                 == GhosttyNative.SUCCESS && total == 2, $"total {total}");
 
             Check("select next",
-                GhosttyNative.ghostty_search_set(search, GhosttyNative.SEARCH_OPT_SELECT_NEXT, null)
+                GhosttyNative.ghostty_search_select_next(search)
                 == GhosttyNative.SUCCESS);
 
             ulong index = 0;
@@ -765,10 +763,7 @@ internal static class Program
                 GhosttyNative.ghostty_search_get(search, GhosttyNative.SEARCH_DATA_SELECTED_INDEX, &index)
                 == GhosttyNative.SUCCESS, $"index {index}");
 
-            var selected = new GhosttyNative.GhosttySelection
-            {
-                Size = (nuint)sizeof(GhosttyNative.GhosttySelection),
-            };
+            var selected = new GhosttyNative.GhosttySelection();
             Check("selected match",
                 GhosttyNative.ghostty_search_get(search, GhosttyNative.SEARCH_DATA_SELECTED_MATCH, &selected)
                 == GhosttyNative.SUCCESS);
@@ -1314,9 +1309,9 @@ internal static class Program
                     format == GhosttyNative.KITTY_IMAGE_FORMAT_RGB, $"format {format}");
                 Check("image pixels readable",
                     GhosttyNative.ghostty_kitty_graphics_image_get(
-                        image, GhosttyNative.KITTY_IMAGE_DATA_PTR, &pixels) == GhosttyNative.SUCCESS &&
+                        image, GhosttyNative.KITTY_IMAGE_DATA_PIXELS, &pixels) == GhosttyNative.SUCCESS &&
                     GhosttyNative.ghostty_kitty_graphics_image_get(
-                        image, GhosttyNative.KITTY_IMAGE_DATA_LEN, &length) == GhosttyNative.SUCCESS &&
+                        image, GhosttyNative.KITTY_IMAGE_DATA_EXPECTED_LEN, &length) == GhosttyNative.SUCCESS &&
                     pixels != IntPtr.Zero && length == 12, $"length {length}");
 
                 if (pixels != IntPtr.Zero && length >= 12)

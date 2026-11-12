@@ -16,34 +16,34 @@ internal static unsafe class GhosttyNative
     internal const int NO_VALUE = -4;
 
     // ---- GhosttyTerminalOption ----
-    internal const int OPT_USERDATA = 0;
-    internal const int OPT_WRITE_PTY = 1;
-    internal const int OPT_BELL = 2;
-    internal const int OPT_ENQUIRY = 3;
-    internal const int OPT_TITLE_CHANGED = 5;
-    internal const int OPT_COLOR_FOREGROUND = 11;
-    internal const int OPT_COLOR_BACKGROUND = 12;
-    internal const int OPT_COLOR_CURSOR = 13;
-    internal const int OPT_COLOR_PALETTE = 14;
-    internal const int OPT_KITTY_IMAGE_STORAGE_LIMIT = 15;
-    internal const int OPT_KITTY_IMAGE_MEDIUM_FILE = 16;
-    internal const int OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE = 17;
-    internal const int OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM = 18;
-    internal const int OPT_APC_MAX_BYTES = 19;
-    internal const int OPT_APC_MAX_BYTES_KITTY = 20;
-    internal const int OPT_SELECTION = 21;
-    internal const int OPT_PWD_CHANGED = 25;
-    internal const int OPT_CLIPBOARD_WRITE = 26;
-    internal const int OPT_SCROLLBACK_MAX_BYTES = 27;
-    internal const int OPT_SCROLLBACK_MAX_LINES = 28;
-    internal const int OPT_DESKTOP_NOTIFICATION = 29;
-    internal const int OPT_TITLE_REPORT = 32;
-    internal const int OPT_CLIPBOARD_READ = 38;
-    internal const int OPT_CLIPBOARD_WRITE_MAX_BYTES = 39;
-    internal const int OPT_XT_CHECKSUM_REPORT = 44;
-    internal const int OPT_XT_CHECKSUM_EXTENSION = 45;
-    internal const int OPT_PROGRAM_STATUS = 46;
-    internal const int OPT_RESIZE_WINDOW = 47;
+    internal const int OPT_USERDATA = 1;
+    internal const int OPT_WRITE_PTY = 2;
+    internal const int OPT_BELL = 3;
+    internal const int OPT_ENQUIRY = 4;
+    internal const int OPT_TITLE_CHANGED = 6;
+    internal const int OPT_COLOR_FOREGROUND = 12;
+    internal const int OPT_COLOR_BACKGROUND = 13;
+    internal const int OPT_COLOR_CURSOR = 14;
+    internal const int OPT_COLOR_PALETTE = 15;
+    internal const int OPT_KITTY_IMAGE_STORAGE_LIMIT = 16;
+    internal const int OPT_KITTY_IMAGE_MEDIUM_FILE = 17;
+    internal const int OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE = 18;
+    internal const int OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM = 19;
+    internal const int OPT_APC_MAX_BYTES = 20;
+    internal const int OPT_APC_MAX_BYTES_KITTY = 21;
+    internal const int OPT_SELECTION = 22;
+    internal const int OPT_PWD_CHANGED = 26;
+    internal const int OPT_CLIPBOARD_WRITE = 27;
+    internal const int OPT_SCROLLBACK_MAX_BYTES = 28;
+    internal const int OPT_SCROLLBACK_MAX_LINES = 29;
+    internal const int OPT_DESKTOP_NOTIFICATION = 30;
+    internal const int OPT_TITLE_REPORT = 33;
+    internal const int OPT_CLIPBOARD_READ = 39;
+    internal const int OPT_CLIPBOARD_WRITE_MAX_BYTES = 40;
+    internal const int OPT_XT_CHECKSUM_REPORT = 45;
+    internal const int OPT_XT_CHECKSUM_EXTENSION = 46;
+    internal const int OPT_PROGRAM_STATUS = 47;
+    internal const int OPT_RESIZE_WINDOW = 48;
 
     // ---- GhosttyTerminalResizeWindowTag ----
     internal const int RESIZE_WINDOW_GRID = 0;
@@ -134,14 +134,16 @@ internal static unsafe class GhosttyNative
     internal const int IMAGE_LAYER_ABOVE_TEXT = 2;
 
     // ---- GhosttyKittyGraphicsImageData ----
+    // PNG payloads are decoded to RGBA before storage, so the stored image is always
+    // uncompressed pixels: PIXELS/EXPECTED_LEN describe the decoded buffer.
     internal const int KITTY_IMAGE_DATA_ID = 1;
     internal const int KITTY_IMAGE_DATA_NUMBER = 2;
     internal const int KITTY_IMAGE_DATA_WIDTH = 3;
     internal const int KITTY_IMAGE_DATA_HEIGHT = 4;
     internal const int KITTY_IMAGE_DATA_FORMAT = 5;
     internal const int KITTY_IMAGE_DATA_COMPRESSION = 6;
-    internal const int KITTY_IMAGE_DATA_PTR = 7;
-    internal const int KITTY_IMAGE_DATA_LEN = 8;
+    internal const int KITTY_IMAGE_DATA_PIXELS = 7;
+    internal const int KITTY_IMAGE_DATA_EXPECTED_LEN = 8;
     internal const int KITTY_IMAGE_DATA_GENERATION = 9;
 
     // ---- GhosttyKittyImageFormat ----
@@ -154,7 +156,7 @@ internal static unsafe class GhosttyNative
     internal const int KITTY_IMAGE_COMPRESSION_NONE = 0;
 
     // ---- GhosttySysOption / GhosttyBuildInfo ----
-    internal const int SYS_OPT_DECODE_PNG = 1;
+    internal const int SYS_OPT_DECODE_PNG = 2;
     internal const int BUILD_INFO_KITTY_GRAPHICS = 2;
 
     // ---- GhosttyRenderStateRowData ----
@@ -209,19 +211,17 @@ internal static unsafe class GhosttyNative
     internal const int SEARCH_STATUS_FEED_REQUIRED = 1;
     internal const int SEARCH_STATUS_COMPLETE = 2;
 
-    internal const int SEARCH_DATA_STATUS = 0;
-    internal const int SEARCH_DATA_NEEDLE = 1;
-    internal const int SEARCH_DATA_TOTAL_MATCHES = 2;
-    internal const int SEARCH_DATA_SELECTED_INDEX = 3;
-    internal const int SEARCH_DATA_SELECTED_MATCH = 4;
-    internal const int SEARCH_DATA_MATCHES = 5;
-    internal const int SEARCH_DATA_VIEWPORT_MATCHES = 6;
-    internal const int SEARCH_DATA_SELECT_SCROLL = 7;
+    internal const int SEARCH_DATA_STATUS = 1;
+    internal const int SEARCH_DATA_NEEDLE = 2;
+    internal const int SEARCH_DATA_TOTAL_MATCHES = 3;
+    internal const int SEARCH_DATA_SELECTED_INDEX = 4;
+    internal const int SEARCH_DATA_SELECTED_MATCH = 5;
+    internal const int SEARCH_DATA_MATCHES = 6;
+    internal const int SEARCH_DATA_VIEWPORT_MATCHES = 7;
+    internal const int SEARCH_DATA_SELECT_SCROLL = 8;
 
-    internal const int SEARCH_OPT_NEEDLE = 0;
-    internal const int SEARCH_OPT_SELECT_NEXT = 1;
-    internal const int SEARCH_OPT_SELECT_PREV = 2;
-    internal const int SEARCH_OPT_SELECT_SCROLL = 3;
+    internal const int SEARCH_OPT_NEEDLE = 1;
+    internal const int SEARCH_OPT_SELECT_SCROLL = 4;
 
     internal const int SEARCH_SCROLL_IF_NEEDED = 0;
     internal const int SEARCH_SCROLL_NONE = 1;
@@ -287,7 +287,6 @@ internal static unsafe class GhosttyNative
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhosttyClipboardWrite
     {
-        public nuint Size;
         public int Location;
         public IntPtr Contents;
         public nuint ContentsLen;
@@ -301,7 +300,6 @@ internal static unsafe class GhosttyNative
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhosttyClipboardRead
     {
-        public nuint Size;
         public int Location;
         public IntPtr Mimes;
         public nuint MimesLen;
@@ -333,31 +331,57 @@ internal static unsafe class GhosttyNative
         public byte Remember;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    /// <summary>
+    /// One style color slot: a tag byte followed by the 3-byte color value. PALETTE holds
+    /// a palette index in <see cref="V0"/>; RGB holds three bytes. Fixed 4-byte layout.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct GhosttyStyleColor
     {
-        public int Tag;
-        public ulong Value;
+        public byte Tag;               // 0 none, 1 palette, 2 rgb
+        public byte V0;
+        public byte V1;
+        public byte V2;
+
+        public bool HasValue => Tag != 0;
+        public byte PaletteIndex => V0;
     }
 
-    /// <summary>Sized struct: Size must be set to sizeof(GhosttyStyle).</summary>
-    [StructLayout(LayoutKind.Sequential)]
+    /// <summary>
+    /// A cell's complete style. Fixed 16-byte layout with no size field. The flags word
+    /// holds the on/off attributes in its low byte (bold/italic/faint/blink/inverse/
+    /// invisible/strikethrough/overline) and the GhosttySgrUnderline value in bits 8-10.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct GhosttyStyle
     {
-        public nuint Size;
         public GhosttyStyleColor FgColor;
         public GhosttyStyleColor BgColor;
         public GhosttyStyleColor UnderlineColor;
-        public byte Bold;
-        public byte Italic;
-        public byte Faint;
-        public byte Blink;
-        public byte Inverse;
-        public byte Invisible;
-        public byte Strikethrough;
-        public byte Overline;
-        public int Underline;
+        public ushort Flags;
+        public ushort Reserved;
+
+        public bool Bold => (Flags & STYLE_FLAG_BOLD) != 0;
+        public bool Italic => (Flags & STYLE_FLAG_ITALIC) != 0;
+        public bool Faint => (Flags & STYLE_FLAG_FAINT) != 0;
+        public bool Blink => (Flags & STYLE_FLAG_BLINK) != 0;
+        public bool Inverse => (Flags & STYLE_FLAG_INVERSE) != 0;
+        public bool Invisible => (Flags & STYLE_FLAG_INVISIBLE) != 0;
+        public bool Strikethrough => (Flags & STYLE_FLAG_STRIKETHROUGH) != 0;
+        public bool Overline => (Flags & STYLE_FLAG_OVERLINE) != 0;
+        public int UnderlineStyle => (Flags >> STYLE_UNDERLINE_SHIFT) & 0x7;
     }
+
+    // ---- GhosttyStyleFlags ----
+    internal const int STYLE_FLAG_BOLD = 1 << 0;
+    internal const int STYLE_FLAG_ITALIC = 1 << 1;
+    internal const int STYLE_FLAG_FAINT = 1 << 2;
+    internal const int STYLE_FLAG_BLINK = 1 << 3;
+    internal const int STYLE_FLAG_INVERSE = 1 << 4;
+    internal const int STYLE_FLAG_INVISIBLE = 1 << 5;
+    internal const int STYLE_FLAG_STRIKETHROUGH = 1 << 6;
+    internal const int STYLE_FLAG_OVERLINE = 1 << 7;
+    internal const int STYLE_UNDERLINE_SHIFT = 8;
 
     [StructLayout(LayoutKind.Explicit, Size = 24)]
     internal struct GhosttyTerminalScrollViewport
@@ -378,11 +402,10 @@ internal static unsafe class GhosttyNative
         public ulong Len;
     }
 
-    /// <summary>Sized struct: Size must be set to sizeof(GhosttyGridRef).</summary>
+    /// <summary>Grid reference: a page node plus the coordinates inside it. Fixed layout.</summary>
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhosttyGridRef
     {
-        public nuint Size;
         public IntPtr Node;
         public ushort X;
         public ushort Y;
@@ -426,14 +449,13 @@ internal static unsafe class GhosttyNative
         public uint Y;
     }
 
-    /// <summary>Sized struct: Size must be set to sizeof(GhosttySelection).</summary>
-    [StructLayout(LayoutKind.Explicit, Size = 64)]
+    /// <summary>A selection's start and end grid references. Fixed 40-byte layout.</summary>
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
     internal struct GhosttySelection
     {
-        [FieldOffset(0)] public nuint Size;
-        [FieldOffset(8)] public GhosttyGridRef Start;
-        [FieldOffset(32)] public GhosttyGridRef End;
-        [FieldOffset(56)] public byte Rectangle;
+        [FieldOffset(0)] public GhosttyGridRef Start;
+        [FieldOffset(16)] public GhosttyGridRef End;
+        [FieldOffset(32)] public byte Rectangle;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -467,29 +489,26 @@ internal static unsafe class GhosttyNative
         public int VisualStyle;
     }
 
-    [StructLayout(LayoutKind.Explicit, Size = 32)]
-    internal struct GhosttyFormatterTerminalExtra
-    {
-        [FieldOffset(0)] public nuint Size;
-        [FieldOffset(8)] public byte Palette;
-        [FieldOffset(9)] public byte Modes;
-        [FieldOffset(10)] public byte ScrollingRegion;
-        [FieldOffset(11)] public byte Tabstops;
-        [FieldOffset(12)] public byte Pwd;
-        [FieldOffset(13)] public byte Keyboard;
-    }
+    // ---- GhosttyFormatterOption ----
+    internal const int FMT_OPT_EMIT = 1;
+    internal const int FMT_OPT_UNWRAP = 2;
+    internal const int FMT_OPT_TRIM = 3;
+    internal const int FMT_OPT_SELECTION = 4;
+    internal const int FMT_OPT_EXTRAS = 5;
 
-    /// <summary>Sized struct: Size must be set to sizeof(GhosttyFormatterTerminalOptions).</summary>
-    [StructLayout(LayoutKind.Explicit, Size = 56)]
-    internal struct GhosttyFormatterTerminalOptions
-    {
-        [FieldOffset(0)] public nuint Size;
-        [FieldOffset(8)] public int Emit;
-        [FieldOffset(12)] public byte Unwrap;
-        [FieldOffset(13)] public byte Trim;
-        [FieldOffset(16)] public GhosttyFormatterTerminalExtra Extra;
-        [FieldOffset(48)] public IntPtr Selection;
-    }
+    // ---- GhosttyFormatterExtras bits ----
+    internal const int FMT_EXTRA_PALETTE = 1 << 0;
+    internal const int FMT_EXTRA_MODES = 1 << 1;
+    internal const int FMT_EXTRA_SCROLLING_REGION = 1 << 2;
+    internal const int FMT_EXTRA_TABSTOPS = 1 << 3;
+    internal const int FMT_EXTRA_PWD = 1 << 4;
+    internal const int FMT_EXTRA_KEYBOARD = 1 << 5;
+    internal const int FMT_EXTRA_CURSOR = 1 << 6;
+    internal const int FMT_EXTRA_STYLE = 1 << 7;
+    internal const int FMT_EXTRA_HYPERLINK = 1 << 8;
+    internal const int FMT_EXTRA_PROTECTION = 1 << 9;
+    internal const int FMT_EXTRA_KITTY_KEYBOARD = 1 << 10;
+    internal const int FMT_EXTRA_CHARSETS = 1 << 11;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct ColorPaletteMask
@@ -550,10 +569,13 @@ internal static unsafe class GhosttyNative
     /// A desktop notification request. The strings are borrowed until the callback returns;
     /// the title is empty when the protocol omits it (OSC 9).
     /// </summary>
+    /// <summary>
+    /// A desktop notification request. The strings are borrowed until the callback returns;
+    /// the title is empty when the protocol omits it (OSC 9).
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhosttyTerminalDesktopNotification
     {
-        public nuint Size;
         public GhosttyString Title;
         public GhosttyString Body;
     }
@@ -579,17 +601,16 @@ internal static unsafe class GhosttyNative
     /// valid during the callback. Absent text is empty, absent kind is none, and absent
     /// progress is -1.
     /// </summary>
-    [StructLayout(LayoutKind.Explicit, Size = 88)]
+    [StructLayout(LayoutKind.Explicit, Size = 80)]
     internal struct GhosttyTerminalProgramStatus
     {
-        [FieldOffset(0)] public nuint Size;
-        [FieldOffset(8)] public int State;
-        [FieldOffset(12)] public int Kind;
-        [FieldOffset(16)] public sbyte Progress;
-        [FieldOffset(24)] public GhosttyString Id;
-        [FieldOffset(40)] public GhosttyString App;
-        [FieldOffset(56)] public GhosttyString Title;
-        [FieldOffset(72)] public GhosttyString Message;
+        [FieldOffset(0)] public int State;
+        [FieldOffset(4)] public int Kind;
+        [FieldOffset(8)] public sbyte Progress;
+        [FieldOffset(16)] public GhosttyString Id;
+        [FieldOffset(32)] public GhosttyString App;
+        [FieldOffset(48)] public GhosttyString Title;
+        [FieldOffset(64)] public GhosttyString Message;
     }
 
     /// <summary>Answers a clipboard request; must be called before the callback returns.</summary>
@@ -633,12 +654,10 @@ internal static unsafe class GhosttyNative
     internal static extern int ghostty_cell_get(ulong cell, int data, void* output);
 
     // ---- snapshots ----
-    // The shipped ghostty-vt.dll is built from an older snapshot header than the reference
-    // checkout: its decoder options start at zero (the ABI manifest has MAX_CONTINUATION_BYTES
-    // at 0), so do not shift these to match a newer header without rebuilding the DLL.
-    internal const int SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES = 0;
-    internal const int SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION = 1;
-    internal const int SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY = 2;
+    internal const int SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES = 1;
+    internal const int SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION = 2;
+    internal const int SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY = 3;
+    internal const int SNAPSHOT_DECODER_OPT_KITTY_IMAGE_STORAGE_LIMIT = 4;
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_snapshot_encode_alloc(
@@ -668,7 +687,7 @@ internal static unsafe class GhosttyNative
     internal static extern void ghostty_mouse_encoder_free(IntPtr encoder);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-    internal static extern int ghostty_mouse_encoder_setopt_from_terminal(IntPtr encoder, IntPtr terminal);
+    internal static extern int ghostty_mouse_encoder_set_from_terminal(IntPtr encoder, IntPtr terminal);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_mouse_encoder_encode(
@@ -717,6 +736,12 @@ internal static unsafe class GhosttyNative
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_search_run(IntPtr search);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_select_next(IntPtr search);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_search_select_prev(IntPtr search);
 
     // ---- render state ----
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -783,7 +808,7 @@ internal static unsafe class GhosttyNative
     internal static extern void ghostty_key_encoder_free(IntPtr encoder);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-    internal static extern void ghostty_key_encoder_setopt_from_terminal(IntPtr encoder, IntPtr terminal);
+    internal static extern void ghostty_key_encoder_set_from_terminal(IntPtr encoder, IntPtr terminal);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_key_encoder_encode(IntPtr encoder, IntPtr keyEvent, byte* buffer, nuint bufferSize, out nuint written);
@@ -816,8 +841,10 @@ internal static unsafe class GhosttyNative
 
     // ---- formatter ----
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-    internal static extern int ghostty_formatter_terminal_new(IntPtr allocator, out IntPtr formatter, IntPtr terminal,
-        GhosttyFormatterTerminalOptions options);
+    internal static extern int ghostty_formatter_terminal_new(IntPtr allocator, out IntPtr formatter, IntPtr terminal);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_formatter_set(IntPtr formatter, int option, void* value);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_formatter_format_buf(IntPtr formatter, byte* buffer, nuint bufferLen, out nuint written);

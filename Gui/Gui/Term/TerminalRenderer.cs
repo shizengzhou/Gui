@@ -146,7 +146,8 @@ public sealed unsafe class TerminalRenderer
     private float _shaderFocusTime;
     private float _shaderCursorChangeTime;
 
-    // Shader uniforms use Ghostty's -X, +Y corner convention, in physical pixels.
+    // Shader uniforms use Ghostty's -X, +Y corner convention, in DIPs (the unit D2D
+    // delivers to SV_Position).
     private Vector4 _shaderCursor = new(-1, -1, 0, 0);
     private Vector4 _shaderPreviousCursor = new(-1, -1, 0, 0);
     private Vector4 _shaderCursorColor;
@@ -1250,10 +1251,7 @@ public sealed unsafe class TerminalRenderer
 
                 while (GhosttyNative.ghostty_render_state_row_cells_next(cells))
                 {
-                    var style = new GhosttyNative.GhosttyStyle
-                    {
-                        Size = (nuint)sizeof(GhosttyNative.GhosttyStyle),
-                    };
+                    var style = new GhosttyNative.GhosttyStyle();
                     GhosttyNative.ghostty_render_state_row_cells_get(cells, GhosttyNative.CELL_STYLE, &style);
 
                     Rgb bgRgb = default;
@@ -1269,7 +1267,7 @@ public sealed unsafe class TerminalRenderer
                     if (hasFg && fgRgb != themeFg)
                         fg = Color.FromArgb(255, fgRgb.R, fgRgb.G, fgRgb.B);
 
-                    if (style.Inverse != 0) (bg, fg) = (fg, bg);
+                    if (style.Inverse) (bg, fg) = (fg, bg);
 
                     string text = CellText.Read(cells);
 
@@ -1328,12 +1326,12 @@ public sealed unsafe class TerminalRenderer
                         Text = text,
                         Bg = bg,
                         Fg = textFg,
-                        Bold = style.Bold != 0,
-                        Italic = style.Italic != 0,
-                        Underline = style.Underline != 0,
-                        Strikethrough = style.Strikethrough != 0,
-                        Overline = style.Overline != 0,
-                        Invisible = style.Invisible != 0,
+                        Bold = style.Bold,
+                        Italic = style.Italic,
+                        Underline = style.UnderlineStyle != 0,
+                        Strikethrough = style.Strikethrough,
+                        Overline = style.Overline,
+                        Invisible = style.Invisible,
                         Wide = wide,
                     };
 
@@ -1516,11 +1514,10 @@ public sealed unsafe class TerminalRenderer
             return;
         }
 
-        float scale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
-        float cellWidth = _metrics.Width * scale;
-        float cellHeight = _metrics.Height * scale;
+        float cellWidth = _metrics.Width;
+        float cellHeight = _metrics.Height;
         float left = cursor.ViewportX * cellWidth;
-        float bottom = viewportHeight * scale - (cursor.ViewportY + 1) * cellHeight;
+        float bottom = viewportHeight - (cursor.ViewportY + 1) * cellHeight;
         _shaderCursor = new Vector4(left, bottom, cellWidth, cellHeight);
     }
 
@@ -1742,6 +1739,7 @@ public sealed unsafe class TerminalRenderer
 
         _shaderTarget?.Dispose();
         _shaderTarget = null;
+        DisposePingPong();
         try
         {
             _shaderTarget = new CanvasRenderTarget(
@@ -1754,6 +1752,56 @@ public sealed unsafe class TerminalRenderer
         {
             Diag.LogException("shader.target", error);
         }
+    }
+
+    // ---------------- custom shaders: ping-pong targets ----------------
+
+    /// <summary>
+    /// Two offscreen targets sized like the scene target. Shader stages write one while
+    /// sampling the other, so no stage ever reads the surface it draws into.
+    /// </summary>
+    private readonly List<CanvasRenderTarget> _shaderPingPong = new();
+
+    private void DisposePingPong()
+    {
+        foreach (CanvasRenderTarget target in _shaderPingPong) target.Dispose();
+        _shaderPingPong.Clear();
+    }
+
+    /// <summary>
+    /// Returns a target distinct from <paramref name="current"/> to write this stage's
+    /// output into, creating the pair lazily and rebuilding it after a size change.
+    /// </summary>
+    private CanvasRenderTarget? NextPingPongTarget(ICanvasImage current)
+    {
+        if (_shaderTarget is null) return null;
+        try
+        {
+            if (_shaderPingPong.Count < 2 ||
+                MathF.Abs(_shaderTargetWidth - (float)_shaderPingPong[0].Size.Width) > 0.5f ||
+                MathF.Abs(_shaderTargetHeight - (float)_shaderPingPong[0].Size.Height) > 0.5f ||
+                MathF.Abs(_shaderTargetDpi - (float)_shaderPingPong[0].Dpi) > 0.01f)
+            {
+                DisposePingPong();
+                for (int i = 0; i < 2; i++)
+                {
+                    _shaderPingPong.Add(new CanvasRenderTarget(
+                        CanvasDevice.GetSharedDevice(), _shaderTargetWidth, _shaderTargetHeight,
+                        _shaderTargetDpi));
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("shader.pingpong", error);
+            DisposePingPong();
+            return null;
+        }
+
+        // Whichever target the current source is not.
+        int index = 0;
+        if (_shaderPingPong.Count >= 2 && ReferenceEquals(current, _shaderPingPong[0])) index = 1;
+        return _shaderPingPong[index];
     }
 
     /// <summary>
@@ -1775,9 +1823,9 @@ public sealed unsafe class TerminalRenderer
             _shaderCursorColor != _shaderPreviousCursorColor;
         if (cursorChanged) _shaderCursorChangeTime = now;
 
-        // Shader space is physical pixels, matching Ghostty's iResolution.
-        float scale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
-        var resolution = new Vector3(width * scale, height * scale, 1f);
+        // D2D sees SV_Position in DIPs, so every coordinate uniform uses DIP units too;
+        // uv = fragCoord / iResolution then maps the whole surface exactly once.
+        var resolution = new Vector3(width, height, 1f);
         Vector3[]? palette = ShaderPalette();
 
         ICanvasImage source = scene;
@@ -1787,12 +1835,23 @@ public sealed unsafe class TerminalRenderer
             // would be rejected by D2D ("shader inputs: 0").
             stage.Effect.Source1 = stage.UsesChannel0 ? source : null;
             SetShaderProperties(stage.Effect, resolution, now, delta, palette);
-            source = stage.Effect;
+
+            // Win2D rejects a PixelShaderEffect as another effect's Source1 when the
+            // command batch flushes (E_NOTFOUND), so every stage lands in its own
+            // offscreen target and the next stage samples that target instead.
+            CanvasRenderTarget? next = NextPingPongTarget(source);
+            if (next is null) continue; // fall back to effect chaining when target creation failed
+            using (CanvasDrawingSession stageDs = next.CreateDrawingSession())
+            {
+                var bounds = new Rect(0, 0, _shaderTargetWidth, _shaderTargetHeight);
+                stageDs.DrawImage(stage.Effect, bounds, bounds);
+            }
+            source = next;
         }
 
         // An explicit destination gives generator shaders (no iChannel0) a defined extent.
-        var bounds = new Rect(0, 0, width, height);
-        ds.DrawImage(source, bounds, bounds);
+        var finalBounds = new Rect(0, 0, width, height);
+        ds.DrawImage(source, finalBounds, finalBounds);
 
         _shaderPreviousCursor = _shaderCursor;
         _shaderPreviousCursorStyle = _shaderCursorStyle;
@@ -1883,6 +1942,7 @@ public sealed unsafe class TerminalRenderer
         _shaderPaths.Clear();
         _shaderTarget?.Dispose();
         _shaderTarget = null;
+        DisposePingPong();
         _shaderUnsupported.Clear();
         _shaderPalette = null;
         _shaderPaletteTheme = null;
@@ -1913,8 +1973,7 @@ public sealed unsafe class TerminalRenderer
         _imageIterator = iterator;
 
         while (GhosttyNative.ghostty_render_state_image_iterator_next(iterator))
-        {
-            int protocol = 0;
+        {            int protocol = 0;
             if (GhosttyNative.ghostty_render_state_image_get(
                     iterator, GhosttyNative.RENDER_IMAGE_PROTOCOL, &protocol) != GhosttyNative.SUCCESS ||
                 protocol != GhosttyNative.IMAGE_PROTOCOL_KITTY)
@@ -2035,8 +2094,10 @@ public sealed unsafe class TerminalRenderer
 
         uint width = 0, height = 0;
         int format = 0;
-        IntPtr data = IntPtr.Zero;
-        nuint length = 0;
+        // Since libghostty-vt 1.0 PIXELS is a GhosttyString { ptr, len }, not a bare
+        // pointer. Reading it into an IntPtr would let the length field overwrite the
+        // adjacent locals and turn a colour image into the gray branch below.
+        var pixelData = default(GhosttyNative.GhosttyString);
         if (GhosttyNative.ghostty_kitty_graphics_image_get(
                 image, GhosttyNative.KITTY_IMAGE_DATA_WIDTH, &width) != GhosttyNative.SUCCESS ||
             GhosttyNative.ghostty_kitty_graphics_image_get(
@@ -2044,14 +2105,14 @@ public sealed unsafe class TerminalRenderer
             GhosttyNative.ghostty_kitty_graphics_image_get(
                 image, GhosttyNative.KITTY_IMAGE_DATA_FORMAT, &format) != GhosttyNative.SUCCESS ||
             GhosttyNative.ghostty_kitty_graphics_image_get(
-                image, GhosttyNative.KITTY_IMAGE_DATA_PTR, &data) != GhosttyNative.SUCCESS ||
-            GhosttyNative.ghostty_kitty_graphics_image_get(
-                image, GhosttyNative.KITTY_IMAGE_DATA_LEN, &length) != GhosttyNative.SUCCESS)
+                image, GhosttyNative.KITTY_IMAGE_DATA_PIXELS, &pixelData) != GhosttyNative.SUCCESS)
         {
             return null;
         }
+        if (pixelData.Ptr == IntPtr.Zero || pixelData.Len == 0) return null;
 
-        byte[]? pixels = PremultipliedBgra(width, height, format, data, length);
+        byte[]? pixels = PremultipliedBgra(
+            width, height, format, pixelData.Ptr, pixelData.Len);
         if (pixels is null) return null;
 
         try
@@ -2090,6 +2151,10 @@ public sealed unsafe class TerminalRenderer
         };
         long pixels = (long)width * height;
         long sourceBytes = pixels * channels;
+        // Stored images are always uncompressed; an unknown format code with a full
+        // RGBA-sized buffer is treated as RGBA (seen on animation frames).
+        if (channels == 0 && length == (nuint)(pixels * 4)) channels = 4;
+        sourceBytes = pixels * channels;
         if (channels == 0 || pixels > int.MaxValue / 4 || sourceBytes > int.MaxValue ||
             length < (nuint)sourceBytes)
         {
@@ -2350,13 +2415,13 @@ public sealed unsafe class TerminalRenderer
     /// <summary>Bold color, faint opacity and selection fill all come from the config.</summary>
     private Color DefaultFgFor(GhosttyNative.GhosttyStyle style, Color fg, Color bg, bool explicitColor)
     {
-        if (style.Faint != 0)
+        if (style.Faint)
         {
             float opacity = _config?.FaintOpacity ?? 0.5f;
             return Blend(fg, bg, 1.0f - Math.Clamp(opacity, 0f, 1f));
         }
 
-        if (style.Bold != 0 && !explicitColor && _config is { HasBoldColor: true })
+        if (style.Bold && !explicitColor && _config is { HasBoldColor: true })
         {
             Rgb rgb = _config.BoldColor;
             return Color.FromArgb(255, rgb.R, rgb.G, rgb.B);
