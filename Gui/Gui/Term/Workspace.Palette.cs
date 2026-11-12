@@ -627,7 +627,7 @@ public sealed partial class Workspace
         // ---- debug & config ----
         MakeRow(Strings.ResetWindowSize, string.Empty, _paletteItems, ResetWindowSize);
         MakeRow(Strings.ShowOnScreenKeyboard, string.Empty, _paletteItems, ShowOnScreenKeyboard);
-        MakeRow(Strings.OpenConfigOs, "Ctrl+,", _paletteItems, OpenConfig);
+        MakeRow(Strings.OpenConfigOs, string.Empty, _paletteItems, OpenConfig);
         MakeRow(Strings.OpenConfigNewWindow, string.Empty, _paletteItems, OpenConfigInNewWindow);
         MakeRow(Strings.ReloadConfig, "Ctrl+Shift+,", _paletteItems, ReloadConfig);
 
