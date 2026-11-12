@@ -161,12 +161,15 @@ public sealed partial class Workspace
         _settingsLayer.Resources["ExpanderChevronPressedForeground"] = cardForegroundActive;
         _settingsLayer.Resources["ExpanderChevronBackground"] = ClearBrush();
 
-        // The panel the expander opens is Fluent's layer fill, which reads as a white sheet on
-        // this card. A transparent panel is not enough: its host sits outside the settings card,
-        // so clearing it shows the content island instead. Paint the card's own colour and keep
-        // the theme's stroke.
+        // The panel the expander opens comes out as Fluent's card fill - 70% white, which over
+        // this cream card is exactly the #F7F5EE sheet that reads as white. The toolkit's own
+        // keys did not reach it, so take the WinUI card fills as well.
         _settingsLayer.Resources["ExpanderContentBackground"] = TermBgBrush();
         _settingsLayer.Resources["ExpanderContentBorderBrush"] = PanelStrokeBrush();
+        _settingsLayer.Resources["CardBackgroundFillColorDefaultBrush"] = TermBgBrush();
+        _settingsLayer.Resources["CardBackgroundFillColorSecondaryBrush"] = TermBgBrush();
+        _settingsLayer.Resources["CardStrokeColorDefaultBrush"] = PanelStrokeBrush();
+        _settingsLayer.Resources["LayerFillColorDefaultBrush"] = TermBgBrush();
 
         // The About card's repository link is a HyperlinkButton, which takes the system accent.
         Brush linkAccent = AccentBrush();
