@@ -261,9 +261,23 @@ public sealed partial class Workspace
         back.Child = backRow;
         back.PointerEntered += (_, _) => back.Background = ChipHoverBrush();
         back.PointerExited += (_, _) => back.Background = ClearBrush();
+        // The page closes on release, not on press: collapsing it under the pointer would
+        // leave the release to hit-test whatever the page covered (a right-button release
+        // over a pane opens its context menu). The capture keeps press and release on this
+        // row even when the pointer drifts off it, and a release outside cancels the click
+        // the way a real button does.
         back.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            back.CapturePointer(args.Pointer);
+        };
+        back.PointerReleased += (_, args) =>
+        {
+            args.Handled = true;
+            back.ReleasePointerCapture(args.Pointer);
+            var point = args.GetCurrentPoint(back).Position;
+            if (point.X < 0 || point.Y < 0 ||
+                point.X > back.ActualWidth || point.Y > back.ActualHeight) return;
             HideSettings();
         };
         panel.Children.Add(back);
