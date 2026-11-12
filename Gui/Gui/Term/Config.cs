@@ -1056,7 +1056,7 @@ public sealed class Config
             "never" => "never",
             _ => "auto",
         };
-        Compact = GetBool("compact", false);
+        Compact = GetBool("compact", true);
         SidebarWidthLeft = ParseSidebarWidth(Last("sidebar-width-left"), SidebarWidthLeft);
         SidebarWidthRight = ParseSidebarWidth(Last("sidebar-width-right"), SidebarWidthRight);
         ScrollbackLimit = ParseLimit(Last("scrollback-limit-bytes"), ScrollbackLimit);

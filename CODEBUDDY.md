@@ -307,10 +307,10 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   `scrollback-compression`, `clipboard-write-limit-bytes`,
   and the new `gtk-*` keys are parsed without warnings, but this build has
   no behavior behind them yet.
-- `compact` is `false` (default: panes float as rounded islands with a 6 DIP gap) or `true`
-  (panes run edge to edge in a square content area, split only by 1 DIP dividers; the tab
-  chips square off at the bottom and the rail's tool row lifts to the window edge). The
-  command palette row toggles it live and persists the choice.
+- `compact` is `true` (default: panes run edge to edge in a square content area, split only
+  by 1 DIP dividers; the tab chips square off at the bottom and the rail's tool row lifts to
+  the window edge) or `false` (panes float as rounded islands with a 6 DIP gap). The command
+  palette row toggles it live and persists the choice.
 - `theme` is a comma-separated list whose entries may carry a `light:` or `dark:` prefix
   (`light:Gui Light,dark:Gui Dark` is the default); an unprefixed name applies to both
   appearances. The side selected by `window-theme` is painted and the theme list only offers

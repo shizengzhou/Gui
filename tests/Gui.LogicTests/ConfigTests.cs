@@ -202,13 +202,13 @@ public class ConfigTests : IDisposable
     [Fact]
     public void LoadReadsTheCompactSwitch()
     {
-        // Off unless the file asks for it; the usual boolean spellings are accepted.
-        Assert.False(Config.Load(Write(string.Empty)).Compact);
+        // On unless the file turns it off; the usual boolean spellings are accepted.
+        Assert.True(Config.Load(Write(string.Empty)).Compact);
         Assert.True(Config.Load(Write("compact = true\n")).Compact);
         Assert.True(Config.Load(Write("compact = 1\n")).Compact);
         Assert.True(Config.Load(Write("compact = on\n")).Compact);
         Assert.False(Config.Load(Write("compact = false\n")).Compact);
-        Assert.False(Config.Load(Write("compact = tight\n")).Compact);
+        Assert.True(Config.Load(Write("compact = tight\n")).Compact);
     }
 
     [Fact]
