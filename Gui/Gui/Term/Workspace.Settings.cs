@@ -553,6 +553,22 @@ public sealed partial class Workspace
             Width = 150,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        // The stock slider paints its value track and thumb from the system accent, which
+        // follows Windows' personalisation rather than this window's theme. Take the theme's
+        // accent for every part that reads as the value, so the slider matches the switch and
+        // the command palette's selected row.
+        Brush sliderAccent = AccentBrush();
+        opacitySlider.Foreground = sliderAccent;
+        foreach (string key in new[]
+                 {
+                     "SliderTrackValueFill", "SliderTrackValueFillPointerOver",
+                     "SliderTrackValueFillPressed", "SliderThumbBackground",
+                     "SliderThumbBackgroundPointerOver", "SliderThumbBackgroundPressed",
+                     "SliderThumbBorderBrush", "SliderOuterThumbBackground",
+                 })
+        {
+            opacitySlider.Resources[key] = sliderAccent;
+        }
         opacitySlider.ValueChanged += (_, e) =>
         {
             opacityValue.Text = Math.Round(e.NewValue).ToString(CultureInfo.InvariantCulture) + "%";
