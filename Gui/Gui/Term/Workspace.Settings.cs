@@ -124,13 +124,35 @@ public sealed partial class Workspace
             _settingsLayer.Resources[key] = fieldFillHover;
         }
 
-        // The toolkit's cards and expander draw their header text, chevron and action glyph
-        // from SettingsCardForeground, another Fluent grey that ignores the theme.
+        // The toolkit's cards and expander draw their surface, border and text from their own
+        // Fluent brushes, so the About page reads neutral grey next to the pages built out of
+        // our tokens (the theme's text is a cool green-grey, Fluent's is plain black). Take the
+        // page's own brushes for all four families.
         Brush cardForegroundActive = TextStrongBrush();
         _settingsLayer.Resources["SettingsCardForeground"] = TextBodyBrush();
         _settingsLayer.Resources["SettingsCardForegroundPointerOver"] = cardForegroundActive;
         _settingsLayer.Resources["SettingsCardForegroundPressed"] = cardForegroundActive;
         _settingsLayer.Resources["SettingsCardForegroundDisabled"] = TextFaintBrush();
+
+        Brush cardFill = ClearBrush();
+        Brush cardFillActive = ChipHoverBrush();
+        _settingsLayer.Resources["SettingsCardBackground"] = cardFill;
+        _settingsLayer.Resources["SettingsCardBackgroundDisabled"] = cardFill;
+        _settingsLayer.Resources["SettingsCardBackgroundPointerOver"] = cardFillActive;
+        _settingsLayer.Resources["SettingsCardBackgroundPressed"] = cardFillActive;
+
+        Brush cardEdge = PanelStrokeBrush();
+        Brush cardEdgeActive = StrokeStrongBrush();
+        _settingsLayer.Resources["SettingsCardBorderBrush"] = cardEdge;
+        _settingsLayer.Resources["SettingsCardBorderBrushDisabled"] = cardEdge;
+        _settingsLayer.Resources["SettingsCardBorderBrushPointerOver"] = cardEdgeActive;
+        _settingsLayer.Resources["SettingsCardBorderBrushPressed"] = cardEdgeActive;
+
+        // The About card's repository link is a HyperlinkButton, which takes the system accent.
+        Brush linkAccent = AccentBrush();
+        _settingsLayer.Resources["HyperlinkButtonForeground"] = linkAccent;
+        _settingsLayer.Resources["HyperlinkButtonForegroundPointerOver"] = linkAccent;
+        _settingsLayer.Resources["HyperlinkButtonForegroundPressed"] = linkAccent;
 
         var card = new Border
         {
