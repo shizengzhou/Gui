@@ -1258,6 +1258,8 @@ public sealed partial class Workspace
         {
             _imeDiscard = false;
             _composing = true;
+            // The pending text key now belongs to the composition, not to a key event.
+            if (_tabs.Count > 0) _tabs[_active].Focused?.CancelPendingTextKey();
             ShowImeComposition();
         };
         _imeSink.TextCompositionChanged += (_, _) => ShowImeComposition();
@@ -1323,6 +1325,7 @@ public sealed partial class Workspace
         _root.AddHandler(UIElement.PreviewKeyUpEvent, new KeyEventHandler((_, args) =>
         {
             if (IsModifierKey(args.Key)) RefreshLinkHovers();
+            SendKeyUp(args);
         }), true);
 
         // Clicking away ends the composition but the IME finalizes it as the raw pinyin; a
@@ -1356,6 +1359,23 @@ public sealed partial class Workspace
 
             HideCommandPalette();
         }), true);
+    }
+
+    /// <summary>
+    /// "report event types": key releases go to the focused pane, but only while the
+    /// terminal owns the keyboard. A press consumed by a shortcut or typed into another
+    /// control recorded nothing, so its release is dropped inside the pane.
+    /// </summary>
+    private void SendKeyUp(KeyRoutedEventArgs args)
+    {
+        if (_composing || _tabs.Count == 0) return;
+        if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible) return;
+        if (_settingsLayer is not null && _settingsLayer.Visibility == Visibility.Visible) return;
+        if (_renamingTab is not null) return;
+
+        TerminalPane? pane = _tabs[_active].Focused;
+        if (pane is null || pane.SearchHasFocus) return;
+        pane.KeyUp(args);
     }
 
     /// <summary>

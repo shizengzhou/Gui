@@ -77,6 +77,7 @@ internal static unsafe class GhosttyNative
     // ---- GhosttyTerminalData ----
     internal const int TDATA_COLS = 1;
     internal const int TDATA_ROWS = 2;
+    internal const int TDATA_KITTY_KEYBOARD_FLAGS = 8;
     internal const int TDATA_SCROLLBAR = 9;
     internal const int TDATA_MOUSE_TRACKING = 11;
     internal const int TDATA_TITLE = 12;
@@ -227,7 +228,16 @@ internal static unsafe class GhosttyNative
     internal const int SEARCH_SCROLL_NONE = 1;
 
     // ---- GhosttyKeyAction ----
+    internal const int KEY_ACTION_RELEASE = 0;
     internal const int KEY_ACTION_PRESS = 1;
+    internal const int KEY_ACTION_REPEAT = 2;
+
+    // ---- Kitty keyboard protocol flags (GhosttyKittyKeyFlags) ----
+    internal const int KITTY_KEY_DISAMBIGUATE = 1 << 0;
+    internal const int KITTY_KEY_REPORT_EVENTS = 1 << 1;
+    internal const int KITTY_KEY_REPORT_ALTERNATES = 1 << 2;
+    internal const int KITTY_KEY_REPORT_ALL = 1 << 3;
+    internal const int KITTY_KEY_REPORT_ASSOCIATED = 1 << 4;
 
     // ---- GhosttyMods ----
     internal const int MODS_SHIFT = 1 << 0;

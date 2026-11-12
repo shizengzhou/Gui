@@ -208,6 +208,42 @@ public sealed class TerminalPane
     private ushort _selectEndX;
     private uint _selectEndY;
 
+    /// <summary>
+    /// Keys whose press was sent to the shell, kept until their release: the kitty protocol
+    /// reports releases/repeats and needs the modifiers and codepoint the press carried.
+    /// </summary>
+    private readonly Dictionary<VirtualKey, SentKey> _sentKeys = new();
+
+    private struct SentKey
+    {
+        public int Key;
+        public int Mods;
+        public uint Unshifted;
+    }
+
+    /// <summary>
+    /// The text key whose character the IME is about to type. With "report all keys" the
+    /// plain text the IME produces is re-encoded as the key event that produced it, so a
+    /// composition (Chinese pinyin, dead keys) still reaches the IME untouched.
+    /// </summary>
+    private PendingText? _pendingText;
+
+    private struct PendingText
+    {
+        public VirtualKey Pressed;
+        public int Key;
+        public int Mods;
+        public uint Unshifted;
+        public string Text;
+        public bool Repeat;
+
+        /// <summary>
+        /// The key was released before the IME produced its character, so the release has to
+        /// follow the press that is sent from CommitText.
+        /// </summary>
+        public bool ReleasePending;
+    }
+
     /// <summary>True blocks keyboard input, IME text and pasting ("Toggle Read-Only Mode").</summary>
     public bool ReadOnly;
 
@@ -1670,6 +1706,7 @@ public sealed class TerminalPane
         _ready = false;
         _layoutSuspended = 0;
         ShowPointer();
+        ClearSentKeys();
 
         _canvas.PointerWheelChanged -= OnPointerWheel;
         _canvas.PointerPressed -= OnPointerPressed;
@@ -2473,13 +2510,25 @@ public sealed class TerminalPane
         return (state & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
     }
 
+    /// <summary>True when a toggled key (Caps Lock, Num Lock) is currently latched.</summary>
+    private static bool IsLocked(VirtualKey key)
+    {
+        CoreVirtualKeyStates state = InputKeyboardSource.GetKeyStateForCurrentThread(key);
+        return (state & CoreVirtualKeyStates.Locked) == CoreVirtualKeyStates.Locked;
+    }
+
     private static int CurrentMods()
     {
         int mods = 0;
         if (IsDown(VirtualKey.Shift)) mods |= GhosttyNative.MODS_SHIFT;
         if (IsDown(VirtualKey.Control)) mods |= GhosttyNative.MODS_CTRL;
         if (IsDown(VirtualKey.Menu)) mods |= GhosttyNative.MODS_ALT;
-        if (IsDown(VirtualKey.LeftWindows) || IsDown(VirtualKey.RightWindows)) mods |= GhosttyNative.MODS_SUPER;
+        if (IsDown(VirtualKey.LeftWindows) || IsDown(VirtualKey.RightWindows))
+            mods |= GhosttyNative.MODS_SUPER;
+        // The kitty protocol reports the latched locks in its modifier field; the encoder
+        // only forwards these bits and never treats them as a chord.
+        if (IsLocked(VirtualKey.CapitalLock)) mods |= GhosttyNative.MODS_CAPS_LOCK;
+        if (IsLocked(VirtualKey.NumberKeyLock)) mods |= GhosttyNative.MODS_NUM_LOCK;
         return mods;
     }
 
@@ -2498,19 +2547,109 @@ public sealed class TerminalPane
         int key = KeyMap.FromVirtualKey(args.Key);
         if (key == KeyMap.Unidentified) return false;
 
-        if (KeyMap.IsTextKey(key) && !ctrl && !alt) return false;
+        int kitty = _session.KittyKeyboardFlags();
+        bool reportAll = (kitty & GhosttyNative.KITTY_KEY_REPORT_ALL) != 0;
+        bool reportEvents = (kitty & GhosttyNative.KITTY_KEY_REPORT_EVENTS) != 0;
+
+        // A modifier key is only a key event of its own under "report all keys".
+        if (KeyMap.IsModifierKey(key) && !reportAll) return false;
+
+        // Plain typing stays with the IME sink, which owns composition and dead keys. When
+        // the kitty protocol asks for every key as an escape code, the character the IME
+        // types is turned back into a key event in CommitText; a composition drops the
+        // pending key instead (see CancelPendingTextKey).
+        if (KeyMap.IsTextKey(key) && !ctrl && !alt)
+        {
+            if (reportAll)
+            {
+                string typed = KeyMap.Text(args.Key);
+                if (typed.Length > 0)
+                {
+                    _pendingText = new PendingText
+                    {
+                        Pressed = args.Key,
+                        Key = key,
+                        Mods = mods,
+                        Unshifted = KeyMap.UnshiftedCodepoint(args.Key),
+                        Text = typed,
+                        Repeat = args.KeyStatus.WasKeyDown,
+                    };
+                }
+                else if (reportEvents)
+                {
+                    // A dead key has no character of its own; its release still counts.
+                    RememberKey(args.Key, key, mods, KeyMap.UnshiftedCodepoint(args.Key));
+                }
+            }
+            else if (reportEvents)
+            {
+                // Its release is still reported when "report event types" is on.
+                RememberKey(args.Key, key, mods, KeyMap.UnshiftedCodepoint(args.Key));
+            }
+            return false;
+        }
+
+        uint unshifted = 0;
+        byte[]? utf8 = null;
+        if (KeyMap.IsTextKey(key))
+        {
+            unshifted = KeyMap.UnshiftedCodepoint(args.Key);
+            string text = ctrl && !alt && key >= KeyMap.KeyA && key <= KeyMap.KeyZ
+                ? ((char)('a' + (key - KeyMap.KeyA))).ToString()
+                : KeyMap.Text(args.Key);
+            // A dead key has no text of its own: leave the composition to the IME.
+            if (text.Length == 0) return false;
+            utf8 = System.Text.Encoding.UTF8.GetBytes(text);
+        }
 
         ClearSelectionOnTyping();
-
-        string text = string.Empty;
-        if (ctrl && !alt && key >= KeyMap.KeyA && key <= KeyMap.KeyZ)
-            text = ((char)('a' + (key - KeyMap.KeyA))).ToString();
-
         HidePointer();
         ClearBellState();
-        _session.SendKey(key, mods, text.Length > 0 ? System.Text.Encoding.ASCII.GetBytes(text) : null);
+
+        int action = _sentKeys.ContainsKey(args.Key) || args.KeyStatus.WasKeyDown
+            ? GhosttyNative.KEY_ACTION_REPEAT
+            : GhosttyNative.KEY_ACTION_PRESS;
+
+        _session.SendKey(key, mods, utf8, action, unshifted);
+        if (reportEvents) RememberKey(args.Key, key, mods, unshifted);
         if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
         return true;
+    }
+
+    /// <summary>
+    /// "report event types": the kitty protocol wants the release of every key whose press
+    /// reached the shell, including the plain text keys the IME typed.
+    /// </summary>
+    public void KeyUp(KeyRoutedEventArgs args)
+    {
+        // The IME reports its character on a later turn than the key release. Keep the
+        // release with the pending press so the protocol stays press -> release.
+        if (_pendingText is { } pending && pending.Pressed == args.Key)
+        {
+            _sentKeys.Remove(args.Key);
+            pending.ReleasePending = true;
+            _pendingText = pending;
+            return;
+        }
+
+        if (!_sentKeys.Remove(args.Key, out SentKey pressed)) return;
+        if (!_ready || _session is null) return;
+        if ((_session.KittyKeyboardFlags() & GhosttyNative.KITTY_KEY_REPORT_EVENTS) == 0) return;
+
+        _session.SendKey(pressed.Key, pressed.Mods, null,
+            GhosttyNative.KEY_ACTION_RELEASE, pressed.Unshifted);
+    }
+
+    /// <summary>Forgets the press bookkeeping when the pane goes away.</summary>
+    private void ClearSentKeys()
+    {
+        _sentKeys.Clear();
+        _pendingText = null;
+    }
+
+    private void RememberKey(VirtualKey pressed, int key, int mods, uint unshifted)
+    {
+        _sentKeys[pressed] = new SentKey { Key = key, Mods = mods, Unshifted = unshifted };
     }
 
     public void CommitText(string text)
@@ -2522,8 +2661,54 @@ public sealed class TerminalPane
         HidePointer();
         ClearBellState();
         ClearSelectionOnTyping();
+
+        // "report all keys": the character the IME typed for a single key press is sent as
+        // that key's escape code instead of raw text, keeping the protocol byte-identical
+        // whether an IME is installed or not.
+        if (TrySendPendingText(text)) return;
+
         _session.WriteInput(System.Text.Encoding.UTF8.GetBytes(text));
         if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
+    }
+
+    /// <summary>
+    /// A composition started: the pending text key belongs to the IME, so its character is
+    /// not a key event and the composition commit has to be sent as text.
+    /// </summary>
+    public void CancelPendingTextKey() => _pendingText = null;
+
+    private bool TrySendPendingText(string text)
+    {
+        PendingText? pending = _pendingText;
+        _pendingText = null;
+        if (pending is not { } keys) return false;
+        // A batched TextChanged or a composition commit no longer maps to one key.
+        if (!string.Equals(keys.Text, text, StringComparison.Ordinal)) return false;
+
+        int kitty = _session!.KittyKeyboardFlags();
+        if ((kitty & GhosttyNative.KITTY_KEY_REPORT_ALL) == 0) return false;
+
+        int action = keys.Repeat
+            ? GhosttyNative.KEY_ACTION_REPEAT
+            : GhosttyNative.KEY_ACTION_PRESS;
+
+        _session.SendKey(keys.Key, keys.Mods, System.Text.Encoding.UTF8.GetBytes(text),
+            action, keys.Unshifted);
+
+        bool reportEvents = (kitty & GhosttyNative.KITTY_KEY_REPORT_EVENTS) != 0;
+        if (keys.ReleasePending)
+        {
+            // The key was already released; do not hold a record for a future release.
+            if (reportEvents)
+                _session.SendKey(keys.Key, keys.Mods, null,
+                    GhosttyNative.KEY_ACTION_RELEASE, keys.Unshifted);
+        }
+        else if (reportEvents)
+        {
+            RememberKey(keys.Pressed, keys.Key, keys.Mods, keys.Unshifted);
+        }
+        if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
+        return true;
     }
 
     private bool KamBlocksKeyboard() =>

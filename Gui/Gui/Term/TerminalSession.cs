@@ -1188,8 +1188,25 @@ public sealed unsafe class TerminalSession : IDisposable
 
     // ---------------- keys ----------------
 
-    /// <summary>Encodes one key press into terminal input (kitty keyboard aware).</summary>
-    public void SendKey(int key, int mods, byte[]? utf8)
+    /// <summary>
+    /// Active kitty keyboard protocol flags (0 when the protocol is off). A program turns the
+    /// protocol on with "CSI &gt; flags u" / "CSI = flags u", so this is read from the
+    /// terminal on every key rather than cached.
+    /// </summary>
+    public int KittyKeyboardFlags()
+    {
+        if (_terminal == IntPtr.Zero) return 0;
+
+        byte flags = 0;
+        if (GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_KITTY_KEYBOARD_FLAGS, &flags)
+                != GhosttyNative.SUCCESS)
+            return 0;
+        return flags;
+    }
+
+    /// <summary>Encodes one key event into terminal input (kitty keyboard aware).</summary>
+    public void SendKey(int key, int mods, byte[]? utf8, int action = GhosttyNative.KEY_ACTION_PRESS,
+        uint unshiftedCodepoint = 0)
     {
         if (_keyEncoder == IntPtr.Zero || _terminal == IntPtr.Zero) return;
 
@@ -1201,15 +1218,21 @@ public sealed unsafe class TerminalSession : IDisposable
 
         try
         {
-            GhosttyNative.ghostty_key_event_set_action(keyEvent, GhosttyNative.KEY_ACTION_PRESS);
+            GhosttyNative.ghostty_key_event_set_action(keyEvent, action);
             GhosttyNative.ghostty_key_event_set_key(keyEvent, key);
             GhosttyNative.ghostty_key_event_set_mods(keyEvent, (ushort)mods);
+            // The kitty protocol derives the reported key code from this; without it the
+            // encoder produces nothing for a text key (legacy mode sends the text instead).
+            if (unshiftedCodepoint != 0)
+                GhosttyNative.ghostty_key_event_set_unshifted_codepoint(keyEvent, unshiftedCodepoint);
 
             if (utf8 is { Length: > 0 })
             {
                 fixed (byte* text = utf8)
                     GhosttyNative.ghostty_key_event_set_utf8(keyEvent, text, (nuint)utf8.Length);
-                if (utf8.Length == 1 && utf8[0] < 0x80)
+                // Only a fallback: the caller's codepoint is the unshifted key (so Shift+a
+                // still reports "a"), while this text would be the shifted one.
+                if (unshiftedCodepoint == 0 && utf8.Length == 1 && utf8[0] < 0x80)
                     GhosttyNative.ghostty_key_event_set_unshifted_codepoint(keyEvent, utf8[0]);
             }
 
