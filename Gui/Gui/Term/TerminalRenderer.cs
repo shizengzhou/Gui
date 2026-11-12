@@ -1081,6 +1081,10 @@ public sealed unsafe class TerminalRenderer
         string cursorText = string.Empty;
         Color cursorFg = defaultFg;
 
+        // Debug aid: a cheap signature of what this frame painted. Two frames with the same
+        // signature must look identical, so a screen that alternates points outside the renderer.
+        uint signature = 2166136261u;
+
         // Debug counters: a frame that paints fewer rows than the viewport leaves the rest of
         // the surface blank (the canvas is cleared first), which shows up as flicker.
         int drawnRows = 0;
@@ -1289,6 +1293,10 @@ public sealed unsafe class TerminalRenderer
                         // its own em, which drifts off the grid, so each grapheme is placed.
                         if (!run.Wide)
                         {
+                            signature = (signature ^ (uint)(viewportY * 131 + run.Col)) * 16777619u;
+                            signature = (signature ^ (uint)(run.Fg.R << 16 | run.Fg.G << 8 | run.Fg.B)) * 16777619u;
+                            signature = (signature ^ (uint)run.Text.Length) * 16777619u;
+
                             int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
                             RunSegment[]? segments = SegmentsFor(run.Text, face);
                             if (segments is not null)
@@ -1346,6 +1354,8 @@ public sealed unsafe class TerminalRenderer
             if (cells != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_cells_free(cells);
             if (rows != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_iterator_free(rows);
         }
+
+        Diag.Debug("render.sig", $"drawn={drawnRows} sig={signature:X8} cursor={cursorOn}");
 
         // How many rows the viewport should hold, from the same math the pane uses. Log only
         // when the frame disagrees: equal frames would flood the log at every keystroke.
