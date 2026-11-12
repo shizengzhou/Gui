@@ -4,7 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using CommunityToolkit.WinUI.Controls;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -124,53 +123,12 @@ public sealed partial class Workspace
             _settingsLayer.Resources[key] = fieldFillHover;
         }
 
-        // The toolkit's cards and expander draw their surface, border and text from their own
-        // Fluent brushes, so the About page reads neutral grey next to the pages built out of
-        // our tokens (the theme's text is a cool green-grey, Fluent's is plain black). Take the
-        // page's own brushes for all four families.
-        Brush cardForegroundActive = TextStrongBrush();
-        _settingsLayer.Resources["SettingsCardForeground"] = TextBodyBrush();
-        _settingsLayer.Resources["SettingsCardForegroundPointerOver"] = cardForegroundActive;
-        _settingsLayer.Resources["SettingsCardForegroundPressed"] = cardForegroundActive;
-        _settingsLayer.Resources["SettingsCardForegroundDisabled"] = TextFaintBrush();
-
-        // Measured with a diagnostic build: the sheet under the open expander is this pair - the
-        // toolkit paints an expanded card as "pointer over", so a hover tint covers the whole
-        // panel. Keep all four states on the card's own fill.
-        Brush cardFill = TermBgBrush();
-        _settingsLayer.Resources["SettingsCardBackground"] = cardFill;
-        _settingsLayer.Resources["SettingsCardBackgroundDisabled"] = cardFill;
-        _settingsLayer.Resources["SettingsCardBackgroundPointerOver"] = cardFill;
-        _settingsLayer.Resources["SettingsCardBackgroundPressed"] = cardFill;
-
-        // The card keeps its edge in every state: the toolkit gives the hover state a stronger
-        // stroke, and a lost pointer-exit leaves that stroke behind after the pointer has gone.
-        Brush cardEdge = PanelStrokeBrush();
-        _settingsLayer.Resources["SettingsCardBorderBrush"] = cardEdge;
-        _settingsLayer.Resources["SettingsCardBorderBrushDisabled"] = cardEdge;
-        _settingsLayer.Resources["SettingsCardBorderBrushPointerOver"] = cardEdge;
-        _settingsLayer.Resources["SettingsCardBorderBrushPressed"] = cardEdge;
-
-        // The expander's own header and description do not go through SettingsCardForeground:
-        // they take Fluent's primary and secondary text fills, which is why the title stayed a
-        // neutral grey while the items under it took the theme's green-grey.
+        // Fluent's own text and surface brushes, for the controls the page still borrows from it
+        // (the hyperlink, the field popups): take the theme's values so nothing stays neutral
+        // black or white next to our tokens.
         _settingsLayer.Resources["TextFillColorPrimaryBrush"] = TextStrongBrush();
         _settingsLayer.Resources["TextFillColorSecondaryBrush"] = TextBodyBrush();
         _settingsLayer.Resources["TextFillColorTertiaryBrush"] = TextFaintBrush();
-
-        // The expander's chevron has brushes of its own rather than the card's foreground.
-        // Held at one colour on purpose: the control keeps the pointer-over colour after the
-        // pointer leaves (measured), so a second colour would stick on the chevron.
-        _settingsLayer.Resources["ExpanderChevronForeground"] = TextFaintBrush();
-        _settingsLayer.Resources["ExpanderChevronPointerOverForeground"] = TextFaintBrush();
-        _settingsLayer.Resources["ExpanderChevronPressedForeground"] = TextFaintBrush();
-        _settingsLayer.Resources["ExpanderChevronBackground"] = ClearBrush();
-
-        // The panel the expander opens comes out as Fluent's card fill - 70% white, which over
-        // this cream card is exactly the #F7F5EE sheet that reads as white. The toolkit's own
-        // keys did not reach it, so take the WinUI card fills as well.
-        _settingsLayer.Resources["ExpanderContentBackground"] = TermBgBrush();
-        _settingsLayer.Resources["ExpanderContentBorderBrush"] = PanelStrokeBrush();
         _settingsLayer.Resources["CardBackgroundFillColorDefaultBrush"] = TermBgBrush();
         _settingsLayer.Resources["CardBackgroundFillColorSecondaryBrush"] = TermBgBrush();
         _settingsLayer.Resources["CardStrokeColorDefaultBrush"] = PanelStrokeBrush();
