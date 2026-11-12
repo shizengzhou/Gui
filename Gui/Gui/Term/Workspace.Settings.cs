@@ -553,21 +553,37 @@ public sealed partial class Workspace
             Width = 150,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        // The stock slider paints its value track and thumb from the system accent, which
-        // follows Windows' personalisation rather than this window's theme. Take the theme's
-        // accent for every part that reads as the value, so the slider matches the switch and
-        // the command palette's selected row.
+        // The stock slider paints its value from the system accent, which follows Windows'
+        // personalisation, and the plate under its thumb from Fluent's fixed whites; neither
+        // follows a Ghostty theme. Take the theme's accent for everything that reads as the
+        // value (the same brush the switch takes when it is on) and the card's own surface and
+        // stroke for the plate around the thumb and its rim.
         Brush sliderAccent = AccentBrush();
+        Brush sliderPlate = TermBgBrush();
+        Brush sliderRim = PanelStrokeBrush();
         opacitySlider.Foreground = sliderAccent;
         foreach (string key in new[]
                  {
                      "SliderTrackValueFill", "SliderTrackValueFillPointerOver",
                      "SliderTrackValueFillPressed", "SliderThumbBackground",
                      "SliderThumbBackgroundPointerOver", "SliderThumbBackgroundPressed",
-                     "SliderThumbBorderBrush", "SliderOuterThumbBackground",
+                     "SliderThumbBackgroundThemeBrush", "SliderThumbPointerOverBackgroundThemeBrush",
+                     "SliderThumbPressedBackgroundThemeBrush",
                  })
         {
             opacitySlider.Resources[key] = sliderAccent;
+        }
+        foreach (string key in new[]
+                 {
+                     "SliderOuterThumbBackground", "SliderOuterThumbBackgroundPointerOver",
+                     "SliderOuterThumbBackgroundPressed",
+                 })
+        {
+            opacitySlider.Resources[key] = sliderPlate;
+        }
+        foreach (string key in new[] { "SliderThumbBorderBrush", "SliderThumbBorderThemeBrush" })
+        {
+            opacitySlider.Resources[key] = sliderRim;
         }
         opacitySlider.ValueChanged += (_, e) =>
         {
