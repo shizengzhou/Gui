@@ -1847,6 +1847,9 @@ public sealed class TerminalPane
         });
     }
 
+    private double _slotX = double.NaN, _slotY = double.NaN, _slotW = double.NaN, _slotH = double.NaN;
+    private float _slotOpacity = float.NaN;
+
     public void Redraw()
     {
         if (!_ready) return;
@@ -1854,6 +1857,24 @@ public sealed class TerminalPane
         // viewport.
         UpdateScrollbar();
         _canvas.Invalidate();
+
+        // Debug aid: a canvas parked on a half pixel is composited at a rounding boundary, so
+        // the whole grid can land a pixel apart from one frame to the next. Log the slot only
+        // when it moves.
+        var slot = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(_canvas);
+        if (double.IsNaN(_slotX) || Math.Abs(slot.Offset.X - _slotX) > 0.0005 || Math.Abs(slot.Offset.Y - _slotY) > 0.0005 ||
+            Math.Abs(_canvas.ActualWidth - _slotW) > 0.0005 || Math.Abs(_canvas.ActualHeight - _slotH) > 0.0005 ||
+            Math.Abs(slot.Opacity - _slotOpacity) > 0.002f)
+        {
+            _slotX = slot.Offset.X;
+            _slotY = slot.Offset.Y;
+            _slotW = _canvas.ActualWidth;
+            _slotH = _canvas.ActualHeight;
+            _slotOpacity = slot.Opacity;
+            Diag.Debug("canvas.slot",
+                $"offset={slot.Offset.X:0.###},{slot.Offset.Y:0.###} size={_canvas.ActualWidth:0.###}x{_canvas.ActualHeight:0.###} " +
+                $"opacity={slot.Opacity:0.###} elementOpacity={_canvas.Opacity:0.###} margin={_canvas.Margin.Left:0.###},{_canvas.Margin.Top:0.###}");
+        }
     }
 
     /// <summary>
@@ -1887,6 +1908,7 @@ public sealed class TerminalPane
     {
         if (_focused == focused) return;
         _focused = focused;
+        Diag.Debug("pane.focus", $"focused={focused}");
         if (focused)
         {
             ClearBellState();
