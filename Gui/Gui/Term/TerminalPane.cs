@@ -1621,9 +1621,35 @@ public sealed class TerminalPane
         _canvas.Draw -= OnDraw;
     }
 
+    private int _drawCount;
+    private int _drawBudget;
+    private float _lastDrawDpi = -1f;
+    private float _lastDrawScale = -1f;
+    private System.Numerics.Matrix3x2 _lastDrawTransform;
+
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
         if (!_ready) return;
+
+        // Debug aid: log the draw's DPI, scale, size and transform whenever one of them changes,
+        // plus a short burst after every layout, so an alternating frame can be attributed.
+        float dpi = (float)sender.Dpi;
+        float scale = (float)RasterizationScale;
+        System.Numerics.Matrix3x2 transform = args.DrawingSession.Transform;
+        bool moved = Math.Abs(dpi - _lastDrawDpi) > 0.01f || Math.Abs(scale - _lastDrawScale) > 0.001f ||
+                     transform != _lastDrawTransform;
+        _drawCount++;
+        if (moved || _drawBudget > 0)
+        {
+            if (_drawBudget > 0) _drawBudget--;
+            _lastDrawDpi = dpi;
+            _lastDrawScale = scale;
+            _lastDrawTransform = transform;
+            Diag.Debug("canvas.draw",
+                $"n={_drawCount} dpi={dpi:0.##} scale={scale:0.###} size={sender.ActualWidth:0.###}x{sender.ActualHeight:0.###} " +
+                $"t={transform.M11:0.##},{transform.M12:0.##},{transform.M21:0.##},{transform.M22:0.##},{transform.M31:0.##},{transform.M32:0.##} " +
+                $"cursor={_cursorOn}");
+        }
         // A throw here escapes into XAML's draw callback, which fail-fasts the process.
         Diag.Guard("pane.draw", () => _renderer.Render(args.DrawingSession, _session, _cursorOn, true,
             (float)sender.ActualWidth, (float)sender.ActualHeight));
@@ -1736,6 +1762,8 @@ public sealed class TerminalPane
         ushort cols = (ushort)Math.Max(2, (int)(width / cellWidth));
         ushort rows = (ushort)Math.Max(2, (int)(height / metrics.Height));
         LaidOut = true;
+        // Capture the frames right after a layout in the draw log.
+        _drawBudget = 40;
         if (!force && cols == _cols && rows == _rows) return;
 
         Diag.Debug("pane.layout",
