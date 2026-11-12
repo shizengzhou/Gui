@@ -211,7 +211,7 @@ internal sealed class ConPty : IDisposable
     private static IntPtr BuildEnvironment(IReadOnlyList<(string Name, string Value)>? extra, string term)
     {
         bool hasTerm = !string.IsNullOrEmpty(term);
-        if ((extra is null || extra.Count == 0) && !hasTerm) return IntPtr.Zero;
+        if ((extra is null || extra.Count == 0) && !hasTerm && CliDirectory().Length == 0) return IntPtr.Zero;
 
         var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in System.Environment.GetEnvironmentVariables())
@@ -227,12 +227,47 @@ internal sealed class ConPty : IDisposable
                 variables[name] = value;
         }
 
+        AddCliToPath(variables);
+
         var block = new StringBuilder();
         foreach (KeyValuePair<string, string> pair in variables)
             block.Append(pair.Key).Append('=').Append(pair.Value).Append('\0');
         block.Append('\0');
 
         return Marshal.StringToHGlobalUni(block.ToString());
+    }
+
+    /// <summary>
+    /// The folder holding the CLI for this build: bin\gui.exe, in an installed payload and in a
+    /// build output alike. "gui" only ever lives in bin — in the app's own folder the name
+    /// would be Gui.exe, which on Windows is the same file.
+    /// </summary>
+    private static string CliDirectory()
+    {
+        string bin = System.IO.Path.Combine(AppContext.BaseDirectory, "bin");
+        return System.IO.File.Exists(System.IO.Path.Combine(bin, "gui.exe")) ? bin : string.Empty;
+    }
+
+    /// <summary>
+    /// Puts the CLI on the shell's PATH instead of relying on the installer's PATH entry. A
+    /// process only sees the environment it inherited when it started, so a Gui that was
+    /// already running when the entry was added would otherwise hand its shells a PATH
+    /// without "gui" until the next restart.
+    /// </summary>
+    private static void AddCliToPath(SortedDictionary<string, string> variables)
+    {
+        string cliDir = CliDirectory();
+        if (cliDir.Length == 0) return;
+
+        variables.TryGetValue("PATH", out string? existing);
+        existing ??= string.Empty;
+        foreach (string entry in existing.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (string.Equals(entry.Trim(), cliDir, StringComparison.OrdinalIgnoreCase)) return;
+        }
+
+        variables["PATH"] = cliDir + ";" + existing;
+        Diag.Debug("pty.path", $"prepended {cliDir}");
     }
 
     private unsafe void ReadLoop()
