@@ -143,10 +143,9 @@ public sealed partial class Workspace
         _settingsLayer.Resources["SettingsCardBackgroundPointerOver"] = cardFill;
         _settingsLayer.Resources["SettingsCardBackgroundPressed"] = cardFill;
 
-        // The cards also draw an edge of their own; inside our group borders it shows up the
-        // moment the expander opens, as a line where there was card. The groups already carry
-        // the theme stroke, so the cards go borderless in every state.
-        Brush cardEdge = ClearBrush();
+        // The card keeps its edge in every state: the toolkit gives the hover state a stronger
+        // stroke, and a lost pointer-exit leaves that stroke behind after the pointer has gone.
+        Brush cardEdge = PanelStrokeBrush();
         _settingsLayer.Resources["SettingsCardBorderBrush"] = cardEdge;
         _settingsLayer.Resources["SettingsCardBorderBrushDisabled"] = cardEdge;
         _settingsLayer.Resources["SettingsCardBorderBrushPointerOver"] = cardEdge;
@@ -169,7 +168,7 @@ public sealed partial class Workspace
         // this cream card is exactly the #F7F5EE sheet that reads as white. The toolkit's own
         // keys did not reach it, so take the WinUI card fills as well.
         _settingsLayer.Resources["ExpanderContentBackground"] = TermBgBrush();
-        _settingsLayer.Resources["ExpanderContentBorderBrush"] = ClearBrush();
+        _settingsLayer.Resources["ExpanderContentBorderBrush"] = PanelStrokeBrush();
         _settingsLayer.Resources["CardBackgroundFillColorDefaultBrush"] = TermBgBrush();
         _settingsLayer.Resources["CardBackgroundFillColorSecondaryBrush"] = TermBgBrush();
         _settingsLayer.Resources["CardStrokeColorDefaultBrush"] = PanelStrokeBrush();
