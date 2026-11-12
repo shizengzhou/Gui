@@ -159,9 +159,11 @@ public sealed partial class Workspace
         _settingsLayer.Resources["TextFillColorTertiaryBrush"] = TextFaintBrush();
 
         // The expander's chevron has brushes of its own rather than the card's foreground.
+        // Held at one colour on purpose: the control keeps the pointer-over colour after the
+        // pointer leaves (measured), so a second colour would stick on the chevron.
         _settingsLayer.Resources["ExpanderChevronForeground"] = TextFaintBrush();
-        _settingsLayer.Resources["ExpanderChevronPointerOverForeground"] = cardForegroundActive;
-        _settingsLayer.Resources["ExpanderChevronPressedForeground"] = cardForegroundActive;
+        _settingsLayer.Resources["ExpanderChevronPointerOverForeground"] = TextFaintBrush();
+        _settingsLayer.Resources["ExpanderChevronPressedForeground"] = TextFaintBrush();
         _settingsLayer.Resources["ExpanderChevronBackground"] = ClearBrush();
 
         // The panel the expander opens comes out as Fluent's card fill - 70% white, which over
