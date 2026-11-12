@@ -102,6 +102,28 @@ public sealed partial class Workspace
             _settingsLayer.Resources[key] = fieldAccent;
         }
 
+        // The fill behind a field: flat on the card until the pointer is on it, then the same
+        // subtle tint a row takes, so hovering no longer brings Fluent's white back.
+        Brush fieldFill = ClearBrush();
+        Brush fieldFillHover = ChipHoverBrush();
+        foreach (string key in new[]
+                 {
+                     "TextControlBackground", "TextControlBackgroundFocused",
+                     "TextControlBackgroundDisabled", "ComboBoxBackground",
+                     "ComboBoxBackgroundDisabled",
+                 })
+        {
+            _settingsLayer.Resources[key] = fieldFill;
+        }
+        foreach (string key in new[]
+                 {
+                     "TextControlBackgroundPointerOver", "ComboBoxBackgroundPointerOver",
+                     "ComboBoxBackgroundPressed",
+                 })
+        {
+            _settingsLayer.Resources[key] = fieldFillHover;
+        }
+
         var card = new Border
         {
             CornerRadius = new CornerRadius(CompactDensity ? 0 : Theme.RadiusSurface),
