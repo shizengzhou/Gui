@@ -215,26 +215,27 @@ public sealed partial class Workspace
         row.Child = grid;
 
         var item = new PaletteItem { Row = row, Title = title, Label = text, Action = action };
-        int index = owner.Count;
-        WirePaletteRow(row, title, owner, index);
+        WirePaletteRow(row, title, owner, item);
         _paletteRows.Children.Add(row);
         owner.Add(item);
         return item;
     }
 
-    private void WirePaletteRow(Border row, TextBlock title, List<PaletteItem> owner, int index)
+    private void WirePaletteRow(Border row, TextBlock title, List<PaletteItem> owner, PaletteItem item)
     {
+        // The index is resolved from the list rather than captured: the root level is sorted
+        // after every row exists, so a captured position would go stale.
         row.PointerEntered += (_, _) =>
         {
             if (!ReferenceEquals(owner, ActivePaletteItems())) return;
-            if (index == _paletteSelected) return;
+            if (owner.IndexOf(item) == _paletteSelected) return;
             row.Background = ChipHoverBrush();
             title.Foreground = TextStrongBrush();
         };
         row.PointerExited += (_, _) =>
         {
             if (!ReferenceEquals(owner, ActivePaletteItems())) return;
-            if (index == _paletteSelected) return;
+            if (owner.IndexOf(item) == _paletteSelected) return;
             row.Background = ClearBrush();
             title.Foreground = TextBodyBrush();
         };
@@ -242,7 +243,8 @@ public sealed partial class Workspace
         {
             args.Handled = true;
             if (!ReferenceEquals(owner, ActivePaletteItems())) return;
-            RunPaletteItem(owner, index);
+            int index = owner.IndexOf(item);
+            if (index >= 0) RunPaletteItem(owner, index);
         };
     }
 
@@ -281,8 +283,7 @@ public sealed partial class Workspace
         row.Child = grid;
 
         var item = new PaletteItem { Row = row, Title = title, Label = text, Action = action, Submenu = true };
-        int index = items.Count;
-        WirePaletteRow(row, title, items, index);
+        WirePaletteRow(row, title, items, item);
         _paletteRows.Children.Add(row);
         items.Add(item);
     }
@@ -316,8 +317,7 @@ public sealed partial class Workspace
             Value = value,
             Light = light,
         };
-        int index = items.Count;
-        WirePaletteRow(row, title, items, index);
+        WirePaletteRow(row, title, items, item);
         _paletteRows.Children.Add(row);
         items.Add(item);
 
@@ -349,6 +349,54 @@ public sealed partial class Workspace
         _paletteEmpty = null;
         _paletteScroller = null;
     }
+
+    /// <summary>
+    /// Sorts one palette level the way Ghostty does: title ascending, ASCII case-insensitive,
+    /// with ':' compared as '\t' so "Foo:" sorts before "Foo Bar:", and a shorter title first
+    /// when it is a prefix of the other. Equal titles keep their declaration order.
+    /// </summary>
+    private void SortPaletteLevel(List<PaletteItem> items)
+    {
+        if (items.Count < 2) return;
+
+        var order = new int[items.Count];
+        for (int i = 0; i < order.Length; i++) order[i] = i;
+        Array.Sort(order, (left, right) =>
+        {
+            int result = ComparePaletteLabels(items[left].Label, items[right].Label);
+            return result != 0 ? result : left.CompareTo(right);
+        });
+
+        var sorted = new List<PaletteItem>(items.Count);
+        foreach (int index in order) sorted.Add(items[index]);
+
+        // Only the rows of this level move; the other levels keep the positions they were
+        // created in, which is what building the submenus later relies on.
+        int firstRow = _paletteRows.Children.IndexOf(items[0].Row);
+        if (firstRow >= 0)
+        {
+            foreach (PaletteItem item in items) _paletteRows.Children.Remove(item.Row);
+            for (int i = 0; i < sorted.Count; i++) _paletteRows.Children.Insert(firstRow + i, sorted[i].Row);
+        }
+
+        items.Clear();
+        items.AddRange(sorted);
+    }
+
+    private static int ComparePaletteLabels(string left, string right)
+    {
+        int length = Math.Min(left.Length, right.Length);
+        for (int i = 0; i < length; i++)
+        {
+            char a = AsciiLower(left[i] == ':' ? '\t' : left[i]);
+            char b = AsciiLower(right[i] == ':' ? '\t' : right[i]);
+            if (a != b) return a < b ? -1 : 1;
+        }
+        return left.Length.CompareTo(right.Length);
+    }
+
+    private static char AsciiLower(char value) =>
+        value is >= 'A' and <= 'Z' ? (char)(value + ('a' - 'A')) : value;
 
     private void BuildPalette()
     {
@@ -670,6 +718,10 @@ public sealed partial class Workspace
                 ApplyThemeChoice(themeName, lightMode);
             });
         }
+
+        // Ghostty sorts the root command list alphabetically; the two submenu levels keep the
+        // order their option tables declare.
+        SortPaletteLevel(_paletteItems);
 
         // Every row has registered its handler by now; aliases need the final table.
         LinkKeybindAliases();
