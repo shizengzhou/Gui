@@ -1372,6 +1372,19 @@ public sealed unsafe class TerminalSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// True while the running program has any mouse tracking mode enabled, i.e. when the
+    /// pointer belongs to the program instead of to link detection.
+    /// </summary>
+    public bool MouseTrackingActive()
+    {
+        if (_terminal == IntPtr.Zero) return false;
+        byte active = 0;
+        return GhosttyNative.ghostty_terminal_get(
+            _terminal, GhosttyNative.TDATA_MOUSE_TRACKING, &active) == GhosttyNative.SUCCESS &&
+            active != 0;
+    }
+
     /// <summary>The OSC 8 hyperlink URI at a viewport cell, or null when there is none.</summary>
     public string? HyperlinkAt(ushort x, ushort y)
     {

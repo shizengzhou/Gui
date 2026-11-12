@@ -78,6 +78,7 @@ internal static unsafe class GhosttyNative
     internal const int TDATA_COLS = 1;
     internal const int TDATA_ROWS = 2;
     internal const int TDATA_SCROLLBAR = 9;
+    internal const int TDATA_MOUSE_TRACKING = 11;
     internal const int TDATA_TITLE = 12;
     internal const int TDATA_PWD = 13;
     internal const int TDATA_KITTY_GRAPHICS = 30;

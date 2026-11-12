@@ -105,6 +105,12 @@ public sealed class TerminalPane
     private ushort _hoverX;
     private ushort _hoverY;
     private bool _hoverHadCtrl;
+    private bool _pointerInside;
+    private bool _pressDragged;
+    private int _hoverStartX = -1;
+    private int _hoverEndX = -1;
+    private Border? _linkUnderline;
+    private CursorGrid? _canvasHost;
     private ulong _lastClickTime;
     private ushort _lastClickX;
     private ushort _lastClickY;
@@ -127,8 +133,42 @@ public sealed class TerminalPane
     private string _searchQuery = string.Empty;
     private static Windows.Media.Playback.MediaPlayer? _bellPlayer;
 
+    // Ghostty's default URL/path matcher (src/config/url.zig). Keeping the grammar in sync
+    // matters: it decides which cells become links, what the preview shows and what is
+    // handed to the system opener.
+    private const string UrlSchemes =
+        @"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:";
+    private const string Ipv6UrlPattern = @"(?:\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\](?::[0-9]+)?)";
+    private const string SchemeUrlChars = @"[\w\-.~:/?#@!$&*+,;=%]";
+    private const string PathChars = @"[\w\-.~:/?#@!$&*+;=%]";
+    private const string OptionalBracketedWordSuffix = @"(?:[\(\[]\w*[\)\]])?";
+    private const string NoTrailingPunctuation = @"(?<![,.])";
+    private const string NoTrailingColon = @"(?<!:)";
+    private const string DottedPathLookahead = @"(?=[\w\-.~:/?#@!$&*+;=%]*\.)";
+    private const string NonDottedPathLookahead = @"(?![\w\-.~:/?#@!$&*+;=%]*\.)";
+    private const string DottedPathSpaceSegments =
+        @"(?:(?<!:) (?!\w+://)(?!\.{0,2}/)(?!~/)[\w\-.~:/?#@!$&*+;=%]*[/.])*";
+    private const string AnyPathSpaceSegments =
+        @"(?:(?<!:) (?!\w+://)(?!\.{0,2}/)(?!~/)[\w\-.~:/?#@!$&*+;=%]+)*";
+
     private static readonly Regex UrlPattern = new(
-        @"\b(?:https?://|www\.)[^\s""'<>]+", RegexOptions.Compiled);
+        "(?:" + UrlSchemes + ")" +
+        "(?:" + Ipv6UrlPattern + "|" + SchemeUrlChars + "+" + OptionalBracketedWordSuffix + ")+" +
+        NoTrailingPunctuation +
+        @"|\bwww\.[\w\-.~:/?#@!$&*+,;=%]+" + NoTrailingPunctuation +
+        @"|(?:" +
+        @"(?:\.\./|\./|(?<!\w)~/|(?:[\w][\w\-.]*/)*(?<!\w)\$[A-Za-z_]\w*/|\.[\w][\w\-.]*/|(?<![\w~/])/(?!/))" +
+        "(?:" + DottedPathLookahead + PathChars + "+" + DottedPathSpaceSegments + NoTrailingColon +
+        "|" + NonDottedPathLookahead + PathChars + "+" + AnyPathSpaceSegments + NoTrailingColon + ")" +
+        @"|" + DottedPathLookahead + @"(?<!\$\d*)(?<!\w)[\w][\w\-.]*/" + PathChars + "+" + NoTrailingColon +
+        ")",
+        RegexOptions.Compiled,
+        TimeSpan.FromMilliseconds(100));
+
+    // Distinguishes a scheme match from a path match; only paths are resolved against the
+    // terminal's working directory before opening.
+    private static readonly Regex UrlSchemePattern = new(
+        "^(?:" + UrlSchemes + ")", RegexOptions.Compiled);
     private int _layoutSuspended;
     private bool _drawHooked;
     private XamlRoot? _hookedRoot;
@@ -237,11 +277,32 @@ public sealed class TerminalPane
         }
     }
 
-    /// <summary>Keeps the arrow over the header actions instead of the band's move cursor.</summary>
+    /// <summary>
+    /// Keeps the arrow over the header actions instead of the band's move cursor, and gives
+    /// the terminal surface a hand while a link is hovered.
+    /// </summary>
     private sealed class CursorGrid : Grid
     {
-        public CursorGrid(InputSystemCursorShape shape) =>
-            ProtectedCursor = InputSystemCursor.Create(shape);
+        private static readonly InputCursor ArrowCursor =
+            InputSystemCursor.Create(InputSystemCursorShape.Arrow);
+
+        private static readonly InputCursor HandCursor =
+            InputSystemCursor.Create(InputSystemCursorShape.Hand);
+
+        private bool _hand;
+
+        public CursorGrid(InputSystemCursorShape shape)
+        {
+            _hand = shape == InputSystemCursorShape.Hand;
+            ProtectedCursor = _hand ? HandCursor : ArrowCursor;
+        }
+
+        public void ShowHand(bool hand)
+        {
+            if (_hand == hand) return;
+            _hand = hand;
+            ProtectedCursor = hand ? HandCursor : ArrowCursor;
+        }
     }
 
     /// <summary>
@@ -321,6 +382,17 @@ public sealed class TerminalPane
             BorderBrush = new SolidColorBrush(Theme.Stroke()),
             BorderThickness = new Thickness(1),
             Child = _linkPreviewText,
+        };
+
+        // Ghostty underlines the hovered link. The terminal grid is painted outside XAML,
+        // so the underline is a thin overlay aligned to the cell run instead of a cell style.
+        _linkUnderline = new Border
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+            Background = new SolidColorBrush(Theme.TextStrong()),
         };
 
         // "search": a compact find bar over the top-right of the surface.
@@ -659,14 +731,20 @@ public sealed class TerminalPane
         frameRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         frameRoot.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         frameRoot.Children.Add(header);
-        Grid.SetRow(_canvas, 1);
-        frameRoot.Children.Add(_canvas);
+        // The host owns the cursor: the canvas is a sealed Win2D control, and the pointer
+        // shape for a hovered link has to be set on a class we can add ProtectedCursor to.
+        _canvasHost = new CursorGrid(InputSystemCursorShape.Arrow);
+        _canvasHost.Children.Add(_canvas);
+        Grid.SetRow(_canvasHost, 1);
+        frameRoot.Children.Add(_canvasHost);
         Grid.SetRow(_scrollBar, 1);
         frameRoot.Children.Add(_scrollBar);
         Grid.SetRow(_progressBar, 1);
         frameRoot.Children.Add(_progressBar);
         Grid.SetRow(_dim, 1);
         frameRoot.Children.Add(_dim);
+        Grid.SetRow(_linkUnderline, 1);
+        frameRoot.Children.Add(_linkUnderline);
         Grid.SetRow(_linkPreview, 1);
         frameRoot.Children.Add(_linkPreview);
         Grid.SetRow(_searchBar, 1);
@@ -710,8 +788,10 @@ public sealed class TerminalPane
             _selecting = false;
             StopSelectionScroll();
         };
+        _canvas.PointerEntered += (_, _) => _pointerInside = true;
         _canvas.PointerExited += (_, _) =>
         {
+            _pointerInside = false;
             SetHoverUrl(null);
             ShowPointer();
         };
@@ -2252,6 +2332,8 @@ public sealed class TerminalPane
         }
         if (_linkPreviewText is not null)
             _linkPreviewText.Foreground = new SolidColorBrush(Theme.TextStrong());
+        if (_linkUnderline is not null)
+            _linkUnderline.Background = new SolidColorBrush(Theme.TextStrong());
         if (_searchBar is not null)
         {
             _searchBar.Background = new SolidColorBrush(Theme.PaletteTint());
@@ -2629,17 +2711,15 @@ public sealed class TerminalPane
         Redraw();
     }
 
-    /// <summary>Copies the URL under the pointer ("copy_url_to_clipboard").</summary>
+    /// <summary>
+    /// Copies the link under the pointer ("copy_url_to_clipboard"). Like Ghostty this needs
+    /// an active link hover, which is the Ctrl-held state, and copies the matched text rather
+    /// than a resolved path.
+    /// </summary>
     public void CopyUrlAtPointer()
     {
-        string? url = _hoverUrl;
-        if (url is null && CellAt(_hoverPoint, out ushort x, out ushort y))
-        {
-            if (_config.LinkOsc8) url = _session.HyperlinkAt(x, y);
-            if (url is null && _config.LinkUrl) url = UrlAt(x, y);
-        }
-        if (string.IsNullOrEmpty(url)) return;
-        CopyTextToClipboard(url);
+        if (string.IsNullOrEmpty(_hoverUrl)) return;
+        CopyTextToClipboard(_hoverUrl);
     }
 
     /// <summary>Pins the pane title; null returns it to the shell's own reports.</summary>
@@ -2819,6 +2899,8 @@ public sealed class TerminalPane
         _session.Scroll(delta > 0 ? -step : step);
         // The cached viewport match list moves with the rows.
         if (_searchActive) _searchTimer?.Start();
+        // The text under the pointer changed without pointer motion.
+        RefreshLinkHover();
         args.Handled = true;
     }
 
@@ -2849,15 +2931,7 @@ public sealed class TerminalPane
 
         PointerPoint point = args.GetCurrentPoint(_canvas);
         int mods = PointerMods();
-
-        // Ctrl+click opens the link under the pointer (OSC 8 or a matched URL).
-        if (point.Properties.IsLeftButtonPressed && (mods & GhosttyNative.MODS_CTRL) != 0 &&
-            _hoverUrl is not null)
-        {
-            args.Handled = true;
-            OpenLink(_hoverUrl);
-            return;
-        }
+        _pointerInside = true;
 
         // A left press goes to the program when it requested mouse tracking.
         if (point.Properties.IsLeftButtonPressed &&
@@ -2917,6 +2991,7 @@ public sealed class TerminalPane
 
         StopSelectionScroll();
         _selecting = true;
+        _pressDragged = false;
         _anchorX = x;
         _anchorY = y;
         _anchorScreenY = ScreenRow(y);
@@ -2950,13 +3025,17 @@ public sealed class TerminalPane
             if (!CellAt(point.Position, out ushort x, out ushort y)) return;
             if (!outside && x == _anchorX && y == _anchorY) return;
 
+            // A click that turns into a drag never opens a link, and the preview must not
+            // linger over the anchor while the text under the pointer changes.
+            _pressDragged = true;
+            SetHoverUrl(null);
             ExtendSelection(x, y);
             args.Handled = true;
             return;
         }
 
         // Hover feedback for links (with Ctrl held) and motion for mouse-aware programs.
-        UpdateLinkHover(point.Position, (mods & GhosttyNative.MODS_CTRL) != 0);
+        UpdateLinkHover(point.Position, mods);
         TryReportMouse(GhosttyNative.MOUSE_ACTION_MOTION,
             _anyMouseButton ? GhosttyNative.MOUSE_BUTTON_LEFT : 0, mods, point);
     }
@@ -2991,7 +3070,34 @@ public sealed class TerminalPane
         _canvas.ReleasePointerCapture(args.Pointer);
         args.Handled = true;
 
+        // Ghostty opens a link on release, after confirming the press was a click and not a
+        // drag, and before copy-on-select. Recompute the link here so a scroll or a redraw
+        // between press and release cannot open stale text.
+        if (!_pressDragged && TryOpenLinkAt(point.Position)) return;
+
         if (_config.CopyOnSelect && _session.HasSelection()) CopySelection();
+    }
+
+    /// <summary>
+    /// Opens the OSC 8 or URL/path link under <paramref name="position"/> when Ctrl is held
+    /// and the terminal is not handing the pointer to a mouse-aware program.
+    /// </summary>
+    private bool TryOpenLinkAt(Point position)
+    {
+        int mods = PointerMods();
+        if (!LinkHoverAllowed(mods)) return false;
+        if (LinkMods(mods) != GhosttyNative.MODS_CTRL) return false;
+        if (!CellAt(position, out ushort x, out ushort y)) return false;
+
+        LinkTarget? link = LinkAt(x, y);
+        if (link is null) return false;
+
+        _session.ClearSelection();
+        Redraw();
+        OpenLink(link.Value.Osc8 || link.Value.IsUrl
+            ? link.Value.Text
+            : ResolveForOpening(link.Value.Text));
+        return true;
     }
 
     // ---------------- selection auto-scroll ----------------
@@ -3191,9 +3297,52 @@ public sealed class TerminalPane
         return true;
     }
 
-    private void UpdateLinkHover(Point position, bool ctrl)
+    /// <summary>One hovered link: the value to open plus the cell run it covers.</summary>
+    private readonly record struct LinkTarget(string Text, bool Osc8, bool IsUrl, int StartX, int EndX);
+
+    /// <summary>
+    /// Ghostty strips Shift from the comparison modifiers when it escapes a mouse capture;
+    /// otherwise Shift is part of the chord and Ctrl+Shift must not match the Ctrl-only link.
+    /// </summary>
+    private int LinkMods(int mods)
+    {
+        if (!MouseTrackingCaptured()) return mods;
+
+        bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
+        return shift && _config.MouseShiftCapture is not ("true" or "always")
+            ? mods & ~GhosttyNative.MODS_SHIFT
+            : mods;
+    }
+
+    /// <summary>
+    /// Ghostty only looks for links when the pointer is not owned by a mouse-aware program,
+    /// unless Shift is escaping that capture.
+    /// </summary>
+    private bool LinkHoverAllowed(int mods)
+    {
+        if (!MouseTrackingCaptured()) return true;
+
+        bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
+        return shift && _config.MouseShiftCapture is not ("true" or "always");
+    }
+
+    private bool MouseTrackingCaptured() =>
+        MouseReportingEnabled && _config.MouseReporting && _session.MouseTrackingActive();
+
+    /// <summary>
+    /// Re-evaluates the hovered link without waiting for pointer motion. Ghostty refreshes
+    /// links whenever the modifier state changes (Ctrl press or release).
+    /// </summary>
+    public void RefreshLinkHover()
+    {
+        if (!_pointerInside) return;
+        UpdateLinkHover(_hoverPoint, PointerMods());
+    }
+
+    private void UpdateLinkHover(Point position, int mods)
     {
         _hoverPoint = position;
+        _pointerInside = true;
 
         if (!_config.LinkUrl && !_config.LinkOsc8)
         {
@@ -3207,57 +3356,133 @@ public sealed class TerminalPane
             return;
         }
 
-        if (ctrl && _hoverUrl is not null && _hoverHadCtrl && x == _hoverX && y == _hoverY)
+        // The default URL matcher and OSC 8 both use exactly Ctrl (Ghostty's
+        // ctrlOrSuper); Shift or Alt make it a different chord and must not match.
+        if (!LinkHoverAllowed(mods) || LinkMods(mods) != GhosttyNative.MODS_CTRL)
+        {
+            _hoverX = x;
+            _hoverY = y;
+            _hoverHadCtrl = false;
+            SetHoverUrl(null);
+            return;
+        }
+
+        if (_hoverUrl is not null && _hoverHadCtrl && x == _hoverX && y == _hoverY)
         {
             UpdateLinkPreview();
+            UpdateLinkUnderline();
             return;
         }
 
         _hoverX = x;
         _hoverY = y;
-        _hoverHadCtrl = ctrl;
-        if (!ctrl)
-        {
-            SetHoverUrl(null);
-            return;
-        }
+        _hoverHadCtrl = true;
 
-        string? url = null;
-        bool osc8 = false;
-        if (_config.LinkOsc8)
-        {
-            url = _session.HyperlinkAt(x, y);
-            osc8 = url is not null;
-        }
-        if (url is null && _config.LinkUrl) url = UrlAt(x, y);
-        _hoverOsc8 = osc8;
-        SetHoverUrl(url);
+        LinkTarget? link = LinkAt(x, y);
+        _hoverOsc8 = link?.Osc8 == true;
+        _hoverStartX = link?.StartX ?? -1;
+        _hoverEndX = link?.EndX ?? -1;
+        SetHoverUrl(link?.Text);
     }
 
-    /// <summary>The http(s) / www URL covering the cell, or null.</summary>
-    private string? UrlAt(ushort x, ushort y)
+    /// <summary>The OSC 8 hyperlink or matched URL/path at a viewport cell.</summary>
+    private LinkTarget? LinkAt(ushort x, ushort y)
     {
+        if (_config.LinkOsc8)
+        {
+            string? uri = _session.HyperlinkAt(x, y);
+            if (uri is not null)
+            {
+                // OSC 8 links can span many cells; underline the whole run.
+                int start = x;
+                int end = x;
+                while (start > 0 && _session.HyperlinkAt((ushort)(start - 1), y) == uri) start--;
+                while (end + 1 < _cols && _session.HyperlinkAt((ushort)(end + 1), y) == uri) end++;
+                return new LinkTarget(uri, true, true, start, end);
+            }
+        }
+
+        if (_config.LinkUrl)
+        {
+            string? url = UrlAt(x, y, out int startX, out int endX, out bool isUrl);
+            if (url is not null) return new LinkTarget(url, false, isUrl, startX, endX);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The URL or file path covering the cell, matching Ghostty's default matcher. The row is
+    /// mapped cell-by-cell: a grapheme can be more than one UTF-16 unit, so a plain string
+    /// index would drift and report the wrong cell.
+    /// </summary>
+    private string? UrlAt(ushort x, ushort y, out int startCell, out int endCell, out bool isUrl)
+    {
+        startCell = -1;
+        endCell = -1;
+        isUrl = false;
+
         _session.UpdateRenderState();
         string[]? row = _session.RowCells(y);
         if (row is null || x >= row.Length) return null;
 
-        string text = string.Concat(row);
-        foreach (Match match in UrlPattern.Matches(text))
+        var starts = new int[row.Length + 1];
+        var text = new System.Text.StringBuilder();
+        for (int i = 0; i < row.Length; i++)
         {
-            if (x < match.Index || x >= match.Index + match.Length) continue;
-
-            string value = match.Value.TrimEnd('.', ',', ';', ':', ')', ']', '}', '>', '\'', '"');
-            return value.StartsWith("www.", StringComparison.OrdinalIgnoreCase)
-                ? "https://" + value
-                : value;
+            starts[i] = text.Length;
+            text.Append(row[i]);
         }
+        starts[row.Length] = text.Length;
+
+        try
+        {
+            foreach (Match match in UrlPattern.Matches(text.ToString()))
+            {
+                int matchStart = match.Index;
+                int matchEnd = match.Index + match.Length;
+
+                int first = -1;
+                int last = -1;
+                for (int i = 0; i < row.Length; i++)
+                {
+                    if (starts[i + 1] <= matchStart || starts[i] >= matchEnd) continue;
+                    if (first < 0) first = i;
+                    last = i;
+                }
+                if (first < 0 || x < first || x > last) continue;
+
+                string value = match.Value;
+                isUrl = UrlSchemePattern.IsMatch(value) ||
+                        value.StartsWith("www.", StringComparison.OrdinalIgnoreCase);
+                if (value.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
+                    value = "https://" + value;
+
+                startCell = first;
+                endCell = last;
+                return value;
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // A pathological row must not stall the pointer; treat it as plain text.
+        }
+
         return null;
     }
 
     private void SetHoverUrl(string? url)
     {
         _hoverUrl = url;
+        if (url is null)
+        {
+            _hoverOsc8 = false;
+            _hoverStartX = -1;
+            _hoverEndX = -1;
+        }
         UpdateLinkPreview();
+        UpdateLinkUnderline();
+        _canvasHost?.ShowHand(url is not null);
     }
 
     /// <summary>
@@ -3287,6 +3512,54 @@ public sealed class TerminalPane
         if (top + 28 > _canvas.Margin.Top + _canvas.ActualHeight)
             top = Math.Max(4, _canvas.Margin.Top + _hoverPoint.Y - 32);
         _linkPreview.Margin = new Thickness(left, top, 0, 0);
+    }
+
+    /// <summary>Draws Ghostty's hover underline across the link's cell run.</summary>
+    private void UpdateLinkUnderline()
+    {
+        if (_linkUnderline is null) return;
+
+        CellMetrics metrics = _renderer.CellMetrics;
+        if (_hoverUrl is null || !_pointerInside || _hoverStartX < 0 ||
+            _hoverEndX < _hoverStartX || metrics.Width == 0 || metrics.Height == 0)
+        {
+            _linkUnderline.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        double left = _canvas.Margin.Left + _hoverStartX * (double)_renderer.CellAdvanceX;
+        double top = _canvas.Margin.Top + _hoverY * (double)metrics.Height + metrics.Height - 1.5;
+        _linkUnderline.Margin = new Thickness(left, top, 0, 0);
+        _linkUnderline.Width = Math.Max(1.0,
+            (_hoverEndX - _hoverStartX + 1) * (double)_renderer.CellAdvanceX);
+        _linkUnderline.Height = 1.5;
+        _linkUnderline.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Ghostty resolves a relative path match against the terminal's working directory and
+    /// only uses the result when it exists; everything else goes to the opener unchanged.
+    /// </summary>
+    private string ResolveForOpening(string text)
+    {
+        if (System.IO.Path.IsPathRooted(text)) return text;
+
+        string directory = WorkingDirectory();
+        if (string.IsNullOrEmpty(directory)) return text;
+
+        try
+        {
+            string resolved = System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, text));
+            if (System.IO.File.Exists(resolved) || System.IO.Directory.Exists(resolved))
+                return resolved;
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or
+                                          System.IO.PathTooLongException)
+        {
+            // Not something the file system can resolve; open the raw match instead.
+        }
+
+        return text;
     }
 
     private static void OpenLink(string url)

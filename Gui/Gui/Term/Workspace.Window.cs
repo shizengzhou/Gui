@@ -490,8 +490,27 @@ public sealed partial class Workspace
         return mods;
     }
 
+    private static bool IsModifierKey(VirtualKey key) =>
+        key is VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu or
+            VirtualKey.LeftWindows or VirtualKey.RightWindows;
+
+    /// <summary>
+    /// Ghostty refreshes link hover when the modifiers change, even if the pointer never
+    /// moves, so a Ctrl press or release takes effect over the cell already under the cursor.
+    /// </summary>
+    private void RefreshLinkHovers()
+    {
+        foreach (Tab tab in _tabs)
+        {
+            if (tab.Root is not null) VisitPanes(tab.Root, pane => pane.RefreshLinkHover());
+        }
+    }
+
     private bool OnKey(KeyRoutedEventArgs args)
     {
+        // Modifier changes affect the link under a stationary pointer.
+        if (IsModifierKey(args.Key)) RefreshLinkHovers();
+
         // Esc aborts a split drag before any other shortcut or the shell sees the key.
         if (_dragPane is not null && args.Key == VirtualKey.Escape)
         {

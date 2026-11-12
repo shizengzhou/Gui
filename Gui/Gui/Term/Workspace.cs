@@ -1317,6 +1317,12 @@ public sealed partial class Workspace
             if (OnKey(args)) args.Handled = true;
         }), true);
 
+        // Releasing Ctrl (or another modifier) changes which links are highlightable.
+        _root.AddHandler(UIElement.PreviewKeyUpEvent, new KeyEventHandler((_, args) =>
+        {
+            if (IsModifierKey(args.Key)) RefreshLinkHovers();
+        }), true);
+
         // Clicking away ends the composition but the IME finalizes it as the raw pinyin; a
         // terminal discards that text instead of sending it to the shell.
         _root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) =>
