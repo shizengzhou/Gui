@@ -25,6 +25,12 @@ internal static unsafe class GhosttyNative
     internal const int OPT_COLOR_BACKGROUND = 12;
     internal const int OPT_COLOR_CURSOR = 13;
     internal const int OPT_COLOR_PALETTE = 14;
+    internal const int OPT_KITTY_IMAGE_STORAGE_LIMIT = 15;
+    internal const int OPT_KITTY_IMAGE_MEDIUM_FILE = 16;
+    internal const int OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE = 17;
+    internal const int OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM = 18;
+    internal const int OPT_APC_MAX_BYTES = 19;
+    internal const int OPT_APC_MAX_BYTES_KITTY = 20;
     internal const int OPT_SELECTION = 21;
     internal const int OPT_PWD_CHANGED = 25;
     internal const int OPT_CLIPBOARD_WRITE = 26;
@@ -74,6 +80,7 @@ internal static unsafe class GhosttyNative
     internal const int TDATA_SCROLLBAR = 9;
     internal const int TDATA_TITLE = 12;
     internal const int TDATA_PWD = 13;
+    internal const int TDATA_KITTY_GRAPHICS = 30;
     internal const int TDATA_SELECTION = 31;
     internal const int TDATA_MODE = 37;
 
@@ -95,6 +102,59 @@ internal static unsafe class GhosttyNative
     internal const int RS_CURSOR_VIEWPORT_WIDE_TAIL = 17;
     internal const int RS_CURSOR = 18;
     internal const int RS_COLORS = 19;
+    internal const int RS_IMAGE_ITERATOR = 22;
+    internal const int RS_IMAGE_PLACEMENTS_GENERATION = 23;
+
+    // ---- GhosttyRenderStateImageData ----
+    internal const int RENDER_IMAGE_PROTOCOL = 1;
+    internal const int RENDER_IMAGE_ID = 2;
+    internal const int RENDER_IMAGE_GENERATION = 3;
+    internal const int RENDER_IMAGE_LAYER = 4;
+    internal const int RENDER_IMAGE_Z = 5;
+    internal const int RENDER_IMAGE_VIEWPORT_COL = 6;
+    internal const int RENDER_IMAGE_VIEWPORT_ROW = 7;
+    internal const int RENDER_IMAGE_GRID_COLS = 8;
+    internal const int RENDER_IMAGE_GRID_ROWS = 9;
+    internal const int RENDER_IMAGE_CELL_OFFSET_X = 10;
+    internal const int RENDER_IMAGE_CELL_OFFSET_Y = 11;
+    internal const int RENDER_IMAGE_PIXEL_WIDTH = 12;
+    internal const int RENDER_IMAGE_PIXEL_HEIGHT = 13;
+    internal const int RENDER_IMAGE_SOURCE_X = 14;
+    internal const int RENDER_IMAGE_SOURCE_Y = 15;
+    internal const int RENDER_IMAGE_SOURCE_WIDTH = 16;
+    internal const int RENDER_IMAGE_SOURCE_HEIGHT = 17;
+
+    // ---- GhosttyImageProtocol ----
+    internal const int IMAGE_PROTOCOL_KITTY = 0;
+
+    // ---- GhosttyRenderStateImageLayer ----
+    internal const int IMAGE_LAYER_BELOW_BACKGROUND = 0;
+    internal const int IMAGE_LAYER_BELOW_TEXT = 1;
+    internal const int IMAGE_LAYER_ABOVE_TEXT = 2;
+
+    // ---- GhosttyKittyGraphicsImageData ----
+    internal const int KITTY_IMAGE_DATA_ID = 1;
+    internal const int KITTY_IMAGE_DATA_NUMBER = 2;
+    internal const int KITTY_IMAGE_DATA_WIDTH = 3;
+    internal const int KITTY_IMAGE_DATA_HEIGHT = 4;
+    internal const int KITTY_IMAGE_DATA_FORMAT = 5;
+    internal const int KITTY_IMAGE_DATA_COMPRESSION = 6;
+    internal const int KITTY_IMAGE_DATA_PTR = 7;
+    internal const int KITTY_IMAGE_DATA_LEN = 8;
+    internal const int KITTY_IMAGE_DATA_GENERATION = 9;
+
+    // ---- GhosttyKittyImageFormat ----
+    internal const int KITTY_IMAGE_FORMAT_RGB = 0;
+    internal const int KITTY_IMAGE_FORMAT_RGBA = 1;
+    internal const int KITTY_IMAGE_FORMAT_PNG = 2;
+    internal const int KITTY_IMAGE_FORMAT_GRAY_ALPHA = 3;
+    internal const int KITTY_IMAGE_FORMAT_GRAY = 4;
+
+    internal const int KITTY_IMAGE_COMPRESSION_NONE = 0;
+
+    // ---- GhosttySysOption / GhosttyBuildInfo ----
+    internal const int SYS_OPT_DECODE_PNG = 1;
+    internal const int BUILD_INFO_KITTY_GRAPHICS = 2;
 
     // ---- GhosttyRenderStateRowData ----
     internal const int ROW_DATA_CELLS = 3;
@@ -199,6 +259,19 @@ internal static unsafe class GhosttyNative
         public IntPtr Ptr;
         public nuint Cap;
         public nuint Len;
+    }
+
+    /// <summary>
+    /// Decoded PNG pixels (RGBA, row-major, no padding), allocated with
+    /// <see cref="ghostty_alloc"/> through the allocator the decoder receives.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttySysImage
+    {
+        public uint Width;
+        public uint Height;
+        public IntPtr Data;
+        public nuint DataLen;
     }
 
     /// <summary>One MIME representation in a clipboard write/read reply.</summary>
@@ -455,6 +528,15 @@ internal static unsafe class GhosttyNative
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void ClipboardFn(IntPtr terminal, IntPtr userdata, IntPtr request);
 
+    /// <summary>
+    /// PNG decoder installed with <see cref="SYS_OPT_DECODE_PNG"/>. The callback fills a
+    /// <see cref="GhosttySysImage"/> whose pixel buffer must come from <see cref="ghostty_alloc"/>.
+    /// </summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal delegate bool DecodePngFn(
+        IntPtr userdata, IntPtr allocator, IntPtr data, nuint dataLen, IntPtr output);
+
     /// <summary>OSC 7501 report: <paramref name="report"/> is a sized struct.</summary>
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void ProgramStatusFn(IntPtr terminal, IntPtr userdata, IntPtr report);
@@ -640,6 +722,21 @@ internal static unsafe class GhosttyNative
     internal static extern int ghostty_render_state_new(IntPtr allocator, out IntPtr state);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_render_state_image_iterator_new(
+        IntPtr allocator, out IntPtr iterator);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern void ghostty_render_state_image_iterator_free(IntPtr iterator);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static extern bool ghostty_render_state_image_iterator_next(IntPtr iterator);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_render_state_image_get(
+        IntPtr iterator, int data, void* output);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern void ghostty_render_state_free(IntPtr state);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -726,6 +823,28 @@ internal static unsafe class GhosttyNative
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern void ghostty_formatter_free(IntPtr formatter);
+
+    // ---- kitty graphics ----
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern IntPtr ghostty_kitty_graphics_image(IntPtr graphics, uint imageId);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_kitty_graphics_image_get(
+        IntPtr image, int data, void* output);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_kitty_graphics_animation_tick(
+        IntPtr graphics, ulong nowMs, ulong* nextMs);
+
+    // ---- sys / build info ----
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_sys_set(int option, void* value);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_build_info(int data, void* output);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern IntPtr ghostty_alloc(IntPtr allocator, nuint len);
 
     // ---- color ----
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]

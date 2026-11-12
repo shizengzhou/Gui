@@ -203,7 +203,7 @@ public static class ConfigSchema
         new("osc-color-report-format", ConfigKind.Enum, ConfigPlatform.All, "OSC color report format"),
         new("vt-kam-allowed", ConfigKind.Bool, ConfigPlatform.All, "allow KAM mode"),
         new("custom-shader", ConfigKind.List, ConfigPlatform.All, "custom GLSL shaders"),
-        new("custom-shader-animation", ConfigKind.Bool, ConfigPlatform.All, "shader animation loop"),
+        new("custom-shader-animation", ConfigKind.Text, ConfigPlatform.All, "shader animation loop"),
         new("bell-features", ConfigKind.Text, ConfigPlatform.All, "bell features"),
         new("bell-audio-path", ConfigKind.Text, ConfigPlatform.All, "bell audio file"),
         new("bell-audio-volume", ConfigKind.Float, ConfigPlatform.All, "bell volume"),

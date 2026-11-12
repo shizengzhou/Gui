@@ -136,6 +136,9 @@ public sealed class Config
     public float UnfocusedSplitOpacity = 0.7f;     // 0.15..1, Ghostty's default
     public ulong ScrollbackLimit = 50_000_000;     // bytes, Ghostty 1.4's default
     public ulong ScrollbackLimitLines = ulong.MaxValue; // rows; unlimited, Ghostty 1.4's default
+    public uint ImageStorageLimit = 320_000_000;   // bytes per screen, Ghostty 1.4's default
+    public List<string> CustomShaders = new();     // resolved GLSL paths, run in order
+    public string CustomShaderAnimation = "true";  // true, false, or always
     public string Scrollbar = "system";            // "system" (default) or "never"
     public bool HasUnfocusedSplitFill;
     public Rgb UnfocusedSplitFill;                 // empty: terminal background
@@ -425,6 +428,9 @@ public sealed class Config
         UnfocusedSplitOpacity = other.UnfocusedSplitOpacity;
         ScrollbackLimit = other.ScrollbackLimit;
         ScrollbackLimitLines = other.ScrollbackLimitLines;
+        ImageStorageLimit = other.ImageStorageLimit;
+        CustomShaders = new List<string>(other.CustomShaders);
+        CustomShaderAnimation = other.CustomShaderAnimation;
         Scrollbar = other.Scrollbar;
         HasUnfocusedSplitFill = other.HasUnfocusedSplitFill;
         UnfocusedSplitFill = other.UnfocusedSplitFill;
@@ -743,6 +749,8 @@ public sealed class Config
             // made absolute while that file's directory is still current.
             if (key is "background-image" or "bell-audio-path")
                 value = ResolvePath(value, _configDirectory);
+            else if (key == "custom-shader")
+                value = ResolveShaderPath(value);
 
             // "key = """ clears a repeatable list; an empty value for anything else is a no-op.
             if (value.Length == 0)
@@ -1053,6 +1061,10 @@ public sealed class Config
         SidebarWidthRight = ParseSidebarWidth(Last("sidebar-width-right"), SidebarWidthRight);
         ScrollbackLimit = ParseLimit(Last("scrollback-limit-bytes"), ScrollbackLimit);
         ScrollbackLimitLines = ParseLimit(Last("scrollback-limit-lines"), ScrollbackLimitLines);
+        ImageStorageLimit = (uint)Math.Min(
+            ParseLimit(Last("image-storage-limit"), ImageStorageLimit), uint.MaxValue);
+        CustomShaders = ResolveShaders(All("custom-shader"));
+        CustomShaderAnimation = ParseShaderAnimation(Last("custom-shader-animation"));
         Scrollbar = (Last("scrollbar") ?? string.Empty).Trim().ToLowerInvariant() == "never"
             ? "never"
             : "system";
@@ -1394,6 +1406,60 @@ public sealed class Config
             return string.Empty;
         }
     }
+
+    /// <summary>
+    /// "custom-shader" paths are made absolute while the including file's directory is
+    /// current. "?" keeps the entry optional without becoming part of the filename.
+    /// </summary>
+    private string ResolveShaderPath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return value;
+        bool optional = value.StartsWith("?", StringComparison.Ordinal);
+        string path = optional ? value[1..] : value;
+        string resolved = ResolvePath(path, _configDirectory);
+        return optional ? "?" + resolved : resolved;
+    }
+
+    /// <summary>
+    /// "custom-shader" is repeatable. A leading "?" makes a missing file optional; any other
+    /// missing file is reported so a typo is visible in the diagnostics.
+    /// </summary>
+    private List<string> ResolveShaders(IEnumerable<string> values)
+    {
+        var paths = new List<string>();
+        foreach (string raw in values)
+        {
+            string entry = raw.Trim();
+            bool optional = entry.StartsWith("?", StringComparison.Ordinal);
+            if (optional) entry = entry[1..];
+            if (entry.Length == 0) continue;
+
+            string path = Path.IsPathRooted(entry) ? entry : ResolveImagePath(entry);
+            if (path.Length == 0) continue;
+            if (!File.Exists(path))
+            {
+                if (!optional)
+                {
+                    // Shader files are compiled after config loading, like Ghostty: a missing
+                    // file is a notice here, not a config warning.
+                    _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Notice,
+                        "custom-shader", "file not found: " + path));
+                }
+                continue;
+            }
+
+            paths.Add(path);
+        }
+        return paths;
+    }
+
+    private static string ParseShaderAnimation(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            "false" or "off" or "never" => "false",
+            "always" => "always",
+            _ => "true",
+        };
 
     /// <summary>The nine Ghostty position anchors; anything else falls back to center.</summary>
     private static string NormalizeImagePosition(string? value)

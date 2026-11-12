@@ -73,6 +73,7 @@ internal static class Program
             CheckXtChecksumSmoke();
             CheckDesktopNotificationSmoke();
             CheckSearchSmoke();
+            CheckKittyGraphicsSmoke();
             CheckSnapshotSmoke();
         }
         catch (Exception error)
@@ -160,6 +161,9 @@ internal static class Program
             new FieldMap("Ptr", "ptr"), new FieldMap("Len", "len")),
         new(typeof(GhosttyNative.GhosttyBuffer), "GhosttyBuffer",
             new FieldMap("Ptr", "ptr"), new FieldMap("Cap", "cap"), new FieldMap("Len", "len")),
+        new(typeof(GhosttyNative.GhosttySysImage), "GhosttySysImage",
+            new FieldMap("Width", "width"), new FieldMap("Height", "height"),
+            new FieldMap("Data", "data"), new FieldMap("DataLen", "data_len")),
         new(typeof(GhosttyNative.GhosttyClipboardContent), "GhosttyClipboardContent",
             new FieldMap("Mime", "mime"), new FieldMap("Data", "data")),
         new(typeof(GhosttyNative.GhosttyClipboardWrite), "GhosttyClipboardWrite",
@@ -377,6 +381,12 @@ internal static class Program
         new("OPT_COLOR_BACKGROUND", "GhosttyTerminalOption", "COLOR_BACKGROUND"),
         new("OPT_COLOR_CURSOR", "GhosttyTerminalOption", "COLOR_CURSOR"),
         new("OPT_COLOR_PALETTE", "GhosttyTerminalOption", "COLOR_PALETTE"),
+        new("OPT_KITTY_IMAGE_STORAGE_LIMIT", "GhosttyTerminalOption", "KITTY_IMAGE_STORAGE_LIMIT"),
+        new("OPT_KITTY_IMAGE_MEDIUM_FILE", "GhosttyTerminalOption", "KITTY_IMAGE_MEDIUM_FILE"),
+        new("OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE", "GhosttyTerminalOption", "KITTY_IMAGE_MEDIUM_TEMP_FILE"),
+        new("OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM", "GhosttyTerminalOption", "KITTY_IMAGE_MEDIUM_SHARED_MEM"),
+        new("OPT_APC_MAX_BYTES", "GhosttyTerminalOption", "APC_MAX_BYTES"),
+        new("OPT_APC_MAX_BYTES_KITTY", "GhosttyTerminalOption", "APC_MAX_BYTES_KITTY"),
         new("OPT_SELECTION", "GhosttyTerminalOption", "SELECTION"),
         new("OPT_PWD_CHANGED", "GhosttyTerminalOption", "PWD_CHANGED"),
         new("OPT_CLIPBOARD_WRITE", "GhosttyTerminalOption", "CLIPBOARD_WRITE"),
@@ -419,6 +429,7 @@ internal static class Program
         new("TDATA_SCROLLBAR", "GhosttyTerminalData", "SCROLLBAR"),
         new("TDATA_TITLE", "GhosttyTerminalData", "TITLE"),
         new("TDATA_PWD", "GhosttyTerminalData", "PWD"),
+        new("TDATA_KITTY_GRAPHICS", "GhosttyTerminalData", "KITTY_GRAPHICS"),
         new("TDATA_SELECTION", "GhosttyTerminalData", "SELECTION"),
         new("TDATA_MODE", "GhosttyTerminalData", "MODE"),
 
@@ -439,6 +450,51 @@ internal static class Program
         new("RS_CURSOR_VIEWPORT_WIDE_TAIL", "GhosttyRenderStateData", "CURSOR_VIEWPORT_WIDE_TAIL"),
         new("RS_CURSOR", "GhosttyRenderStateData", "CURSOR"),
         new("RS_COLORS", "GhosttyRenderStateData", "COLORS"),
+        new("RS_IMAGE_ITERATOR", "GhosttyRenderStateData", "IMAGE_ITERATOR"),
+        new("RS_IMAGE_PLACEMENTS_GENERATION", "GhosttyRenderStateData", "IMAGE_PLACEMENTS_GENERATION"),
+
+        new("RENDER_IMAGE_PROTOCOL", "GhosttyRenderStateImageData", "PROTOCOL"),
+        new("RENDER_IMAGE_ID", "GhosttyRenderStateImageData", "IMAGE_ID"),
+        new("RENDER_IMAGE_GENERATION", "GhosttyRenderStateImageData", "IMAGE_GENERATION"),
+        new("RENDER_IMAGE_LAYER", "GhosttyRenderStateImageData", "LAYER"),
+        new("RENDER_IMAGE_Z", "GhosttyRenderStateImageData", "Z"),
+        new("RENDER_IMAGE_VIEWPORT_COL", "GhosttyRenderStateImageData", "VIEWPORT_COL"),
+        new("RENDER_IMAGE_VIEWPORT_ROW", "GhosttyRenderStateImageData", "VIEWPORT_ROW"),
+        new("RENDER_IMAGE_GRID_COLS", "GhosttyRenderStateImageData", "GRID_COLS"),
+        new("RENDER_IMAGE_GRID_ROWS", "GhosttyRenderStateImageData", "GRID_ROWS"),
+        new("RENDER_IMAGE_CELL_OFFSET_X", "GhosttyRenderStateImageData", "CELL_OFFSET_X"),
+        new("RENDER_IMAGE_CELL_OFFSET_Y", "GhosttyRenderStateImageData", "CELL_OFFSET_Y"),
+        new("RENDER_IMAGE_PIXEL_WIDTH", "GhosttyRenderStateImageData", "PIXEL_WIDTH"),
+        new("RENDER_IMAGE_PIXEL_HEIGHT", "GhosttyRenderStateImageData", "PIXEL_HEIGHT"),
+        new("RENDER_IMAGE_SOURCE_X", "GhosttyRenderStateImageData", "SOURCE_X"),
+        new("RENDER_IMAGE_SOURCE_Y", "GhosttyRenderStateImageData", "SOURCE_Y"),
+        new("RENDER_IMAGE_SOURCE_WIDTH", "GhosttyRenderStateImageData", "SOURCE_WIDTH"),
+        new("RENDER_IMAGE_SOURCE_HEIGHT", "GhosttyRenderStateImageData", "SOURCE_HEIGHT"),
+
+        new("IMAGE_PROTOCOL_KITTY", "GhosttyImageProtocol", "KITTY"),
+        new("IMAGE_LAYER_BELOW_BACKGROUND", "GhosttyRenderStateImageLayer", "BELOW_BACKGROUND"),
+        new("IMAGE_LAYER_BELOW_TEXT", "GhosttyRenderStateImageLayer", "BELOW_TEXT"),
+        new("IMAGE_LAYER_ABOVE_TEXT", "GhosttyRenderStateImageLayer", "ABOVE_TEXT"),
+
+        new("KITTY_IMAGE_DATA_ID", "GhosttyKittyGraphicsImageData", "ID"),
+        new("KITTY_IMAGE_DATA_NUMBER", "GhosttyKittyGraphicsImageData", "NUMBER"),
+        new("KITTY_IMAGE_DATA_WIDTH", "GhosttyKittyGraphicsImageData", "WIDTH"),
+        new("KITTY_IMAGE_DATA_HEIGHT", "GhosttyKittyGraphicsImageData", "HEIGHT"),
+        new("KITTY_IMAGE_DATA_FORMAT", "GhosttyKittyGraphicsImageData", "FORMAT"),
+        new("KITTY_IMAGE_DATA_COMPRESSION", "GhosttyKittyGraphicsImageData", "COMPRESSION"),
+        new("KITTY_IMAGE_DATA_PTR", "GhosttyKittyGraphicsImageData", "DATA_PTR"),
+        new("KITTY_IMAGE_DATA_LEN", "GhosttyKittyGraphicsImageData", "DATA_LEN"),
+        new("KITTY_IMAGE_DATA_GENERATION", "GhosttyKittyGraphicsImageData", "GENERATION"),
+
+        new("KITTY_IMAGE_FORMAT_RGB", "GhosttyKittyImageFormat", "RGB"),
+        new("KITTY_IMAGE_FORMAT_RGBA", "GhosttyKittyImageFormat", "RGBA"),
+        new("KITTY_IMAGE_FORMAT_PNG", "GhosttyKittyImageFormat", "PNG"),
+        new("KITTY_IMAGE_FORMAT_GRAY_ALPHA", "GhosttyKittyImageFormat", "GRAY_ALPHA"),
+        new("KITTY_IMAGE_FORMAT_GRAY", "GhosttyKittyImageFormat", "GRAY"),
+        new("KITTY_IMAGE_COMPRESSION_NONE", "GhosttyKittyImageCompression", "NONE"),
+
+        new("SYS_OPT_DECODE_PNG", "GhosttySysOption", "DECODE_PNG"),
+        new("BUILD_INFO_KITTY_GRAPHICS", "GhosttyBuildInfo", "KITTY_GRAPHICS"),
 
         new("ROW_DATA_CELLS", "GhosttyRenderStateRowData", "CELLS"),
         new("ROW_DATA_SELECTION", "GhosttyRenderStateRowData", "SELECTION"),
@@ -1120,6 +1176,171 @@ internal static class Program
     }
 
     /// <summary>
+    /// End-to-end Kitty graphics check: a raw RGB image travels through the same APC stream
+    /// the app feeds to libghostty-vt, then is read back through the render state's image
+    /// iterator and from the image storage.
+    /// </summary>
+    private static unsafe void CheckKittyGraphicsSmoke()
+    {
+        Section("kitty graphics smoke");
+
+        byte compiled = 0;
+        Check("kitty graphics compiled in",
+            GhosttyNative.ghostty_build_info(GhosttyNative.BUILD_INFO_KITTY_GRAPHICS, &compiled)
+                == GhosttyNative.SUCCESS && compiled != 0);
+        if (compiled == 0) return;
+
+        if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out IntPtr terminal, 80, 24) != GhosttyNative.SUCCESS)
+        {
+            Check("terminal created", false);
+            return;
+        }
+
+        IntPtr state = IntPtr.Zero;
+        IntPtr iterator = IntPtr.Zero;
+        try
+        {
+            ulong limit = 10_000_000;
+            Check("storage limit accepted",
+                GhosttyNative.ghostty_terminal_set(
+                    terminal, GhosttyNative.OPT_KITTY_IMAGE_STORAGE_LIMIT, &limit) == GhosttyNative.SUCCESS);
+            Check("cell metrics accepted",
+                GhosttyNative.ghostty_terminal_resize(terminal, 80, 24, 8, 16) == GhosttyNative.SUCCESS);
+
+            // 2x2 RGB displayed over two columns and rows; red, green, blue, white.
+            VtWrite(terminal, "\u001b_Ga=T,f=24,s=2,v=2,i=1,c=2,r=2;/wAAAP8AAAD/////\u001b\\");
+
+            Check("render state created",
+                GhosttyNative.ghostty_render_state_new(IntPtr.Zero, out state) == GhosttyNative.SUCCESS);
+            Check("render state updated",
+                GhosttyNative.ghostty_render_state_update(state, terminal) == GhosttyNative.SUCCESS);
+
+            ulong generation = 0;
+            Check("placement generation readable",
+                GhosttyNative.ghostty_render_state_get(
+                    state, GhosttyNative.RS_IMAGE_PLACEMENTS_GENERATION, &generation)
+                == GhosttyNative.SUCCESS && generation != 0, $"generation {generation}");
+
+            Check("image iterator created",
+                GhosttyNative.ghostty_render_state_image_iterator_new(IntPtr.Zero, out iterator)
+                == GhosttyNative.SUCCESS);
+            Check("image iterator bound",
+                GhosttyNative.ghostty_render_state_get(
+                    state, GhosttyNative.RS_IMAGE_ITERATOR, &iterator) == GhosttyNative.SUCCESS);
+
+            if (Check("image placement exists",
+                    GhosttyNative.ghostty_render_state_image_iterator_next(iterator)))
+            {
+                int protocol = -1, layer = -1, col = -1, row = -1;
+                uint imageId = 0, pixelWidth = 0, pixelHeight = 0;
+                uint sourceX = 0, sourceY = 0, sourceWidth = 0, sourceHeight = 0;
+
+                Check("placement protocol is kitty",
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_PROTOCOL, &protocol) == GhosttyNative.SUCCESS &&
+                    protocol == GhosttyNative.IMAGE_PROTOCOL_KITTY, $"protocol {protocol}");
+                Check("placement image id",
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_ID, &imageId) == GhosttyNative.SUCCESS &&
+                    imageId == 1, $"id {imageId}");
+                Check("placement layer",
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_LAYER, &layer) == GhosttyNative.SUCCESS &&
+                    layer >= GhosttyNative.IMAGE_LAYER_BELOW_BACKGROUND &&
+                    layer <= GhosttyNative.IMAGE_LAYER_ABOVE_TEXT, $"layer {layer}");
+                Check("placement cell",
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_VIEWPORT_COL, &col) == GhosttyNative.SUCCESS &&
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_VIEWPORT_ROW, &row) == GhosttyNative.SUCCESS &&
+                    col == 0 && row == 0, $"col {col} row {row}");
+                Check("placement pixel size",
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_PIXEL_WIDTH, &pixelWidth) == GhosttyNative.SUCCESS &&
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_PIXEL_HEIGHT, &pixelHeight) == GhosttyNative.SUCCESS &&
+                    pixelWidth == 16 && pixelHeight == 32, $"{pixelWidth}x{pixelHeight}");
+                Check("placement source rect",
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_SOURCE_X, &sourceX) == GhosttyNative.SUCCESS &&
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_SOURCE_Y, &sourceY) == GhosttyNative.SUCCESS &&
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_SOURCE_WIDTH, &sourceWidth) == GhosttyNative.SUCCESS &&
+                    GhosttyNative.ghostty_render_state_image_get(
+                        iterator, GhosttyNative.RENDER_IMAGE_SOURCE_HEIGHT, &sourceHeight) == GhosttyNative.SUCCESS &&
+                    sourceX == 0 && sourceY == 0 && sourceWidth == 2 && sourceHeight == 2,
+                    $"{sourceX},{sourceY} {sourceWidth}x{sourceHeight}");
+            }
+            Check("no second placement",
+                !GhosttyNative.ghostty_render_state_image_iterator_next(iterator));
+
+            IntPtr graphics = IntPtr.Zero;
+            Check("graphics storage readable",
+                GhosttyNative.ghostty_terminal_get(
+                    terminal, GhosttyNative.TDATA_KITTY_GRAPHICS, &graphics) == GhosttyNative.SUCCESS &&
+                graphics != IntPtr.Zero);
+            if (graphics != IntPtr.Zero)
+            {
+                ulong nextFrame = 0;
+                Check("animation tick reports no playback",
+                    GhosttyNative.ghostty_kitty_graphics_animation_tick(graphics, 0, &nextFrame)
+                    == GhosttyNative.NO_VALUE, $"next {nextFrame}");
+            }
+
+            IntPtr image = graphics == IntPtr.Zero
+                ? IntPtr.Zero
+                : GhosttyNative.ghostty_kitty_graphics_image(graphics, 1);
+            Check("image lookup", image != IntPtr.Zero);
+
+            if (image != IntPtr.Zero)
+            {
+                uint width = 0, height = 0;
+                int format = -1;
+                IntPtr pixels = IntPtr.Zero;
+                nuint length = 0;
+
+                Check("image width",
+                    GhosttyNative.ghostty_kitty_graphics_image_get(
+                        image, GhosttyNative.KITTY_IMAGE_DATA_WIDTH, &width) == GhosttyNative.SUCCESS &&
+                    width == 2, $"{width}");
+                Check("image height",
+                    GhosttyNative.ghostty_kitty_graphics_image_get(
+                        image, GhosttyNative.KITTY_IMAGE_DATA_HEIGHT, &height) == GhosttyNative.SUCCESS &&
+                    height == 2, $"{height}");
+                Check("image format is RGB",
+                    GhosttyNative.ghostty_kitty_graphics_image_get(
+                        image, GhosttyNative.KITTY_IMAGE_DATA_FORMAT, &format) == GhosttyNative.SUCCESS &&
+                    format == GhosttyNative.KITTY_IMAGE_FORMAT_RGB, $"format {format}");
+                Check("image pixels readable",
+                    GhosttyNative.ghostty_kitty_graphics_image_get(
+                        image, GhosttyNative.KITTY_IMAGE_DATA_PTR, &pixels) == GhosttyNative.SUCCESS &&
+                    GhosttyNative.ghostty_kitty_graphics_image_get(
+                        image, GhosttyNative.KITTY_IMAGE_DATA_LEN, &length) == GhosttyNative.SUCCESS &&
+                    pixels != IntPtr.Zero && length == 12, $"length {length}");
+
+                if (pixels != IntPtr.Zero && length >= 12)
+                {
+                    var data = new byte[12];
+                    Marshal.Copy(pixels, data, 0, data.Length);
+                    Check("image pixels are red/green/blue/white",
+                        data[0] == 255 && data[1] == 0 && data[2] == 0 &&
+                        data[3] == 0 && data[4] == 255 && data[5] == 0 &&
+                        data[6] == 0 && data[7] == 0 && data[8] == 255 &&
+                        data[9] == 255 && data[10] == 255 && data[11] == 255);
+                }
+            }
+        }
+        finally
+        {
+            if (iterator != IntPtr.Zero)
+                GhosttyNative.ghostty_render_state_image_iterator_free(iterator);
+            if (state != IntPtr.Zero) GhosttyNative.ghostty_render_state_free(state);
+            GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>
     /// Drives the snapshot encoder/decoder through the same P/Invoke surface the app uses for
     /// "window-save-state": history written before the encode must come back after the decode.
     /// </summary>
@@ -1200,7 +1421,7 @@ internal static class Program
     private static void Equal(string what, int expected, int actual) =>
         Check(what, expected == actual, $"expected {expected}, got {actual}");
 
-    private static void Check(string what, bool ok, string detail = "")
+    private static bool Check(string what, bool ok, string detail = "")
     {
         _checks++;
         if (ok)
@@ -1212,5 +1433,6 @@ internal static class Program
             _failures++;
             Console.WriteLine($"  FAIL {what} {detail}");
         }
+        return ok;
     }
 }

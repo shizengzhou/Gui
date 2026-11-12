@@ -76,6 +76,8 @@ public sealed class TerminalPane
     private readonly DispatcherQueue? _dispatcher;
     private DispatcherQueueTimer? _blinkTimer;
     private DispatcherQueueTimer? _cwdTimer;
+    private DispatcherQueueTimer? _imageTimer;
+    private DispatcherQueueTimer? _shaderTimer;
 
     private string _workingDirectory;
     private string _shellIconPath = string.Empty;
@@ -272,6 +274,7 @@ public sealed class TerminalPane
         _session = new TerminalSession(snapshot);
         _session.SetScrollbackLimit(config.ScrollbackLimit);
         _session.SetScrollbackLimitLines(config.ScrollbackLimitLines);
+        _session.SetKittyImageStorageLimit(config.ImageStorageLimit);
         _session.SetTitleReport(config.TitleReport);
         _session.SetEnquiryResponse(config.EnquiryResponse);
         _session.SetOscColorReportFormat(config.OscColorReportFormat);
@@ -743,6 +746,24 @@ public sealed class TerminalPane
             _searchTimer.Interval = TimeSpan.FromMilliseconds(25);
             _searchTimer.Tick += (_, _) => Diag.Guard("pane.search", StepSearch);
 
+            // One-shot chain for Kitty animations: each draw asks the library when the next
+            // frame is due, and the timer brings the pane back at that time.
+            _imageTimer = _dispatcher.CreateTimer();
+            _imageTimer.IsRepeating = false;
+            _imageTimer.Tick += (_, _) => Diag.Guard("pane.image", () =>
+            {
+                if (!_closed) Redraw();
+            });
+
+            // "custom-shader-animation": a fixed frame cadence for iTime-driven shaders.
+            _shaderTimer = _dispatcher.CreateTimer();
+            _shaderTimer.Interval = TimeSpan.FromMilliseconds(16);
+            _shaderTimer.IsRepeating = true;
+            _shaderTimer.Tick += (_, _) => Diag.Guard("pane.shader", () =>
+            {
+                if (!_closed) Redraw();
+            });
+
             // The injected PowerShell shell integration reports its location over OSC 7
             // (see Term/ShellIntegration.cs); cmd.exe has no such report, so the shell
             // process itself is polled as the fallback and mirrored in the header.
@@ -757,6 +778,7 @@ public sealed class TerminalPane
             _selectScrollTimer.Tick += (_, _) => Diag.Guard("pane.selectscroll", StepSelectionScroll);
         }
 
+        UpdateShaderAnimation();
         ApplyFocusState();
 
         // A background tab's shell is started only when the tab is opened, but its chip still
@@ -1587,7 +1609,13 @@ public sealed class TerminalPane
         _searchTimer?.Stop();
         _searchTimer = null;
         _searchActive = false;
+        _imageTimer?.Stop();
+        _imageTimer = null;
+        _shaderTimer?.Stop();
+        _shaderTimer = null;
         _renderer.SetSearchSpans(null);
+        _renderer.DisposeImages();
+        _renderer.DisposeShaders();
         _blinkTimer?.Stop();
         _blinkTimer = null;
         StopSelectionScroll();
@@ -1665,8 +1693,29 @@ public sealed class TerminalPane
                 $"cursor={_cursorOn}");
         }
         // A throw here escapes into XAML's draw callback, which fail-fasts the process.
-        Diag.Guard("pane.draw", () => _renderer.Render(args.DrawingSession, _session, _cursorOn, true,
-            (float)sender.ActualWidth, (float)sender.ActualHeight));
+        Diag.Guard("pane.draw", () =>
+        {
+            // Advancing the animation has to happen before the render state is read.
+            ScheduleImageFrame(_session.TickKittyAnimation());
+            _renderer.Render(args.DrawingSession, _session, _cursorOn, true,
+                (float)sender.ActualWidth, (float)sender.ActualHeight, sender);
+        });
+    }
+
+    /// <summary>Brings the pane back when the next Kitty animation frame is due.</summary>
+    private void ScheduleImageFrame(ulong nextMs)
+    {
+        if (_imageTimer is null) return;
+        if (nextMs == 0)
+        {
+            _imageTimer.Stop();
+            return;
+        }
+
+        ulong now = (ulong)Environment.TickCount64;
+        double delay = nextMs > now ? nextMs - now : 1;
+        _imageTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(delay, 1, 1000));
+        if (!_imageTimer.IsRunning) _imageTimer.Start();
     }
 
     // ---------------- layout ----------------
@@ -1796,6 +1845,7 @@ public sealed class TerminalPane
         LaidOut = true;
         // Capture the frames right after a layout in the draw log.
         _drawBudget = 40;
+        _renderer.PrepareShaderTarget((float)width, (float)height);
         if (!force && cols == _cols && rows == _rows) return;
 
         Diag.Debug("pane.layout",
@@ -1970,6 +2020,8 @@ public sealed class TerminalPane
         if (_focused == focused) return;
         _focused = focused;
         Diag.Debug("pane.focus", $"focused={focused}");
+        _renderer.SetFocused(focused);
+        UpdateShaderAnimation();
         if (focused)
         {
             ClearBellState();
@@ -2061,8 +2113,29 @@ public sealed class TerminalPane
         _fontSizeDip = _config.FontSizeDip;
         _renderer.SetRasterizationScale(RasterizationScale);
         _renderer.ApplyConfig(_config);
+        UpdateShaderAnimation();
         Layout();
         Redraw();
+    }
+
+    /// <summary>
+    /// Starts or stops the custom-shader animation cadence. Ghostty only animates a focused
+    /// surface unless "custom-shader-animation = always" asks for every pane.
+    /// </summary>
+    private void UpdateShaderAnimation()
+    {
+        if (_shaderTimer is null) return;
+        bool always = _config.CustomShaderAnimation == "always";
+        bool animate = _renderer.HasCustomShaders && _config.CustomShaderAnimation != "false" &&
+            (always || _focused);
+        if (animate)
+        {
+            if (!_shaderTimer.IsRunning) _shaderTimer.Start();
+        }
+        else
+        {
+            _shaderTimer.Stop();
+        }
     }
 
     /// <summary>
@@ -2075,6 +2148,10 @@ public sealed class TerminalPane
         _session.SetScrollbackLimitLines(_config.ScrollbackLimitLines);
         UpdateScrollbar();
     }
+
+    /// <summary>Re-applies "image-storage-limit" after a config reload.</summary>
+    public void ApplyImageSettings() =>
+        _session.SetKittyImageStorageLimit(_config.ImageStorageLimit);
 
     /// <summary>Re-applies the program-query options after a config reload.</summary>
     public void ApplyProgramQueries()

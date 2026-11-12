@@ -2,12 +2,15 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI.Text;
 using Windows.Foundation;
+using Windows.Graphics.DirectX;
 using Windows.UI;
 
 namespace Gui.Term;
@@ -75,6 +78,91 @@ public sealed unsafe class TerminalRenderer
     /// <summary>"background-image": decoded once and redrawn every frame.</summary>
     private CanvasBitmap? _backgroundImage;
     private string _backgroundImagePath = string.Empty;
+
+    /// <summary>Kitty graphics placements read from the current render state.</summary>
+    private readonly List<ImagePlacement> _imagePlacements = new();
+
+    /// <summary>Reused sort scratch for one image layer; never holds data across frames.</summary>
+    private readonly List<ImagePlacement> _imageQueue = new();
+
+    /// <summary>Uploaded Kitty images, keyed by image ID and invalidated by generation.</summary>
+    private readonly Dictionary<uint, ImageTexture> _imageTextures = new();
+    private IntPtr _imageIterator;
+    private int _imageFrame;
+
+    /// <summary>One image rectangle in viewport coordinates, in the library's pixel units.</summary>
+    private readonly record struct ImagePlacement(
+        uint ImageId,
+        ulong Generation,
+        int Layer,
+        int Z,
+        int ViewportCol,
+        int ViewportRow,
+        uint OffsetX,
+        uint OffsetY,
+        uint PixelWidth,
+        uint PixelHeight,
+        uint SourceX,
+        uint SourceY,
+        uint SourceWidth,
+        uint SourceHeight);
+
+    private sealed class ImageTexture
+    {
+        public required CanvasBitmap Bitmap;
+        public ulong Generation;
+        public int LastFrame;
+    }
+
+    // ---------------- custom shaders ----------------
+
+    /// <summary>Compiled "custom-shader" effects, applied after the terminal scene is drawn.</summary>
+    private readonly List<ShaderStage> _shaderEffects = new();
+    private readonly List<string> _shaderPaths = new();
+    private long _shaderStamp;
+
+    private sealed class ShaderStage
+    {
+        public required PixelShaderEffect Effect;
+        public bool UsesChannel0;
+    }
+
+    /// <summary>The offscreen scene that feeds the first shader.</summary>
+    private CanvasRenderTarget? _shaderTarget;
+    private float _shaderTargetWidth;
+    private float _shaderTargetHeight;
+    private float _shaderTargetDpi;
+
+    /// <summary>Property names D2D rejected, so they are not retried every frame.</summary>
+    private readonly HashSet<string> _shaderUnsupported = new(StringComparer.Ordinal);
+
+    /// <summary>True while at least one custom shader compiled successfully.</summary>
+    public bool HasCustomShaders => _shaderEffects.Count > 0;
+
+    private long _shaderStartTicks;
+    private float _shaderLastTime;
+    private int _shaderFrame;
+    private bool _shaderFocused;
+    private float _shaderFocusTime;
+    private float _shaderCursorChangeTime;
+
+    // Shader uniforms use Ghostty's -X, +Y corner convention, in physical pixels.
+    private Vector4 _shaderCursor = new(-1, -1, 0, 0);
+    private Vector4 _shaderPreviousCursor = new(-1, -1, 0, 0);
+    private Vector4 _shaderCursorColor;
+    private Vector4 _shaderPreviousCursorColor;
+    private int _shaderCursorStyle;
+    private int _shaderPreviousCursorStyle;
+    private int _shaderCursorVisible;
+    private int _shaderPreviousCursorVisible = -1;
+    private Vector3 _shaderBackground;
+    private Vector3 _shaderForeground;
+    private Vector3 _shaderCursorText;
+    private Vector3 _shaderSelectionBackground;
+    private Vector3 _shaderSelectionForeground;
+
+    private Vector3[]? _shaderPalette;
+    private TerminalTheme? _shaderPaletteTheme;
 
     /// <summary>Raised when an asynchronously loaded background image becomes available.</summary>
     public event Action? NeedsRedraw;
@@ -234,6 +322,7 @@ public sealed unsafe class TerminalRenderer
         _fontSize = config.FontSizeDip;
         BuildTypography();
         SetBackgroundImage(config.BackgroundImage);
+        RebuildShaders(config.CustomShaders);
         Rebuild();
     }
 
@@ -1001,13 +1090,21 @@ public sealed unsafe class TerminalRenderer
         public bool Wide;
     }
 
+    /// <summary>One viewport row's resolved runs, kept for the background and text passes.</summary>
+    private sealed class RowRuns
+    {
+        public int ViewportY;
+        public required List<Run> Runs;
+        public bool HasSelection;
+        public GhosttyNative.GhosttyRenderStateRowSelection Selection;
+    }
+
     /// <summary>Redraws the whole viewport. <paramref name="cursorOn"/> controls the blink phase.</summary>
     public bool Render(CanvasDrawingSession ds, TerminalSession session, bool cursorOn, bool force,
-        float viewportWidth, float viewportHeight)
+        float viewportWidth, float viewportHeight, ICanvasResourceCreator resources)
     {
         IntPtr state = session.RenderState;
-        IntPtr terminal = session.Terminal;
-        if (state == IntPtr.Zero || terminal == IntPtr.Zero) return false;
+        if (state == IntPtr.Zero || session.Terminal == IntPtr.Zero) return false;
 
         // Drop stale layouts between frames, never while this frame still references them.
         if (_layouts.Count >= LayoutCacheCapacity) InvalidateLayouts();
@@ -1015,6 +1112,31 @@ public sealed unsafe class TerminalRenderer
         // The canvas clears itself before every Draw, so a frame must always be painted.
         bool changed = session.UpdateRenderState();
 
+        if (_shaderEffects.Count == 0)
+        {
+            RenderScene(ds, state, session, cursorOn, viewportWidth, viewportHeight, resources, changed);
+            return true;
+        }
+
+        EnsureShaderTarget(viewportWidth, viewportHeight);
+        if (_shaderTarget is null)
+        {
+            RenderScene(ds, state, session, cursorOn, viewportWidth, viewportHeight, resources, changed);
+            return true;
+        }
+
+        using (CanvasDrawingSession inner = _shaderTarget.CreateDrawingSession())
+            RenderScene(inner, state, session, cursorOn, viewportWidth, viewportHeight, resources, changed);
+
+        DrawShaderChain(ds, _shaderTarget, viewportWidth, viewportHeight);
+        return true;
+    }
+
+    /// <summary>Draws the terminal itself, either directly or into the shader scene target.</summary>
+    private void RenderScene(CanvasDrawingSession ds, IntPtr state, TerminalSession session,
+        bool cursorOn, float viewportWidth, float viewportHeight, ICanvasResourceCreator resources,
+        bool changed)
+    {
         // Colors.
         Rgb themeBg = default;
         Rgb themeFg = default;
@@ -1070,6 +1192,14 @@ public sealed unsafe class TerminalRenderer
         float cellW = _cellAdvanceX;
         float cellH = _metrics.Height;
 
+        // Kitty graphics below the cell backgrounds sit directly on the window surface.
+        // The handle is borrowed from the terminal, so it is re-read for every frame.
+        IntPtr graphics = IntPtr.Zero;
+        session.TryGetKittyGraphics(out graphics);
+        CollectImages(state);
+        DrawImageLayer(ds, resources, graphics, GhosttyNative.IMAGE_LAYER_BELOW_BACKGROUND,
+            cellW, cellH);
+
         IntPtr rows = IntPtr.Zero;
         IntPtr cells = IntPtr.Zero;
         GhosttyNative.ghostty_render_state_row_iterator_new(IntPtr.Zero, out rows);
@@ -1077,7 +1207,7 @@ public sealed unsafe class TerminalRenderer
         // The iterator is only usable once it is bound to a render state.
         GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &rows);
 
-        var runs = new List<Run>(64);
+        var rowRuns = new List<RowRuns>(64);
         string cursorText = string.Empty;
         Color cursorFg = defaultFg;
 
@@ -1114,8 +1244,7 @@ public sealed unsafe class TerminalRenderer
                 lastRow = viewportY;
                 drawnRows++;
 
-                runs.Clear();
-                float rowTop = viewportY * cellH;
+                var runs = new List<Run>(16);
                 int col = 0;
                 bool spacer = false;
 
@@ -1143,6 +1272,11 @@ public sealed unsafe class TerminalRenderer
                     if (style.Inverse != 0) (bg, fg) = (fg, bg);
 
                     string text = CellText.Read(cells);
+
+                    // U+10EEEE is the kitty Unicode placeholder: the cell exists only to
+                    // position an image, so the glyph itself is never drawn.
+                    if (text.Length > 1 && text[0] == '\uDBFB' && text[1] == '\uDEEE')
+                        text = string.Empty;
 
                     // A double-width glyph sits in the first of its two cells and libghostty-vt
                     // leaves the second one empty. That empty cell must not turn into a space
@@ -1231,122 +1365,13 @@ public sealed unsafe class TerminalRenderer
                     col++;
                 }
 
-                // Backgrounds first so text from neighbouring runs is never clipped.
-                // "background-opacity-cells" fades explicit cell backgrounds along with the
-                // surface; by default they stay opaque, exactly like Ghostty.
-                byte cellAlpha = 255;
-                if (_config is { BackgroundOpacityCells: true })
-                    cellAlpha = (byte)Math.Round(255 * Math.Clamp(_config.BackgroundOpacity, 0f, 1f));
-
-                foreach (Run run in runs)
+                rowRuns.Add(new RowRuns
                 {
-                    if (run.Bg != defaultBg)
-                    {
-                        Color fill = run.Bg;
-                        fill.A = cellAlpha;
-                        ds.FillRectangle(new Rect(run.Col * cellW, rowTop, run.Cols * cellW, cellH), fill);
-                    }
-                }
-
-                if (hasSelection)
-                {
-                    Color color = SelectionFillColor();
-                    ds.FillRectangle(new Rect(selection.StartX * cellW, rowTop,
-                        (selection.EndX - selection.StartX + 1) * cellW, cellH), color);
-                }
-
-                float lineThickness = MathF.Max(1f, MathF.Round(cellH / 16f));
-                if (_config is not null)
-                    lineThickness = MathF.Max(1f,
-                        _config.UnderlineThicknessAdjust.Apply(lineThickness, _rasterizationScale));
-
-                float underlineY = rowTop + cellH - lineThickness - 2;
-                float strikethroughY = MathF.Round(rowTop + cellH * 0.5f);
-                if (_config is not null)
-                {
-                    underlineY += _config.UnderlinePositionAdjust.Delta(cellH, _rasterizationScale);
-                    strikethroughY += _config.StrikethroughPositionAdjust.Delta(cellH, _rasterizationScale);
-                }
-                float strikethroughThickness = lineThickness;
-                if (_config is not null)
-                    strikethroughThickness = MathF.Max(1f,
-                        _config.StrikethroughThicknessAdjust.Apply(lineThickness, _rasterizationScale));
-
-                float overlineY = rowTop;
-                float overlineThickness = lineThickness;
-                if (_config is not null)
-                {
-                    overlineY += _config.OverlinePositionAdjust.Delta(cellH, _rasterizationScale);
-                    overlineThickness = MathF.Max(1f,
-                        _config.OverlineThicknessAdjust.Apply(lineThickness, _rasterizationScale));
-                }
-
-                foreach (Run run in runs)
-                {
-                    if (run.Invisible) continue;
-                    if (run.Text.Length > 0 && HasInk(run.Text))
-                    {
-                        float textY = rowTop + _textOffsetY;
-                        // A run made only of single-width glyphs advances by exactly one cell
-                        // per character in the mono font, so it can be drawn in one call. A run
-                        // holding a double-width glyph cannot: the fallback font advances by
-                        // its own em, which drifts off the grid, so each grapheme is placed.
-                        if (!run.Wide)
-                        {
-                            signature = (signature ^ (uint)(viewportY * 131 + run.Col)) * 16777619u;
-                            signature = (signature ^ (uint)(run.Fg.R << 16 | run.Fg.G << 8 | run.Fg.B)) * 16777619u;
-                            signature = (signature ^ (uint)run.Text.Length) * 16777619u;
-
-                            int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
-                            RunSegment[]? segments = SegmentsFor(run.Text, face);
-                            if (segments is not null)
-                            {
-                                // Some graphemes need a fallback family, so each segment is
-                                // placed on the grid instead of relying on the font advance.
-                                DrawSegmentRun(ds, run, segments, cellW, textY);
-                            }
-                            else
-                            {
-                                // "font-shaping-break = cursor" (the default) draws the cells on
-                                // either side of the cursor as two layouts so a ligature cannot
-                                // form across it.
-                                (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, viewportY);
-                                if (split > 0 && split < run.Text.Length)
-                                {
-                                    DrawTextRun(ds, run.Text[..split], run.Col * cellW, textY,
-                                        run.Fg, run.Bold, run.Italic);
-                                    DrawTextRun(ds, run.Text[split..], (run.Col + splitCell) * cellW, textY,
-                                        run.Fg, run.Bold, run.Italic);
-                                }
-                                else
-                                {
-                                    DrawTextRun(ds, run.Text, run.Col * cellW, textY,
-                                        run.Fg, run.Bold, run.Italic);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            DrawWideRun(ds, run, cellW, textY);
-                        }
-                    }
-
-                    if (run.Underline)
-                    {
-                        ds.FillRectangle(new Rect(run.Col * cellW, underlineY,
-                            run.Cols * cellW, lineThickness), run.Fg);
-                    }
-                    if (run.Strikethrough)
-                    {
-                        ds.FillRectangle(new Rect(run.Col * cellW, strikethroughY,
-                            run.Cols * cellW, strikethroughThickness), run.Fg);
-                    }
-                    if (run.Overline)
-                    {
-                        ds.FillRectangle(new Rect(run.Col * cellW, overlineY,
-                            run.Cols * cellW, overlineThickness), run.Fg);
-                    }
-                }
+                    ViewportY = viewportY,
+                    Runs = runs,
+                    HasSelection = hasSelection,
+                    Selection = selection,
+                });
             }
         }
         finally
@@ -1366,6 +1391,38 @@ public sealed unsafe class TerminalRenderer
                 $"drawn={drawnRows} expected={expectedRows} span={firstRow}..{lastRow} breaks={rowBreaks} " +
                 $"viewport={viewportWidth:0.#}x{viewportHeight:0.#} cellH={cellH:0.##} changed={changed}");
         }
+
+        // Backgrounds first so text from neighbouring runs is never clipped.
+        // "background-opacity-cells" fades explicit cell backgrounds along with the
+        // surface; by default they stay opaque, exactly like Ghostty.
+        byte cellAlpha = 255;
+        if (_config is { BackgroundOpacityCells: true })
+            cellAlpha = (byte)Math.Round(255 * Math.Clamp(_config.BackgroundOpacity, 0f, 1f));
+
+        foreach (RowRuns row in rowRuns)
+        {
+            float rowTop = row.ViewportY * cellH;
+            foreach (Run run in row.Runs)
+            {
+                if (run.Bg == defaultBg) continue;
+                Color fill = run.Bg;
+                fill.A = cellAlpha;
+                ds.FillRectangle(new Rect(run.Col * cellW, rowTop, run.Cols * cellW, cellH), fill);
+            }
+
+            if (!row.HasSelection) continue;
+            Color color = SelectionFillColor();
+            ds.FillRectangle(new Rect(row.Selection.StartX * cellW, rowTop,
+                (row.Selection.EndX - row.Selection.StartX + 1) * cellW, cellH), color);
+        }
+
+        DrawImageLayer(ds, resources, graphics, GhosttyNative.IMAGE_LAYER_BELOW_TEXT, cellW, cellH);
+
+        foreach (RowRuns row in rowRuns)
+            DrawRowText(ds, row, cellW, cellH, haveCursor, cursor, ref signature);
+
+        DrawImageLayer(ds, resources, graphics, GhosttyNative.IMAGE_LAYER_ABOVE_TEXT, cellW, cellH);
+        PruneImages();
 
         // IME composition: painted over the cells at the cursor so the pinyin being typed is
         // visible while the user picks a candidate, like Windows Terminal does. The buffer is
@@ -1422,7 +1479,739 @@ public sealed unsafe class TerminalRenderer
             }
         }
 
-        return true;
+        if (_shaderEffects.Count > 0)
+        {
+            CaptureShaderColors(themeBg, themeFg, cursorRgb, cursorHasValue, haveCursor, cursor,
+                defaultBg, viewportHeight);
+        }
+    }
+
+    /// <summary>Copies the values the shader uniforms need out of this frame's state.</summary>
+    private void CaptureShaderColors(Rgb background, Rgb foreground, Rgb cursorRgb,
+        bool cursorHasValue, bool haveCursor, GhosttyNative.GhosttyRenderStateCursor cursor,
+        Color defaultBg, float viewportHeight)
+    {
+        _shaderBackground = Normalize(background);
+        _shaderForeground = Normalize(foreground);
+
+        Color cursorColor = cursorHasValue
+            ? Color.FromArgb(255, cursorRgb.R, cursorRgb.G, cursorRgb.B)
+            : defaultBg;
+        _shaderCursorColor = Normalize(cursorColor);
+        _shaderCursorText = NormalizeRgb(CursorTextColor(defaultBg));
+        _shaderSelectionBackground = NormalizeRgb(SelectionFillColor());
+
+        Rgb selectionForeground = foreground;
+        if (_config is { HasSelectionForeground: true } config)
+            selectionForeground = config.SelectionForeground;
+        else if (Theme.Terminal is { Custom: true, SelectionForegroundSet: true } theme)
+            selectionForeground = theme.SelectionForeground;
+        _shaderSelectionForeground = Normalize(selectionForeground);
+
+        _shaderCursorVisible = haveCursor && cursor.Visible != 0 ? 1 : 0;
+        _shaderCursorStyle = ShaderCursorStyle(cursor.VisualStyle);
+        if (!haveCursor || cursor.ViewportHasValue == 0)
+        {
+            _shaderCursor = Vector4.Zero;
+            return;
+        }
+
+        float scale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
+        float cellWidth = _metrics.Width * scale;
+        float cellHeight = _metrics.Height * scale;
+        float left = cursor.ViewportX * cellWidth;
+        float bottom = viewportHeight * scale - (cursor.ViewportY + 1) * cellHeight;
+        _shaderCursor = new Vector4(left, bottom, cellWidth, cellHeight);
+    }
+
+    private static Vector3 Normalize(Rgb color) =>
+        new(color.R / 255f, color.G / 255f, color.B / 255f);
+
+    private static Vector4 Normalize(Color color) =>
+        new(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
+
+    private static Vector3 NormalizeRgb(Color color) =>
+        new(color.R / 255f, color.G / 255f, color.B / 255f);
+
+    private static int ShaderCursorStyle(int visual) => visual switch
+    {
+        GhosttyNative.CURSOR_BLOCK => 0,
+        GhosttyNative.CURSOR_BLOCK_HOLLOW => 1,
+        GhosttyNative.CURSOR_BAR => 2,
+        GhosttyNative.CURSOR_UNDERLINE => 3,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// Draws one row's glyphs and decorations. Backgrounds and images were already painted,
+    /// so this pass only adds text.
+    /// </summary>
+    private void DrawRowText(CanvasDrawingSession ds, RowRuns row, float cellW, float cellH,
+        bool haveCursor, in GhosttyNative.GhosttyRenderStateCursor cursor, ref uint signature)
+    {
+        float rowTop = row.ViewportY * cellH;
+        float lineThickness = MathF.Max(1f, MathF.Round(cellH / 16f));
+        if (_config is not null)
+            lineThickness = MathF.Max(1f,
+                _config.UnderlineThicknessAdjust.Apply(lineThickness, _rasterizationScale));
+
+        float underlineY = rowTop + cellH - lineThickness - 2;
+        float strikethroughY = MathF.Round(rowTop + cellH * 0.5f);
+        if (_config is not null)
+        {
+            underlineY += _config.UnderlinePositionAdjust.Delta(cellH, _rasterizationScale);
+            strikethroughY += _config.StrikethroughPositionAdjust.Delta(cellH, _rasterizationScale);
+        }
+        float strikethroughThickness = lineThickness;
+        if (_config is not null)
+            strikethroughThickness = MathF.Max(1f,
+                _config.StrikethroughThicknessAdjust.Apply(lineThickness, _rasterizationScale));
+
+        float overlineY = rowTop;
+        float overlineThickness = lineThickness;
+        if (_config is not null)
+        {
+            overlineY += _config.OverlinePositionAdjust.Delta(cellH, _rasterizationScale);
+            overlineThickness = MathF.Max(1f,
+                _config.OverlineThicknessAdjust.Apply(lineThickness, _rasterizationScale));
+        }
+
+        foreach (Run run in row.Runs)
+        {
+            if (run.Invisible) continue;
+            if (run.Text.Length > 0 && HasInk(run.Text))
+            {
+                float textY = rowTop + _textOffsetY;
+                // A run made only of single-width glyphs advances by exactly one cell
+                // per character in the mono font, so it can be drawn in one call. A run
+                // holding a double-width glyph cannot: the fallback font advances by
+                // its own em, which drifts off the grid, so each grapheme is placed.
+                if (!run.Wide)
+                {
+                    signature = (signature ^ (uint)(row.ViewportY * 131 + run.Col)) * 16777619u;
+                    signature = (signature ^ (uint)(run.Fg.R << 16 | run.Fg.G << 8 | run.Fg.B)) * 16777619u;
+                    signature = (signature ^ (uint)run.Text.Length) * 16777619u;
+
+                    int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
+                    RunSegment[]? segments = SegmentsFor(run.Text, face);
+                    if (segments is not null)
+                    {
+                        // Some graphemes need a fallback family, so each segment is
+                        // placed on the grid instead of relying on the font advance.
+                        DrawSegmentRun(ds, run, segments, cellW, textY);
+                    }
+                    else
+                    {
+                        // "font-shaping-break = cursor" (the default) draws the cells on
+                        // either side of the cursor as two layouts so a ligature cannot
+                        // form across it.
+                        (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, row.ViewportY);
+                        if (split > 0 && split < run.Text.Length)
+                        {
+                            DrawTextRun(ds, run.Text[..split], run.Col * cellW, textY,
+                                run.Fg, run.Bold, run.Italic);
+                            DrawTextRun(ds, run.Text[split..], (run.Col + splitCell) * cellW, textY,
+                                run.Fg, run.Bold, run.Italic);
+                        }
+                        else
+                        {
+                            DrawTextRun(ds, run.Text, run.Col * cellW, textY,
+                                run.Fg, run.Bold, run.Italic);
+                        }
+                    }
+                }
+                else
+                {
+                    DrawWideRun(ds, run, cellW, textY);
+                }
+            }
+
+            if (run.Underline)
+            {
+                ds.FillRectangle(new Rect(run.Col * cellW, underlineY,
+                    run.Cols * cellW, lineThickness), run.Fg);
+            }
+            if (run.Strikethrough)
+            {
+                ds.FillRectangle(new Rect(run.Col * cellW, strikethroughY,
+                    run.Cols * cellW, strikethroughThickness), run.Fg);
+            }
+            if (run.Overline)
+            {
+                ds.FillRectangle(new Rect(run.Col * cellW, overlineY,
+                    run.Cols * cellW, overlineThickness), run.Fg);
+            }
+        }
+    }
+
+    // ---------------- custom shaders ----------------
+
+    /// <summary>
+    /// Recompiles "custom-shader" only when the path list or a file timestamp changed.
+    /// Shader failures are logged and skipped; the terminal keeps rendering without them.
+    /// </summary>
+    private void RebuildShaders(List<string> paths)
+    {
+        long stamp = 17;
+        foreach (string path in paths)
+        {
+            long part = 0;
+            try
+            {
+                var info = new FileInfo(path);
+                if (info.Exists) part = info.LastWriteTimeUtc.Ticks ^ info.Length;
+            }
+            catch
+            {
+                part = 0;
+            }
+            stamp = unchecked(stamp * 31 + part);
+        }
+
+        bool same = paths.Count == _shaderPaths.Count;
+        for (int i = 0; same && i < paths.Count; i++)
+            same = string.Equals(paths[i], _shaderPaths[i], StringComparison.OrdinalIgnoreCase);
+        if (same && _shaderEffects.Count == paths.Count && stamp == _shaderStamp) return;
+
+        _shaderStamp = stamp;
+        DisposeShaders();
+        _shaderPaths.AddRange(paths);
+        foreach (string path in paths)
+        {
+            CustomShader.Compiled? compiled = CustomShader.Compile(path);
+            Diag.Log("shader", compiled is null
+                ? $"compile failed: {path}"
+                : $"compiled {path} ({compiled.Bytecode.Length} bytes)");
+            if (compiled is null) continue;
+
+            try
+            {
+                var effect = new PixelShaderEffect(compiled.Bytecode)
+                {
+                    // Shadertoy shaders may sample iChannel0 away from the current pixel.
+                    Source1Mapping = SamplerCoordinateMapping.Unknown,
+                };
+                _shaderEffects.Add(new ShaderStage
+                {
+                    Effect = effect,
+                    UsesChannel0 = compiled.UsesChannel0,
+                });
+            }
+            catch (Exception error)
+            {
+                Diag.LogException("shader", error);
+            }
+        }
+
+        Diag.Log("shader", $"{_shaderEffects.Count} effect(s) from {paths.Count} path(s)");
+        _shaderStartTicks = Environment.TickCount64;
+        _shaderLastTime = 0f;
+        _shaderFrame = 0;
+        _shaderPreviousCursorVisible = -1;
+    }
+
+    /// <summary>Tells the shaders when this pane gained focus (for iFocus/iTimeFocus).</summary>
+    public void SetFocused(bool focused)
+    {
+        if (_shaderFocused == focused) return;
+        _shaderFocused = focused;
+        if (focused) _shaderFocusTime = ShaderTime();
+    }
+
+    /// <summary>
+    /// Creates the offscreen scene texture from Layout, outside the CanvasControl draw pass,
+    /// so the draw callback only records into an already-sized target.
+    /// </summary>
+    public void PrepareShaderTarget(float width, float height)
+    {
+        if (HasCustomShaders) EnsureShaderTarget(width, height);
+    }
+
+    private void EnsureShaderTarget(float width, float height)
+    {
+        if (width <= 0f || height <= 0f) return;
+
+        float dpi = 96f * (_rasterizationScale <= 0f ? 1f : _rasterizationScale);
+        if (_shaderTarget is not null &&
+            MathF.Abs(width - _shaderTargetWidth) < 0.5f &&
+            MathF.Abs(height - _shaderTargetHeight) < 0.5f &&
+            MathF.Abs(dpi - _shaderTargetDpi) < 0.01f)
+        {
+            return;
+        }
+
+        _shaderTarget?.Dispose();
+        _shaderTarget = null;
+        try
+        {
+            _shaderTarget = new CanvasRenderTarget(
+                CanvasDevice.GetSharedDevice(), width, height, dpi);
+            _shaderTargetWidth = width;
+            _shaderTargetHeight = height;
+            _shaderTargetDpi = dpi;
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("shader.target", error);
+        }
+    }
+
+    /// <summary>
+    /// Runs the terminal scene through each custom shader in order. Every shader sees the
+    /// previous shader's output as iChannel0, exactly like Ghostty's shader chain.
+    /// </summary>
+    private void DrawShaderChain(CanvasDrawingSession ds, ICanvasImage scene, float width, float height)
+    {
+        if (_shaderEffects.Count == 0) return;
+
+        float now = ShaderTime();
+        float delta = MathF.Max(0f, now - _shaderLastTime);
+        _shaderLastTime = now;
+        _shaderFrame++;
+
+        bool cursorChanged = _shaderCursor != _shaderPreviousCursor ||
+            _shaderCursorStyle != _shaderPreviousCursorStyle ||
+            _shaderCursorVisible != _shaderPreviousCursorVisible ||
+            _shaderCursorColor != _shaderPreviousCursorColor;
+        if (cursorChanged) _shaderCursorChangeTime = now;
+
+        // Shader space is physical pixels, matching Ghostty's iResolution.
+        float scale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
+        var resolution = new Vector3(width * scale, height * scale, 1f);
+        Vector3[]? palette = ShaderPalette();
+
+        ICanvasImage source = scene;
+        foreach (ShaderStage stage in _shaderEffects)
+        {
+            // A shader that never samples iChannel0 declares no input; assigning Source1
+            // would be rejected by D2D ("shader inputs: 0").
+            stage.Effect.Source1 = stage.UsesChannel0 ? source : null;
+            SetShaderProperties(stage.Effect, resolution, now, delta, palette);
+            source = stage.Effect;
+        }
+
+        // An explicit destination gives generator shaders (no iChannel0) a defined extent.
+        var bounds = new Rect(0, 0, width, height);
+        ds.DrawImage(source, bounds, bounds);
+
+        _shaderPreviousCursor = _shaderCursor;
+        _shaderPreviousCursorStyle = _shaderCursorStyle;
+        _shaderPreviousCursorVisible = _shaderCursorVisible;
+        _shaderPreviousCursorColor = _shaderCursorColor;
+    }
+
+    private float ShaderTime()
+    {
+        if (_shaderStartTicks == 0) _shaderStartTicks = Environment.TickCount64;
+        return (Environment.TickCount64 - _shaderStartTicks) / 1000f;
+    }
+
+    /// <summary>Uploads Ghostty's Shadertoy-style uniform block for this frame.</summary>
+    private void SetShaderProperties(PixelShaderEffect effect, Vector3 resolution,
+        float time, float delta, Vector3[]? palette)
+    {
+        IDictionary<string, object> properties = effect.Properties;
+        Set(properties, "iResolution", resolution);
+        Set(properties, "iTime", time);
+        Set(properties, "iTimeDelta", delta);
+        Set(properties, "iFrameRate", 0f);
+        Set(properties, "iFrame", _shaderFrame);
+        Set(properties, "iChannelTime", new float[4]);
+        Set(properties, "iChannelResolution",
+            new[] { resolution, Vector3.Zero, Vector3.Zero, Vector3.Zero });
+        Set(properties, "iMouse", Vector4.Zero);
+        Set(properties, "iDate", Vector4.Zero);
+        Set(properties, "iSampleRate", 0f);
+        Set(properties, "iCurrentCursor", _shaderCursor);
+        Set(properties, "iPreviousCursor", _shaderPreviousCursor);
+        Set(properties, "iCurrentCursorColor", _shaderCursorColor);
+        Set(properties, "iPreviousCursorColor", _shaderPreviousCursorColor);
+        Set(properties, "iCurrentCursorStyle", _shaderCursorStyle);
+        Set(properties, "iPreviousCursorStyle", _shaderPreviousCursorStyle);
+        Set(properties, "iCursorVisible", _shaderCursorVisible);
+        Set(properties, "iTimeCursorChange", _shaderCursorChangeTime);
+        Set(properties, "iTimeFocus", _shaderFocusTime);
+        Set(properties, "iFocus", _shaderFocused ? 1 : 0);
+        if (palette is not null) Set(properties, "iPalette", palette);
+        Set(properties, "iBackgroundColor", _shaderBackground);
+        Set(properties, "iForegroundColor", _shaderForeground);
+        Set(properties, "iCursorColor",
+            new Vector3(_shaderCursorColor.X, _shaderCursorColor.Y, _shaderCursorColor.Z));
+        Set(properties, "iCursorText", _shaderCursorText);
+        Set(properties, "iSelectionForegroundColor", _shaderSelectionForeground);
+        Set(properties, "iSelectionBackgroundColor", _shaderSelectionBackground);
+    }
+
+    private void Set(IDictionary<string, object> properties, string name, object value)
+    {
+        if (!properties.ContainsKey(name) || _shaderUnsupported.Contains(name)) return;
+        try
+        {
+            properties[name] = value;
+        }
+        catch (Exception error)
+        {
+            _shaderUnsupported.Add(name);
+            Diag.Warn("shader.property", $"{name}: {error.Message}");
+        }
+    }
+
+    /// <summary>Builds the 256-entry palette uniform once per theme.</summary>
+    private Vector3[]? ShaderPalette()
+    {
+        TerminalTheme theme = Theme.Terminal;
+        if (ReferenceEquals(theme, _shaderPaletteTheme) && _shaderPalette is not null)
+            return _shaderPalette;
+
+        // A design theme keeps its palette in the native generator, not in Theme.Terminal.
+        Rgb[] source = theme.Design
+            ? TerminalTheme.DesignPalette(Theme.PerceivedLuminance(theme.Background) > 0.5)
+            : theme.Palette;
+
+        var palette = new Vector3[256];
+        for (int i = 0; i < palette.Length; i++) palette[i] = Normalize(source[i]);
+        _shaderPalette = palette;
+        _shaderPaletteTheme = theme;
+        return palette;
+    }
+
+    /// <summary>Releases every compiled shader and the offscreen scene texture.</summary>
+    public void DisposeShaders()
+    {
+        foreach (ShaderStage stage in _shaderEffects) stage.Effect.Dispose();
+        _shaderEffects.Clear();
+        _shaderPaths.Clear();
+        _shaderTarget?.Dispose();
+        _shaderTarget = null;
+        _shaderUnsupported.Clear();
+        _shaderPalette = null;
+        _shaderPaletteTheme = null;
+    }
+
+    // ---------------- kitty graphics ----------------
+
+    /// <summary>
+    /// Reads the image placements of the current render state. The list is rebuilt on every
+    /// frame: scrolling changes it, and reading it is cheap compared with uploading pixels.
+    /// </summary>
+    private void CollectImages(IntPtr state)
+    {
+        _imagePlacements.Clear();
+        if (_imageIterator == IntPtr.Zero &&
+            GhosttyNative.ghostty_render_state_image_iterator_new(IntPtr.Zero, out _imageIterator)
+                != GhosttyNative.SUCCESS)
+        {
+            return;
+        }
+
+        IntPtr iterator = _imageIterator;
+        if (GhosttyNative.ghostty_render_state_get(
+                state, GhosttyNative.RS_IMAGE_ITERATOR, &iterator) != GhosttyNative.SUCCESS)
+        {
+            return;
+        }
+        _imageIterator = iterator;
+
+        while (GhosttyNative.ghostty_render_state_image_iterator_next(iterator))
+        {
+            int protocol = 0;
+            if (GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_PROTOCOL, &protocol) != GhosttyNative.SUCCESS ||
+                protocol != GhosttyNative.IMAGE_PROTOCOL_KITTY)
+            {
+                continue;
+            }
+
+            uint imageId = 0, offsetX = 0, offsetY = 0, width = 0, height = 0;
+            uint sourceX = 0, sourceY = 0, sourceWidth = 0, sourceHeight = 0;
+            ulong generation = 0;
+            int layer = 0, z = 0, col = 0, row = 0;
+
+            if (GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_ID, &imageId) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_GENERATION, &generation) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_LAYER, &layer) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_Z, &z) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_VIEWPORT_COL, &col) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_VIEWPORT_ROW, &row) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_CELL_OFFSET_X, &offsetX) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_CELL_OFFSET_Y, &offsetY) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_PIXEL_WIDTH, &width) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_PIXEL_HEIGHT, &height) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_SOURCE_X, &sourceX) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_SOURCE_Y, &sourceY) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_SOURCE_WIDTH, &sourceWidth) != GhosttyNative.SUCCESS ||
+                GhosttyNative.ghostty_render_state_image_get(
+                    iterator, GhosttyNative.RENDER_IMAGE_SOURCE_HEIGHT, &sourceHeight) != GhosttyNative.SUCCESS)
+            {
+                continue;
+            }
+
+            _imagePlacements.Add(new ImagePlacement(imageId, generation, layer, z, col, row,
+                offsetX, offsetY, width, height, sourceX, sourceY, sourceWidth, sourceHeight));
+        }
+    }
+
+    /// <summary>
+    /// Paints the placements of one layer in z order. Values arrive in physical pixels, while
+    /// the drawing session works in DIPs, so positions and sizes are divided by the scale.
+    /// </summary>
+    private void DrawImageLayer(CanvasDrawingSession ds, ICanvasResourceCreator resources,
+        IntPtr graphics, int layer, float cellW, float cellH)
+    {
+        if (graphics == IntPtr.Zero || _imagePlacements.Count == 0) return;
+
+        _imageQueue.Clear();
+        foreach (ImagePlacement placement in _imagePlacements)
+        {
+            if (placement.Layer == layer) _imageQueue.Add(placement);
+        }
+        if (_imageQueue.Count == 0) return;
+
+        _imageQueue.Sort(static (a, b) =>
+        {
+            int order = a.Z.CompareTo(b.Z);
+            return order != 0 ? order : a.ImageId.CompareTo(b.ImageId);
+        });
+
+        float scale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
+        foreach (ImagePlacement placement in _imageQueue)
+        {
+            CanvasBitmap? bitmap = GetKittyTexture(resources, graphics, placement.ImageId,
+                placement.Generation);
+            if (bitmap is null) continue;
+
+            float sourceX = MathF.Min(placement.SourceX, (float)bitmap.Size.Width);
+            float sourceY = MathF.Min(placement.SourceY, (float)bitmap.Size.Height);
+            float sourceWidth = MathF.Min(placement.SourceWidth, (float)bitmap.Size.Width - sourceX);
+            float sourceHeight = MathF.Min(placement.SourceHeight, (float)bitmap.Size.Height - sourceY);
+            if (sourceWidth <= 0f || sourceHeight <= 0f) continue;
+
+            var source = new Rect(sourceX, sourceY, sourceWidth, sourceHeight);
+            var destination = new Rect(
+                placement.ViewportCol * cellW + placement.OffsetX / scale,
+                placement.ViewportRow * cellH + placement.OffsetY / scale,
+                placement.PixelWidth / scale,
+                placement.PixelHeight / scale);
+            if (destination.Width <= 0f || destination.Height <= 0f) continue;
+
+            ds.DrawImage(bitmap, destination, source, 1f, CanvasImageInterpolation.Linear);
+        }
+    }
+
+    /// <summary>
+    /// Returns the uploaded texture for an image, creating it from the Kitty storage on first
+    /// use and whenever the image's generation changes.
+    /// </summary>
+    private CanvasBitmap? GetKittyTexture(ICanvasResourceCreator resources, IntPtr graphics,
+        uint imageId, ulong generation)
+    {
+        if (_imageTextures.TryGetValue(imageId, out ImageTexture? cached))
+        {
+            if (cached.Generation == generation)
+            {
+                cached.LastFrame = _imageFrame;
+                return cached.Bitmap;
+            }
+
+            cached.Bitmap.Dispose();
+            _imageTextures.Remove(imageId);
+        }
+
+        IntPtr image = GhosttyNative.ghostty_kitty_graphics_image(graphics, imageId);
+        if (image == IntPtr.Zero) return null;
+
+        uint width = 0, height = 0;
+        int format = 0;
+        IntPtr data = IntPtr.Zero;
+        nuint length = 0;
+        if (GhosttyNative.ghostty_kitty_graphics_image_get(
+                image, GhosttyNative.KITTY_IMAGE_DATA_WIDTH, &width) != GhosttyNative.SUCCESS ||
+            GhosttyNative.ghostty_kitty_graphics_image_get(
+                image, GhosttyNative.KITTY_IMAGE_DATA_HEIGHT, &height) != GhosttyNative.SUCCESS ||
+            GhosttyNative.ghostty_kitty_graphics_image_get(
+                image, GhosttyNative.KITTY_IMAGE_DATA_FORMAT, &format) != GhosttyNative.SUCCESS ||
+            GhosttyNative.ghostty_kitty_graphics_image_get(
+                image, GhosttyNative.KITTY_IMAGE_DATA_PTR, &data) != GhosttyNative.SUCCESS ||
+            GhosttyNative.ghostty_kitty_graphics_image_get(
+                image, GhosttyNative.KITTY_IMAGE_DATA_LEN, &length) != GhosttyNative.SUCCESS)
+        {
+            return null;
+        }
+
+        byte[]? pixels = PremultipliedBgra(width, height, format, data, length);
+        if (pixels is null) return null;
+
+        try
+        {
+            CanvasBitmap bitmap = CanvasBitmap.CreateFromBytes(resources, pixels,
+                (int)width, (int)height, DirectXPixelFormat.B8G8R8A8UIntNormalized, 96f,
+                CanvasAlphaMode.Premultiplied);
+            _imageTextures[imageId] = new ImageTexture
+            {
+                Bitmap = bitmap,
+                Generation = generation,
+                LastFrame = _imageFrame,
+            };
+            return bitmap;
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("kitty.texture", error);
+            return null;
+        }
+    }
+
+    /// <summary>Converts one Kitty pixel format into premultiplied BGRA for Win2D.</summary>
+    private static byte[]? PremultipliedBgra(uint width, uint height, int format,
+        IntPtr data, nuint length)
+    {
+        if (width == 0 || height == 0 || data == IntPtr.Zero) return null;
+
+        int channels = format switch
+        {
+            GhosttyNative.KITTY_IMAGE_FORMAT_RGB => 3,
+            GhosttyNative.KITTY_IMAGE_FORMAT_RGBA => 4,
+            GhosttyNative.KITTY_IMAGE_FORMAT_GRAY_ALPHA => 2,
+            GhosttyNative.KITTY_IMAGE_FORMAT_GRAY => 1,
+            _ => 0,
+        };
+        long pixels = (long)width * height;
+        long sourceBytes = pixels * channels;
+        if (channels == 0 || pixels > int.MaxValue / 4 || sourceBytes > int.MaxValue ||
+            length < (nuint)sourceBytes)
+        {
+            return null;
+        }
+
+        var source = new byte[(int)sourceBytes];
+        Marshal.Copy(data, source, 0, source.Length);
+        var output = new byte[(int)pixels * 4];
+        for (long i = 0; i < pixels; i++)
+        {
+            long s = i * channels;
+            long o = i * 4;
+            byte r, g, b, a;
+            switch (format)
+            {
+                case GhosttyNative.KITTY_IMAGE_FORMAT_RGBA:
+                    r = source[s];
+                    g = source[s + 1];
+                    b = source[s + 2];
+                    a = source[s + 3];
+                    break;
+                case GhosttyNative.KITTY_IMAGE_FORMAT_RGB:
+                    r = source[s];
+                    g = source[s + 1];
+                    b = source[s + 2];
+                    a = 255;
+                    break;
+                case GhosttyNative.KITTY_IMAGE_FORMAT_GRAY_ALPHA:
+                    r = g = b = source[s];
+                    a = source[s + 1];
+                    break;
+                default: // GRAY
+                    r = g = b = source[s];
+                    a = 255;
+                    break;
+            }
+
+            if (a == 0)
+            {
+                output[o] = 0;
+                output[o + 1] = 0;
+                output[o + 2] = 0;
+                output[o + 3] = 0;
+            }
+            else if (a == 255)
+            {
+                output[o] = b;
+                output[o + 1] = g;
+                output[o + 2] = r;
+                output[o + 3] = 255;
+            }
+            else
+            {
+                output[o] = (byte)(b * a / 255);
+                output[o + 1] = (byte)(g * a / 255);
+                output[o + 2] = (byte)(r * a / 255);
+                output[o + 3] = a;
+            }
+        }
+        return output;
+    }
+
+    /// <summary>Drops textures that left the viewport, keeping recently used ones cached.</summary>
+    private void PruneImages()
+    {
+        _imageFrame++;
+        if (_imageTextures.Count == 0) return;
+
+        List<uint>? stale = null;
+        foreach (KeyValuePair<uint, ImageTexture> pair in _imageTextures)
+        {
+            if (_imageFrame - pair.Value.LastFrame > 120)
+                (stale ??= new List<uint>()).Add(pair.Key);
+        }
+
+        if (stale is not null)
+        {
+            foreach (uint key in stale)
+            {
+                if (!_imageTextures.TryGetValue(key, out ImageTexture? texture)) continue;
+                texture.Bitmap.Dispose();
+                _imageTextures.Remove(key);
+            }
+        }
+
+        // A burst of distinct images must not keep every texture alive; drop the least
+        // recently used entries that this frame did not touch.
+        while (_imageTextures.Count > 64)
+        {
+            uint oldestKey = 0;
+            int oldestFrame = int.MaxValue;
+            bool found = false;
+            foreach (KeyValuePair<uint, ImageTexture> pair in _imageTextures)
+            {
+                // Never evict an image this frame drew; it would be re-uploaded immediately.
+                if (pair.Value.LastFrame == _imageFrame) continue;
+                if (pair.Value.LastFrame >= oldestFrame) continue;
+                oldestFrame = pair.Value.LastFrame;
+                oldestKey = pair.Key;
+                found = true;
+            }
+            if (!found) break;
+
+            ImageTexture oldest = _imageTextures[oldestKey];
+            oldest.Bitmap.Dispose();
+            _imageTextures.Remove(oldestKey);
+        }
+    }
+
+    /// <summary>Releases the image iterator and every uploaded Kitty texture.</summary>
+    public void DisposeImages()
+    {
+        if (_imageIterator != IntPtr.Zero)
+        {
+            GhosttyNative.ghostty_render_state_image_iterator_free(_imageIterator);
+            _imageIterator = IntPtr.Zero;
+        }
+
+        foreach (ImageTexture texture in _imageTextures.Values) texture.Bitmap.Dispose();
+        _imageTextures.Clear();
+        _imagePlacements.Clear();
     }
 
     // ---------------- background image ----------------

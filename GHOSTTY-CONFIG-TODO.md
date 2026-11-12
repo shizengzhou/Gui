@@ -186,7 +186,7 @@
 - [ ] `initial-window` — 启动时是否创建初始窗口
 - [ ] `undo-timeout` — 撤销操作的有效期
 - [x] `title-report` — 是否允许程序用 CSI 21 t 查询标题（默认 `false`；开启后核心以 `ESC ] l <title> ESC \` 回复，见 `TerminalSession.SetTitleReport`）
-- [ ] `image-storage-limit` — 单屏图像数据（Kitty 协议）字节上限
+- [x] `image-storage-limit` — 单屏图像数据（Kitty 协议）字节上限，默认 320 MB；下发到 `OPT_KITTY_IMAGE_STORAGE_LIMIT`，0 关闭协议，见 `TerminalSession.SetKittyImageStorageLimit`
 - [x] `term` — TERM 环境变量值
 - [x] `enquiry-response` — 收到 ENQ(0x05) 时回复的字符串（默认空，即不回复；见 `TerminalSession.SetEnquiryResponse`）
 - [x] `vt-kam-allowed` — 是否允许 KAM 模式禁用键盘输入；默认 `false`（与 Ghostty 一致）。开启后 `Term/TerminalPane.cs` 的 `KeyDown()` / `CommitText()` 在写入 pty 前查询 ANSI 模式 2（`Term/TerminalSession.cs` 的 `KeyboardActionMode()` 经 `TDATA_MODE` 读取 `0x8002`），KAM 打开时丢弃按键与 IME 文本；键绑定已在工作区层先行处理，不受影响
@@ -219,8 +219,8 @@
 
 ## 13. 自定义着色器（2）
 
-- [ ] `custom-shader` — 在默认着色器之后追加 GLSL 着色器
-- [ ] `custom-shader-animation` — 是否为客户着色器运行动画循环
+- [x] `custom-shader` — 在默认着色器之后追加 Shadertoy 风格 GLSL 着色器；`Term/CustomShader.cs` 用 shaderc 编译为 SPIR-V、SPIRV-Cross 转 HLSL、D3DCompiler 生成 DXBC，再由 `TerminalRenderer` 的 `PixelShaderEffect` 链式执行；支持重复配置与可选的 `?` 前缀
+- [x] `custom-shader-animation` — `true`（默认，仅焦点面板）/`false`/`always`；由 `TerminalPane` 的 16ms 定时器驱动 `iTime`，见 `UpdateShaderAnimation`
 
 ## 14. 提示音与通知（3）
 

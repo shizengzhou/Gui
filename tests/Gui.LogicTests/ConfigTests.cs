@@ -84,6 +84,36 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void LoadResolvesCustomShadersAndAnimation()
+    {
+        Directory.CreateDirectory(_dir);
+        string shader = Path.Combine(_dir, "effect.glsl");
+        File.WriteAllText(shader,
+            "void mainImage(out vec4 c, in vec2 p) { c = vec4(1.0); }",
+            new UTF8Encoding(false));
+
+        Config config = Config.Load(Write(
+            "custom-shader = ?missing.glsl\n" +
+            "custom-shader = effect.glsl\n" +
+            "custom-shader-animation = always\n"));
+
+        Assert.Single(config.CustomShaders);
+        Assert.Equal(Path.GetFullPath(shader), config.CustomShaders[0]);
+        Assert.Equal("always", config.CustomShaderAnimation);
+        Assert.DoesNotContain(config.Diagnostics, d => d.Severity == ConfigSeverity.Warning);
+
+        // A required shader that does not exist is reported; "false" disables the loop.
+        Config missing = Config.Load(Write(
+            "custom-shader = nope.glsl\ncustom-shader-animation = false\n"));
+        Assert.Empty(missing.CustomShaders);
+        Assert.Equal("false", missing.CustomShaderAnimation);
+        Assert.Contains(missing.Diagnostics,
+            d => d.Key == "custom-shader" && d.Severity == ConfigSeverity.Notice);
+
+        Assert.Equal("true", Config.Load(Write(string.Empty)).CustomShaderAnimation);
+    }
+
+    [Fact]
     public void LoadKeepsLeftAndRightRailWidthsIndependent()
     {
         Config config = Config.Load(Write("sidebar-width-left = 300\nsidebar-width-right = 420\n"));

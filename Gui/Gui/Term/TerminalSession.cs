@@ -157,6 +157,10 @@ public sealed unsafe class TerminalSession : IDisposable
             if (_programStatus.ClearBusy()) OnProgramStatus?.Invoke();
         };
 
+        // The PNG decoder is a process-global sys option, so it has to be installed before the
+        // terminal accepts Kitty graphics payloads.
+        KittyGraphics.Install();
+
         if (GhosttyNative.ghostty_terminal_new(IntPtr.Zero, out _terminal, 80, 24) != GhosttyNative.SUCCESS)
             throw new InvalidOperationException("ghostty_terminal_new failed");
         if (snapshot is not null) Restored = BuildRestoreText(snapshot);
@@ -189,6 +193,7 @@ public sealed unsafe class TerminalSession : IDisposable
         SetFunctionPointer(GhosttyNative.OPT_RESIZE_WINDOW, _resizeWindowFn);
 
         ApplyTheme(Theme.Terminal);
+        SetKittyImageStorageLimit(320_000_000);
     }
 
     /// <summary>
@@ -1425,6 +1430,80 @@ public sealed unsafe class TerminalSession : IDisposable
         if (_terminal == IntPtr.Zero) return;
         nuint limit = (nuint)lines;
         GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_SCROLLBACK_MAX_LINES, &limit);
+    }
+
+    /// <summary>
+    /// "image-storage-limit": bytes of Kitty graphics data kept per screen. Zero disables the
+    /// protocol. File, temporary-file and shared-memory media stay off: terminal output must
+    /// not be able to read arbitrary files, so only direct payloads are accepted.
+    /// </summary>
+    public unsafe void SetKittyImageStorageLimit(ulong bytes)
+    {
+        if (_terminal == IntPtr.Zero) return;
+
+        // The option is uint64_t* on every architecture, so this is not a nuint.
+        ulong limit = bytes;
+        GhosttyNative.ghostty_terminal_set(
+            _terminal, GhosttyNative.OPT_KITTY_IMAGE_STORAGE_LIMIT, &limit);
+
+        byte disabled = 0;
+        GhosttyNative.ghostty_terminal_set(
+            _terminal, GhosttyNative.OPT_KITTY_IMAGE_MEDIUM_FILE, &disabled);
+        GhosttyNative.ghostty_terminal_set(
+            _terminal, GhosttyNative.OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &disabled);
+        GhosttyNative.ghostty_terminal_set(
+            _terminal, GhosttyNative.OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, null);
+
+        // The APC buffer has to hold a complete image before it reaches storage, so it needs
+        // at least the same budget. Zero removes the override and restores the built-in cap.
+        if (bytes == 0)
+        {
+            GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_APC_MAX_BYTES_KITTY, null);
+        }
+        else
+        {
+            nuint apc = (nuint)Math.Min(bytes + 1_048_576, ulong.MaxValue);
+            GhosttyNative.ghostty_terminal_set(_terminal, GhosttyNative.OPT_APC_MAX_BYTES_KITTY, &apc);
+        }
+    }
+
+    /// <summary>
+    /// Advances a playing Kitty animation to the frame due now and returns the time the next
+    /// frame is due, on the same clock, or 0 when nothing is playing. Call once per frame,
+    /// before reading the render state.
+    /// </summary>
+    internal unsafe ulong TickKittyAnimation()
+    {
+        if (_terminal == IntPtr.Zero) return 0;
+
+        IntPtr handle = IntPtr.Zero;
+        if (GhosttyNative.ghostty_terminal_get(
+                _terminal, GhosttyNative.TDATA_KITTY_GRAPHICS, &handle) != GhosttyNative.SUCCESS ||
+            handle == IntPtr.Zero)
+        {
+            return 0;
+        }
+
+        ulong next = 0;
+        int result = GhosttyNative.ghostty_kitty_graphics_animation_tick(
+            handle, (ulong)Environment.TickCount64, &next);
+        return result == GhosttyNative.SUCCESS ? next : 0;
+    }
+
+    /// <summary>
+    /// The active screen's Kitty image storage. The handle is borrowed and only valid until
+    /// the next mutating terminal call, so callers re-read it for each frame.
+    /// </summary>
+    internal bool TryGetKittyGraphics(out IntPtr graphics)
+    {
+        graphics = IntPtr.Zero;
+        if (_terminal == IntPtr.Zero) return false;
+
+        IntPtr handle = IntPtr.Zero;
+        int result = GhosttyNative.ghostty_terminal_get(
+            _terminal, GhosttyNative.TDATA_KITTY_GRAPHICS, &handle);
+        graphics = handle;
+        return result == GhosttyNative.SUCCESS && handle != IntPtr.Zero;
     }
 
     /// <summary>
