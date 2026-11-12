@@ -1078,67 +1078,128 @@ public sealed partial class Workspace
     {
         var page = SettingsPageStack();
 
-        // Same shape as the Windows Community Toolkit Gallery: a SettingsExpander whose
-        // header is the app identity and whose items are SettingsCards. The toolkit draws its
-        // cards with the stock 4px radius; the rest of the page uses 10, so both the expander
-        // and its cards take the page's radius.
-        var expander = new SettingsExpander
+        // Drawn with the page's own primitives rather than the toolkit's expander: that control
+        // fills its header from Fluent's card brush (a white sheet on this theme) and keeps its
+        // pointer-over colours after the pointer leaves, and neither is reachable through the
+        // page's resources.
+        var content = new Border
         {
-            Header = "Gui",
-            Description = Strings.AboutCopyright(DateTime.Now.Year),
-            HeaderIcon = new ImageIcon
-            {
-                Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
-                    new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "Square44x44Logo.scale-200.png"))),
-            },
-            Content = new TextBlock
-            {
-                Text = AppVersion(),
-                FontSize = Theme.FontBody,
-                Foreground = TextFaintBrush(),
-                VerticalAlignment = VerticalAlignment.Center,
-            },
-            IsExpanded = false,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            BorderBrush = PanelStrokeBrush(),
+            Visibility = Visibility.Collapsed,
         };
-        expander.Resources["ControlCornerRadius"] = new CornerRadius(Theme.RadiusField);
 
-        var repository = new SettingsCard
+        var body = new StackPanel();
+        body.Children.Add(new TextBlock
         {
-            Header = Strings.AboutRepository,
-            IsClickEnabled = true,
-            ActionIconToolTip = Strings.AboutCopyRepository,
-            ActionIcon = new FontIcon { Glyph = "\uE8C8", FontSize = Theme.FontBody },
-            Content = new HyperlinkButton
-            {
-                Content = RepositoryUrl,
-                NavigateUri = new Uri(RepositoryUrl),
-                FontFamily = new FontFamily("Cascadia Mono"),
-                FontSize = Theme.FontBody,
-                Padding = new Thickness(0),
-                MinWidth = 0,
-                VerticalAlignment = VerticalAlignment.Center,
-            },
-        };
-        repository.Click += (_, _) => ClipboardAccess.TryWriteText(RepositoryUrl);
-        repository.Resources["ControlCornerRadius"] = new CornerRadius(Theme.RadiusField);
-        expander.Items.Add(repository);
+            Text = AppVersion(),
+            FontSize = Theme.FontBody,
+            Foreground = TextFaintBrush(),
+            Margin = new Thickness(13, 10, 13, 8),
+        });
+        body.Children.Add(SettingsRow(Strings.AboutRepository, null, RepositoryControl()));
+        body.Children.Add(SettingsRow(Strings.AboutLicense, null,
+            Label("MIT License", Theme.FontBody, TextFaintBrush())));
+        content.Child = body;
 
-        var license = new SettingsCard
+        var icon = new Image
         {
-            Header = Strings.AboutLicense,
-            Content = new TextBlock
-            {
-                Text = "MIT License",
-                FontSize = Theme.FontBody,
-                Foreground = TextFaintBrush(),
-                VerticalAlignment = VerticalAlignment.Center,
-            },
+            Width = 20,
+            Height = 20,
+            Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
+                new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "Square44x44Logo.scale-200.png"))),
         };
-        license.Resources["ControlCornerRadius"] = new CornerRadius(Theme.RadiusField);
-        expander.Items.Add(license);
 
-        page.Children.Add(SettingsGroup(null, expander));
+        var titles = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        titles.Children.Add(Label("Gui", Theme.FontBody, TextStrongBrush()));
+        titles.Children.Add(Label(Strings.AboutCopyright(DateTime.Now.Year), Theme.FontCaption, TextFaintBrush()));
+
+        FontIcon chevron = Glyph('\uE76C', 10, TextFaintBrush());
+        chevron.VerticalAlignment = VerticalAlignment.Center;
+
+        var headerGrid = new Grid { Padding = new Thickness(13, 10, 13, 10), ColumnSpacing = 10 };
+        AddAutoColumn(headerGrid);
+        AddStarColumn(headerGrid);
+        AddAutoColumn(headerGrid);
+        headerGrid.Children.Add(icon);
+        Grid.SetColumn(titles, 1);
+        headerGrid.Children.Add(titles);
+        Grid.SetColumn(chevron, 2);
+        headerGrid.Children.Add(chevron);
+
+        var header = new Border
+        {
+            CornerRadius = new CornerRadius(Theme.RadiusField),
+            Background = ClearBrush(),
+            Child = headerGrid,
+        };
+        header.PointerEntered += (_, _) => header.Background = ChipHoverBrush();
+        header.PointerExited += (_, _) => header.Background = ClearBrush();
+        header.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            bool open = content.Visibility != Visibility.Visible;
+            content.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            chevron.Glyph = open ? "\uE70D" : "\uE76C";
+        };
+
+        var stack = new StackPanel();
+        stack.Children.Add(header);
+        stack.Children.Add(content);
+
+        page.Children.Add(new Border
+        {
+            CornerRadius = new CornerRadius(Theme.RadiusField),
+            BorderThickness = new Thickness(1),
+            BorderBrush = PanelStrokeBrush(),
+            Child = stack,
+        });
         return page;
+    }
+
+    /// <summary>The repository link and the copy button the toolkit card used to provide.</summary>
+    private FrameworkElement RepositoryControl()
+    {
+        var link = new HyperlinkButton
+        {
+            Content = RepositoryUrl,
+            NavigateUri = new Uri(RepositoryUrl),
+            FontFamily = new FontFamily("Cascadia Mono"),
+            FontSize = Theme.FontBody,
+            Foreground = AccentBrush(),
+            Padding = new Thickness(0),
+            MinWidth = 0,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        FontIcon copyIcon = Glyph('\uE8C8', Theme.FontBody, TextFaintBrush());
+        var copy = new Border
+        {
+            Width = 26,
+            Height = 26,
+            CornerRadius = new CornerRadius(Theme.RadiusControl),
+            Background = ClearBrush(),
+            Child = copyIcon,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        Tips.Set(copy, Strings.AboutCopyRepository);
+        copy.PointerEntered += (_, _) => copy.Background = ChipHoverBrush();
+        copy.PointerExited += (_, _) => copy.Background = ClearBrush();
+        copy.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            ClipboardAccess.TryWriteText(RepositoryUrl);
+        };
+
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        row.Children.Add(link);
+        row.Children.Add(copy);
+        return row;
     }
 
     /// <summary>The version stamped into the build, pre-release suffix included.</summary>
