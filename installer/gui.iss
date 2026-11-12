@@ -63,30 +63,112 @@ UninstallDisplayIcon={app}\{#AppExe}
 SetupIconFile=..\Gui\Gui\Assets\app.ico
 CloseApplications=yes
 RestartApplications=no
+; The PATH entry below is written through [Registry]; this makes Setup broadcast
+; WM_SETTINGCHANGE at the end of an install and of an uninstall, so Explorer and new
+; shells pick the new PATH up without a sign-out.
+ChangesEnvironment=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
-Name: "addpath"; Description: "Add gui-cli to the PATH"; Flags: unchecked
+; Only the payload's bin folder goes on PATH: it holds the CLI (gui.exe) alone. The root is
+; full of WinUI DLLs (DWriteCore, hostfxr, Microsoft.ui.xaml), and a PATH entry pointing
+; there made unrelated programs load our private copies.
+Name: "addpath"; Description: "Add gui to the PATH"; Flags: unchecked
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
+
+
+[Registry]
+Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Tasks: addpath; Check: NeedsAddPath(ExpandConstant('{app}\bin'))
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
-[Registry]
-Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addpath; Check: NeedsAddPath('{app}')
-
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+// Read one ";"-separated list entry by entry instead of searching for ";dir;": the entry may
+// sit at either end of PATH, and an older version of this script appended "{app}" again on
+// every install because its search never matched.
+function PathHasEntry(Path, Dir: string): Boolean;
+var
+  Rest, Item: string;
+  P: Integer;
+begin
+  Result := False;
+  Rest := Path;
+  while Rest <> '' do
+  begin
+    P := Pos(';', Rest);
+    if P = 0 then
+    begin
+      Item := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Item := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end;
+    if CompareText(Trim(Item), Dir) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
 function NeedsAddPath(Dir: string): Boolean;
 var
   Path: string;
 begin
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', Path) then
     Path := '';
-  Result := Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Path) + ';') = 0;
+  Result := not PathHasEntry(Path, Dir);
+end;
+
+// Drops every occurrence of Dir (and any empty entry left behind) from the user's PATH.
+procedure RemovePathEntry(Dir: string);
+var
+  Path, Rest, Item, NewPath: string;
+  P: Integer;
+begin
+  if not RegQueryStringValue(HKCU, 'Environment', 'Path', Path) then exit;
+
+  NewPath := '';
+  Rest := Path;
+  while Rest <> '' do
+  begin
+    P := Pos(';', Rest);
+    if P = 0 then
+    begin
+      Item := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Item := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end;
+
+    Item := Trim(Item);
+    if (Item <> '') and (CompareText(Item, Dir) <> 0) then
+    begin
+      if NewPath <> '' then NewPath := NewPath + ';';
+      NewPath := NewPath + Item;
+    end;
+  end;
+
+  RegWriteExpandStringValue(HKCU, 'Environment', 'Path', NewPath);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RemovePathEntry(ExpandConstant('{app}\bin'));
+  end;
 end;

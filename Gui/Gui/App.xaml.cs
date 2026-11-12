@@ -19,12 +19,12 @@ public partial class App : Application
     private readonly List<Window> _windows = new();
 
     /// <summary>
-    /// The window `gui-cli +new-tab` targets: the last one that was activated. Null until the
+    /// The window `gui +new-tab` targets: the last one that was activated. Null until the
     /// first window appears, at which point the newest window is used instead.
     /// </summary>
     private MainWindow? _active;
 
-    /// <summary>The gui-cli control channel, started with the first window.</summary>
+    /// <summary>The CLI control channel, started with the first window.</summary>
     private Term.IpcServer? _ipc;
 
     /// <summary>The config read at startup; "window-save-state" and language live here.</summary>
@@ -163,7 +163,7 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Runs one gui-cli request on the UI thread. The returned string is what the CLI prints
+    /// Runs one CLI request on the UI thread. The returned string is what the CLI prints
     /// on stderr; null means the request succeeded.
     /// </summary>
     private string? HandleIpcRequest(Term.IpcProtocol.Request request)

@@ -6,7 +6,7 @@ using Xunit;
 namespace Gui.LogicTests;
 
 /// <summary>
-/// Covers the two building blocks of "gui-cli +show-config": the parse-only config load
+/// Covers the two building blocks of "gui +show-config": the parse-only config load
 /// (which must not touch libghostty-vt) and the pure renderer.
 /// </summary>
 public class CliShowConfigTests

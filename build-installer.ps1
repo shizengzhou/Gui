@@ -146,7 +146,7 @@ $publishDir = Join-Path $repo "Gui/Gui/bin/$Configuration/net8.0-windows10.0.190
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 
 # The profile is what sets SelfContained, and -p:Version stamps the assembly so that
-# "gui-cli +version" reports the same number the installer does.
+# "gui +version" reports the same number the installer does.
 $publishArgs = @(
     "publish", $project,
     "-c", $Configuration,
@@ -159,7 +159,7 @@ Invoke-Checked "dotnet publish" { & dotnet @publishArgs }
 
 $required = @(
     "Gui.exe",
-    "gui-cli.exe",
+    "bin/gui.exe",
     "Gui.pri",
     "App.xbf",
     "ghostty-vt.dll",

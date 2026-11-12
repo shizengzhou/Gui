@@ -15,7 +15,7 @@ namespace Gui.Cli;
 public static class NewTab
 {
     public const string Help =
-        "Usage: gui-cli +new-tab [options] [--] [-e command...]\n" +
+        "Usage: gui +new-tab [options] [--] [-e command...]\n" +
         "\n" +
         "Open a new tab in the running Gui window. Without --working-directory the directory\n" +
         "this command runs in is used, the same as ghostty.\n" +
@@ -224,7 +224,7 @@ public static class NewTab
 
         if (options.Error is not null)
         {
-            Console.Error.WriteLine($"gui-cli: {options.Error}");
+            Console.Error.WriteLine($"gui: {options.Error}");
             Console.Error.Write(Help);
             return 2;
         }
@@ -241,13 +241,13 @@ public static class NewTab
         IpcProtocol.Response? response = Send(pipeName, request);
         if (response is null)
         {
-            Console.Error.WriteLine($"gui-cli: no running instance of Gui answered on '{pipeName}'");
+            Console.Error.WriteLine($"gui: no running instance of Gui answered on '{pipeName}'");
             return 1;
         }
 
         if (!response.Ok)
         {
-            Console.Error.WriteLine($"gui-cli: {response.Error ?? "the app rejected the request"}");
+            Console.Error.WriteLine($"gui: {response.Error ?? "the app rejected the request"}");
             return 1;
         }
 

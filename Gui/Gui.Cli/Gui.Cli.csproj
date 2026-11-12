@@ -17,6 +17,12 @@
          Under a plain net8.0 TFM the platform analyzer still flags those call sites. -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
 
+    <!-- The installer ships gui-cli trimmed. IPC goes through reflection-based System.Text.Json,
+         which a trimmed app disables by default and whose metadata the trimmer would otherwise
+         drop; keeping this assembly whole plus re-enabling reflection JSON keeps "+new-tab"
+         alive while the .NET runtime around it still shrinks from 93 MB to 13 MB. -->
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+
     <!-- Follow the solution's Platform so the RID (and therefore the output folder) matches
          the terminal's win-x64 / win-x86 / win-arm64 layout. -->
     <Platforms>x86;x64;ARM64</Platforms>
@@ -28,6 +34,10 @@
   <!-- Compile the shipped config sources themselves, not copies. These are plain BCL C#,
        so the CLI needs no WinUI, Win2D or NuGet packages and stays independent of the app's
        runtime bootstrap. LoadRaw() keeps parsing free of any libghostty-vt call. -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="gui-cli" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="../Gui/Strings.cs" Link="Strings.cs" />
     <Compile Include="../Gui/Diag.cs" Link="Diag.cs" />

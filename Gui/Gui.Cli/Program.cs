@@ -15,7 +15,7 @@ internal static class Program
         "Gui command-line companion\n" +
         "\n" +
         "Usage:\n" +
-        "  gui-cli +<action> [options]\n" +
+        "  gui +<action> [options]\n" +
         "\n" +
         "Actions (prefixed with '+', like ghostty):\n" +
         "  +show-config    print the effective configuration in Ghostty format\n" +
@@ -24,8 +24,8 @@ internal static class Program
         "  +help           list the available actions\n" +
         "  +version        print the version\n" +
         "\n" +
-        "Run 'gui-cli +show-config --help' for that action's options.\n" +
-        "This tool ships next to Gui.exe; add that folder to PATH to call it from any shell.\n";
+        "Run 'gui +show-config --help' for that action's options.\n" +
+        "This tool lives in the install's bin folder; add that folder to PATH to call it from any shell.\n";
 
     private static int Main(string[] args)
     {
@@ -64,18 +64,18 @@ internal static class Program
             case "--version":
             case "-V":
             case "version":
-                Console.Out.WriteLine("gui-cli " + VersionString());
+                Console.Out.WriteLine("gui " + VersionString());
                 return 0;
 
             default:
                 if (action.StartsWith("+", StringComparison.Ordinal))
                 {
-                    Console.Error.WriteLine($"gui-cli: unknown action '{action}'");
-                    Console.Error.WriteLine("Run 'gui-cli +help' to list the available actions.");
+                    Console.Error.WriteLine($"gui: unknown action '{action}'");
+                    Console.Error.WriteLine("Run 'gui +help' to list the available actions.");
                     return 2;
                 }
 
-                Console.Error.WriteLine($"gui-cli: expected a +action, got '{action}'");
+                Console.Error.WriteLine($"gui: expected a +action, got '{action}'");
                 Console.Error.Write(Usage);
                 return 2;
         }

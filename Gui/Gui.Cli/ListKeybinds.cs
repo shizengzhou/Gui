@@ -22,7 +22,7 @@ public static class ListKeybinds
     public sealed record Entry(string Chord, string Action, string Description);
 
     public const string Help =
-        "Usage: gui-cli +list-keybinds [options]\n" +
+        "Usage: gui +list-keybinds [options]\n" +
         "\n" +
         "Print the key bindings in effect. On a terminal this draws a table; when the output\n" +
         "is redirected (or --plain is given) it prints ghostty \"keybind\" lines instead.\n" +
@@ -123,7 +123,7 @@ public static class ListKeybinds
                     Console.Out.Write(Help);
                     return 0;
                 default:
-                    Console.Error.WriteLine($"gui-cli: unknown option '{arg}' for +list-keybinds");
+                    Console.Error.WriteLine($"gui: unknown option '{arg}' for +list-keybinds");
                     Console.Error.Write(Help);
                     return 2;
             }

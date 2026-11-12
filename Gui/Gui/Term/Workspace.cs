@@ -2362,7 +2362,7 @@ public sealed partial class Workspace
     }
 
     /// <summary>
-    /// Opens a tab on behalf of gui-cli's "+new-tab": the caller may pin the directory, the
+    /// Opens a tab on behalf of the CLI's "+new-tab": the caller may pin the directory, the
     /// command and the title; everything else follows this window's config.
     /// </summary>
     internal void OpenTab(string? workingDirectory, string? command, string? title)

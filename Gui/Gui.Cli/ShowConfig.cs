@@ -15,7 +15,7 @@ namespace Gui.Cli;
 public static class ShowConfig
 {
     public const string Help =
-        "Usage: gui-cli +show-config [options]\n" +
+        "Usage: gui +show-config [options]\n" +
         "\n" +
         "Print the configuration in Ghostty format. By default only the keys set in the\n" +
         "config files (merged across config-file includes) are printed.\n" +
@@ -104,7 +104,7 @@ public static class ShowConfig
                 case "--config-file":
                     if (++i >= args.Length)
                     {
-                        Console.Error.WriteLine("gui-cli: --config-file needs a path");
+                        Console.Error.WriteLine("gui: --config-file needs a path");
                         return 2;
                     }
                     configFile = args[i];
@@ -117,7 +117,7 @@ public static class ShowConfig
                     }
                     else
                     {
-                        Console.Error.WriteLine($"gui-cli: unknown option '{arg}' for +show-config");
+                        Console.Error.WriteLine($"gui: unknown option '{arg}' for +show-config");
                         Console.Error.Write(Help);
                         return 2;
                     }
@@ -132,7 +132,7 @@ public static class ShowConfig
         }
 
         if (configFile is not null && !File.Exists(configFile))
-            Console.Error.WriteLine($"gui-cli: config file not found: {configFile}");
+            Console.Error.WriteLine($"gui: config file not found: {configFile}");
 
         string file = configFile ?? Config.ConfigFile();
         // --default ignores the user's config entirely, like ghostty.

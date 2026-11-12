@@ -84,17 +84,15 @@
     <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
 
-    <!-- Never trim. gui-cli.exe shares this folder's runtime, and the trimmer only knows
-         about Gui's own IL: it strips members of System.Private.CoreLib that gui-cli calls
-         but Gui never does (System.Range.StartAt disappears and "+show-config" dies with
-         MissingMethodException at startup). Trimming saves ~2 MB of the ~176 MB folder, so
-         the trade is not worth a second binary that breaks on unpublishable APIs. -->
+    <!-- Never trim the app: WinUI's XAML support is not trim-safe. the CLI is trimmed in its
+         own publish below, where the trimmer sees the IL it actually needs. -->
     <PublishTrimmed>False</PublishTrimmed>
   </PropertyGroup>
 
-  <!-- ReferenceOutputAssembly=false keeps gui-cli.dll out of the app's compile references,
-       but MSBuild then copies only the CLI's apphost, .deps.json and .runtimeconfig.json.
-       Copy all gui-cli.* files so the exe has its managed assembly next to Gui.exe. -->
+  <!-- ReferenceOutputAssembly=false keeps the CLI's assembly out of the app's compile
+       references, but MSBuild still copies its apphost, .deps.json and .runtimeconfig.json.
+       The CLI deploys as "gui" into a bin\ subfolder: it no longer shares a folder with
+       Gui.exe, so the name no longer collides on a case-insensitive filesystem. -->
   <Target Name="CollectCliOutput" DependsOnTargets="ResolveProjectReferences">
     <!-- GetTargetPath returns an absolute path to gui-cli.dll; its directory is the CLI's
          output folder, so this stays correct even when the output path is overridden. -->
@@ -108,21 +106,34 @@
       <!-- Only the CLI's own files: never copy the .NET runtime, which would add an
            app-local hostfxr.dll and stop the framework-dependent Gui.exe from starting. -->
       <_CliOutputFiles Include="$(_CliDir)gui-cli.*" Exclude="$(_CliDir)gui-cli.pdb" />
+      <!-- Split so the apphost can land as bin\gui.exe while the assembly and its
+           .deps.json / .runtimeconfig.json keep their own names. -->
+      <_CliExe Include="@(_CliOutputFiles)" Condition="'%(Extension)' == '.exe'" />
+      <_CliSide Include="@(_CliOutputFiles)" Condition="'%(Extension)' != '.exe'" />
     </ItemGroup>
   </Target>
 
   <Target Name="CopyCliOutputToBuild" AfterTargets="Build" DependsOnTargets="CollectCliOutput">
-    <Copy SourceFiles="@(_CliOutputFiles)" DestinationFiles="@(_CliOutputFiles->'$(OutDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CliExe)" DestinationFiles="@(_CliExe->'$(OutDir)bin\gui%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CliSide)" DestinationFiles="@(_CliSide->'$(OutDir)bin\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="CopyCliOutputToPublish" AfterTargets="Publish" DependsOnTargets="CollectCliOutput">
-    <Copy SourceFiles="@(_CliOutputFiles)" DestinationFiles="@(_CliOutputFiles->'$(PublishDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  <!-- A framework-dependent publish leaves the CLI in bin\ too, where its apphost finds the
+       shared runtime. A self-contained publish needs the single-file build below. -->
+  <Target Name="CopyCliOutputToPublish" AfterTargets="Publish" DependsOnTargets="CollectCliOutput" Condition="'$(SelfContained)' != 'true'">
+    <Copy SourceFiles="@(_CliExe)" DestinationFiles="@(_CliExe->'$(PublishDir)bin\gui%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CliSide)" DestinationFiles="@(_CliSide->'$(PublishDir)bin\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
   <!-- A self-contained publish has an app-local hostfxr and no installed framework, so a
-       framework-dependent gui-cli.exe cannot start there. Publish the CLI self-contained
-       into the same folder; it brings the same .NET runtime the app already ships. No
-       Restore call: the RID's runtime pack is already in the NuGet cache, and restoring
+       framework-dependent apphost cannot start there. The CLI therefore goes into the
+       payload's "bin" subfolder, self-contained and trimmed to a single 12 MB file.
+       Two reasons it is not published into the payload root with the app: the root is full
+       of WinUI DLLs (DWriteCore, hostfxr, Microsoft.ui.xaml), and a PATH entry pointing
+       there makes unrelated programs load our private copies — the WeChat IME holds
+       DWriteCore.dll from it, which turns every upgrade into a "files in use" prompt. bin\
+       holds gui.exe (the CLI) and nothing else, so a PATH entry there is harmless.
+       No Restore call: the RID's runtime pack is already in the NuGet cache, and restoring
        here would rewrite the CLI's obj state and break later framework-dependent builds. -->
   <!-- Unpackaged WinUI 3 keeps its compiled XAML in Gui.pri and the .xbf files, but the
        Publish target does not copy them, so a published Gui.exe dies at startup with
@@ -135,10 +146,23 @@
     <Copy SourceFiles="@(_XamlResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="PublishCliSelfContained" AfterTargets="CopyCliOutputToPublish" Condition="'$(SelfContained)' == 'true'">
+  <Target Name="PublishCliToBin" AfterTargets="CopyCliOutputToPublish" Condition="'$(SelfContained)' == 'true'">
     <PropertyGroup>
-      <_CliPublishDir>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(PublishDir)'))))))</_CliPublishDir>
+      <_CliPublishDir>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(PublishDir)', 'bin'))))))</_CliPublishDir>
     </PropertyGroup>
-    <MSBuild Projects="..\Gui.Cli\Gui.Cli.csproj" Targets="Publish" RemoveProperties="PublishProfile" Properties="Configuration=$(Configuration);Platform=$(Platform);SelfContained=true;PublishDir=$(_CliPublishDir);PublishReadyToRun=false;PublishTrimmed=false;PublishSingleFile=false" />
+    <!-- A separate dotnet publish rather than the MSBuild task: run inside this build, the CLI
+         inherits the app's publish properties and silently publishes untrimmed (93 MB instead
+         of 13 MB). -->
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\Gui.Cli\Gui.Cli.csproj&quot; -c $(Configuration) -p:Platform=$(Platform) -p:Version=$(Version) --self-contained -p:PublishDir=$(_CliPublishDir) -p:PublishSingleFile=true -p:PublishTrimmed=true -p:PublishReadyToRun=false -p:DebugType=None -p:DebugSymbols=false --nologo" />
+    <!-- The assembly keeps its project name; only the deployed file is "gui". -->
+    <Delete Files="$(_CliPublishDir)gui.exe" />
+    <Move SourceFiles="$(_CliPublishDir)gui-cli.exe" DestinationFiles="$(_CliPublishDir)gui.exe" />
+    <!-- The ProjectReference itself still drops the CLI's apphost, .deps.json and
+         .runtimeconfig.json into the payload root; only bin may carry the CLI, or a PATH
+         entry on the root would expose the WinUI DLLs again. -->
+    <ItemGroup>
+      <_StrayCliFile Include="$(PublishDir)gui-cli.*" />
+    </ItemGroup>
+    <Delete Files="@(_StrayCliFile)" />
   </Target>
 </Project>

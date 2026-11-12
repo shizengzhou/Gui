@@ -9,7 +9,7 @@ using Microsoft.UI.Dispatching;
 namespace Gui.Term;
 
 /// <summary>
-/// The app end of gui-cli's control channel: one named pipe, one request at a time, each
+/// The app end of the CLI's control channel: one named pipe, one request at a time, each
 /// request handed to the UI thread so it runs exactly like a palette row.
 ///
 /// The server lives for the whole process and is started once the first window exists; a

@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 namespace Gui.Term;
 
 /// <summary>
-/// The local control channel gui-cli talks to: ghostty's "+new-tab" over native IPC, reduced
+/// The local control channel the CLI talks to: ghostty's "+new-tab" over native IPC, reduced
 /// to one request line and one response line of UTF-8 JSON over a named pipe.
 ///
 /// Both ends compile this file (the app and Gui.Cli link it), so the pipe name and the wire
