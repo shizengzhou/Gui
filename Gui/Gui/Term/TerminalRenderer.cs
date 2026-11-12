@@ -1853,10 +1853,16 @@ public sealed unsafe class TerminalRenderer
         var finalBounds = new Rect(0, 0, width, height);
         ds.DrawImage(source, finalBounds, finalBounds);
 
-        _shaderPreviousCursor = _shaderCursor;
-        _shaderPreviousCursorStyle = _shaderCursorStyle;
-        _shaderPreviousCursorVisible = _shaderCursorVisible;
-        _shaderPreviousCursorColor = _shaderCursorColor;
+        // iPreviousCursor is the last *different* cursor, not the previous frame's: the
+        // shader animation redraws every 16 ms, so overwriting it each frame would leave a
+        // trail shader with a zero-length segment and nothing to draw.
+        if (cursorChanged)
+        {
+            _shaderPreviousCursor = _shaderCursor;
+            _shaderPreviousCursorStyle = _shaderCursorStyle;
+            _shaderPreviousCursorVisible = _shaderCursorVisible;
+            _shaderPreviousCursorColor = _shaderCursorColor;
+        }
     }
 
     private float ShaderTime()
