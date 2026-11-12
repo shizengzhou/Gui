@@ -155,6 +155,11 @@ public sealed partial class Workspace
         _settingsLayer.Resources["TextFillColorSecondaryBrush"] = TextBodyBrush();
         _settingsLayer.Resources["TextFillColorTertiaryBrush"] = TextFaintBrush();
 
+        // The expander's chevron has brushes of its own rather than the card's foreground.
+        _settingsLayer.Resources["ExpanderChevronForeground"] = TextFaintBrush();
+        _settingsLayer.Resources["ExpanderChevronPointerOverForeground"] = cardForegroundActive;
+        _settingsLayer.Resources["ExpanderChevronPressedForeground"] = cardForegroundActive;
+
         // The About card's repository link is a HyperlinkButton, which takes the system accent.
         Brush linkAccent = AccentBrush();
         _settingsLayer.Resources["HyperlinkButtonForeground"] = linkAccent;
