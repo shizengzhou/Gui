@@ -124,6 +124,14 @@ public sealed partial class Workspace
             _settingsLayer.Resources[key] = fieldFillHover;
         }
 
+        // The toolkit's cards and expander draw their header text, chevron and action glyph
+        // from SettingsCardForeground, another Fluent grey that ignores the theme.
+        Brush cardForegroundActive = TextStrongBrush();
+        _settingsLayer.Resources["SettingsCardForeground"] = TextBodyBrush();
+        _settingsLayer.Resources["SettingsCardForegroundPointerOver"] = cardForegroundActive;
+        _settingsLayer.Resources["SettingsCardForegroundPressed"] = cardForegroundActive;
+        _settingsLayer.Resources["SettingsCardForegroundDisabled"] = TextFaintBrush();
+
         var card = new Border
         {
             CornerRadius = new CornerRadius(CompactDensity ? 0 : Theme.RadiusSurface),
