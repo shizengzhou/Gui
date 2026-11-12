@@ -1081,6 +1081,14 @@ public sealed unsafe class TerminalRenderer
         string cursorText = string.Empty;
         Color cursorFg = defaultFg;
 
+        // Debug counters: a frame that paints fewer rows than the viewport leaves the rest of
+        // the surface blank (the canvas is cleared first), which shows up as flicker.
+        int drawnRows = 0;
+        int rowBreaks = 0;
+        int firstRow = 0;
+        int lastRow = -2;
+        bool haveFirstRow = false;
+
         try
         {
             while (rows != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(rows))
@@ -1096,6 +1104,11 @@ public sealed unsafe class TerminalRenderer
                     Size = (nuint)sizeof(GhosttyNative.GhosttyRenderStateRowSelection),
                 };
                 bool hasSelection = GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_DATA_SELECTION, &selection) == GhosttyNative.SUCCESS;
+
+                if (!haveFirstRow) { firstRow = viewportY; haveFirstRow = true; }
+                else if (viewportY != lastRow + 1) rowBreaks++;
+                lastRow = viewportY;
+                drawnRows++;
 
                 runs.Clear();
                 float rowTop = viewportY * cellH;
@@ -1332,6 +1345,16 @@ public sealed unsafe class TerminalRenderer
         {
             if (cells != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_cells_free(cells);
             if (rows != IntPtr.Zero) GhosttyNative.ghostty_render_state_row_iterator_free(rows);
+        }
+
+        // How many rows the viewport should hold, from the same math the pane uses. Log only
+        // when the frame disagrees: equal frames would flood the log at every keystroke.
+        int expectedRows = cellH > 0 ? (int)(viewportHeight / cellH) : 0;
+        if (drawnRows != expectedRows || rowBreaks > 0)
+        {
+            Diag.Debug("render.rows",
+                $"drawn={drawnRows} expected={expectedRows} span={firstRow}..{lastRow} breaks={rowBreaks} " +
+                $"viewport={viewportWidth:0.#}x{viewportHeight:0.#} cellH={cellH:0.##} changed={changed}");
         }
 
         // IME composition: painted over the cells at the cursor so the pinyin being typed is
