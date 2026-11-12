@@ -1760,6 +1760,24 @@ public sealed class TerminalPane
         // real width, not the 80x24 seed.
         Thickness oldMargin = _canvas.Margin;
         BalancePadding();
+
+        // Win2D keeps a two-buffer swap chain for the canvas. When the control's size lands
+        // on a half pixel, the two buffers can be allocated one physical pixel apart, so
+        // every redraw presents text half a pixel off from the last one -- a visible shimmer
+        // on idle TUIs. Snap the surface to an even number of physical pixels by absorbing
+        // the remainder in the right/bottom padding.
+        double scale = RasterizationScale;
+        double outerWidth = _canvas.ActualWidth + oldMargin.Left + oldMargin.Right;
+        double outerHeight = _canvas.ActualHeight + oldMargin.Top + oldMargin.Bottom;
+        Thickness margin = _canvas.Margin;
+        double snappedWidth = Math.Floor((outerWidth - margin.Left - margin.Right) * scale / 2) * 2 / scale;
+        double snappedHeight = Math.Floor((outerHeight - margin.Top - margin.Bottom) * scale / 2) * 2 / scale;
+        double right = outerWidth - margin.Left - snappedWidth;
+        double bottom = outerHeight - margin.Top - snappedHeight;
+        if (snappedWidth >= 2 && snappedHeight >= 2 && right >= 0 && bottom >= 0 &&
+            (Math.Abs(right - margin.Right) > 0.001 || Math.Abs(bottom - margin.Bottom) > 0.001))
+            SetPaddingMargins(margin.Left, margin.Top, right, bottom);
+
         double width = _canvas.ActualWidth + oldMargin.Left + oldMargin.Right
                        - _canvas.Margin.Left - _canvas.Margin.Right;
         double height = _canvas.ActualHeight + oldMargin.Top + oldMargin.Bottom
