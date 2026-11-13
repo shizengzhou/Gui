@@ -74,10 +74,12 @@ a terminal is fed 5,000 lines (CRLF, plus a bare-LF run that must wrap into more
 scrollback caps are asserted through `ghostty_terminal_set` / `ghostty_terminal_get`. Set `GUI_GHOSTTY_DLL` to test a different
 build of the DLL. Exit code 0 = pass, 1 = ABI mismatch.
 
-`tests/Gui.LogicTests` compiles `Term/Config.cs`, `Term/KeyMap.cs`, `Term/Theme.cs`,
-`Term/TerminalTheme.cs`, `Term/WideText.cs` and `Diag.cs` and covers the config parser,
-the key map, the theme helpers, the cell-width rules, the log level parsing and the
-UTF-8 BOM + CRLF rule for every source file in the repo.
+`tests/Gui.LogicTests` compiles the shipped sources themselves — the config parser and schema,
+the key map and its bindings, the theme helpers, the cell-width rules, shell integration and
+profile discovery, the OSC 7501 tracker, window state, the IPC protocol and the CLI's commands
+— so a test breaks when the code it covers breaks. It covers the config surface, keybindings,
+theme resolution, cell widths, the log level parsing and the UTF-8 BOM + CRLF rule for every
+source file in the repo.
 
 `tests/Gui.PerfTests` is the release performance harness: it compiles the same
 `GhosttyNative.cs` / `CellText.cs` the app uses and measures parse throughput for plain, SGR and
@@ -445,12 +447,11 @@ Only the x64 binary is checked in; other platforms need the script with `PLATFOR
 
 ## Packaging and diagnostics
 
-- `Gui/Gui/Package.appxmanifest` is not consumed by the build (the app is unpackaged); it is kept only
-  for the `systemai:Capability Name="systemAIModels"` declaration. `Gui/Gui/app.manifest` is the
-  classic Win32 manifest.
+- `Gui/Gui (Package)/Package.appxmanifest` is not consumed by the build (the app is unpackaged);
+  it is kept only for the `systemai:Capability Name="systemAIModels"` declaration.
+  `Gui/Gui/app.manifest` is the classic Win32 manifest.
 - A window that never appears with no log lines means the failure happened before `App`'s constructor —
   check that the Windows App SDK runtime (self-contained copy) sits next to the exe.
 - `.gitignore` excludes `bin/`, `obj/`, `.vs/`, MSIX/NuGet artifacts and the local `_ref/` scratch tree
   (upstream source drop, Zig toolchain, ConPTY probes); the prebuilt
   `Gui/Gui/native/*/ghostty-vt.dll` is re-included and must stay tracked.
-- The repo has no commits so far.
