@@ -289,11 +289,9 @@ public sealed unsafe class TerminalSession : IDisposable
         if (string.IsNullOrEmpty(command)) command = DefaultShellPath();
         string executable = ExecutableToken(command);
         _shellExecutable = executable;
-        // Only augment a bare shell command: any configured arguments are left exactly
-        // as the user wrote them. An auto-detected shell is an unquoted full path that may
-        // contain spaces, so "bare" compares against the executable, not the first token.
-        if (IsPowerShell(command) && command.Trim().Length == executable.Length)
-            command = ShellIntegration.Inject(command, shellIntegration, shellFeatures);
+        // The wrapper decides for itself whether it can add anything: a shell with arguments
+        // of its own, a login bash or another shell is left exactly as the user wrote it.
+        command = ShellIntegration.Inject(command, shellIntegration, shellFeatures, executable);
 
         try
         {
@@ -950,6 +948,119 @@ public sealed unsafe class TerminalSession : IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The viewport rows that make up the soft-wrapped logical line containing
+    /// <paramref name="viewportY"/>, top to bottom, with each row's cell text. A URL or a
+    /// path that wraps across rows has to be matched as one string, which is what this
+    /// gives the link finder. Null when the terminal or the render state is not ready.
+    /// </summary>
+    public List<(int Y, string[] Cells)>? WrappedLineAt(int viewportY)
+    {
+        IntPtr state = _renderState;
+        if (_terminal == IntPtr.Zero || state == IntPtr.Zero) return null;
+        if (_rowIterator == IntPtr.Zero || _cells == IntPtr.Zero) return null;
+
+        // First pass: only the wrap flags, so the line's first and last row are known
+        // before any cell text is read.
+        var flags = new List<(int Y, bool Wrap, bool Continuation)>();
+        IntPtr rows = _rowIterator;
+        GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &rows);
+        while (rows != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(rows))
+        {
+            int y = 0;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_VIEWPORT_Y, &y) != GhosttyNative.SUCCESS)
+                continue;
+
+            bool wrap = false, continuation = false;
+            ulong raw = 0;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_DATA_RAW, &raw) == GhosttyNative.SUCCESS)
+            {
+                byte wrapped = 0, continued = 0;
+                if (GhosttyNative.ghostty_row_get(raw, GhosttyNative.ROW_DATA_WRAP, &wrapped) == GhosttyNative.SUCCESS)
+                    wrap = wrapped != 0;
+                if (GhosttyNative.ghostty_row_get(raw, GhosttyNative.ROW_DATA_WRAP_CONTINUATION, &continued) == GhosttyNative.SUCCESS)
+                    continuation = continued != 0;
+            }
+            flags.Add((y, wrap, continuation));
+        }
+        if (flags.Count == 0) return null;
+        flags.Sort((a, b) => a.Y.CompareTo(b.Y));
+
+        int target = flags.FindIndex(f => f.Y == viewportY);
+        if (target < 0) return null;
+
+        int first = target;
+        while (first > 0 && flags[first].Continuation) first--;
+        int last = first;
+        while (last < flags.Count - 1 && flags[last].Wrap) last++;
+
+        int top = flags[first].Y;
+        int bottom = flags[last].Y;
+
+        // Second pass: the cell text of just the rows in the line.
+        var line = new List<(int Y, string[] Cells)>(last - first + 1);
+        IntPtr walk = _rowIterator;
+        GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &walk);
+        while (walk != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(walk))
+        {
+            int y = 0;
+            if (GhosttyNative.ghostty_render_state_row_get(walk, GhosttyNative.ROW_VIEWPORT_Y, &y) != GhosttyNative.SUCCESS)
+                continue;
+            if (y < top || y > bottom) continue;
+
+            IntPtr cells = _cells;
+            if (GhosttyNative.ghostty_render_state_row_get(walk, GhosttyNative.ROW_DATA_CELLS, &cells) != GhosttyNative.SUCCESS)
+                continue;
+
+            var row = new List<string>();
+            while (GhosttyNative.ghostty_render_state_row_cells_next(cells))
+                row.Add(CellText.Read(cells));
+            line.Add((y, row.ToArray()));
+        }
+
+        line.Sort((a, b) => a.Y.CompareTo(b.Y));
+        return line.Count > 0 ? line : null;
+    }
+
+    /// <summary>True when the viewport row continues onto the next one (soft wrap).</summary>
+    public bool RowWraps(int viewportY) => RowFlags(viewportY, out bool wrap, out _) && wrap;
+
+    /// <summary>True when the viewport row continues the previous one (soft wrap).</summary>
+    public bool RowIsContinuation(int viewportY) =>
+        RowFlags(viewportY, out _, out bool continuation) && continuation;
+
+    private bool RowFlags(int viewportY, out bool wrap, out bool continuation)
+    {
+        wrap = false;
+        continuation = false;
+
+        IntPtr state = _renderState;
+        if (_terminal == IntPtr.Zero || state == IntPtr.Zero) return false;
+        if (_rowIterator == IntPtr.Zero) return false;
+
+        IntPtr rows = _rowIterator;
+        GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &rows);
+        while (rows != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(rows))
+        {
+            int y = 0;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_VIEWPORT_Y, &y) != GhosttyNative.SUCCESS)
+                continue;
+            if (y != viewportY) continue;
+
+            ulong raw = 0;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_DATA_RAW, &raw) != GhosttyNative.SUCCESS)
+                return false;
+
+            byte wrapped = 0, continued = 0;
+            if (GhosttyNative.ghostty_row_get(raw, GhosttyNative.ROW_DATA_WRAP, &wrapped) == GhosttyNative.SUCCESS)
+                wrap = wrapped != 0;
+            if (GhosttyNative.ghostty_row_get(raw, GhosttyNative.ROW_DATA_WRAP_CONTINUATION, &continued) == GhosttyNative.SUCCESS)
+                continuation = continued != 0;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -1805,12 +1916,6 @@ public sealed unsafe class TerminalSession : IDisposable
         string? comspec = Environment.GetEnvironmentVariable("COMSPEC");
         if (!string.IsNullOrEmpty(comspec)) return comspec;
         return "cmd.exe";
-    }
-
-    private static bool IsPowerShell(string command)
-    {
-        string stem = SafeStem(command).ToLowerInvariant();
-        return stem is "pwsh" or "powershell";
     }
 
     /// <summary>

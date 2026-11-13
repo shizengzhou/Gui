@@ -107,9 +107,9 @@ public sealed class TerminalPane
     private bool _hoverHadCtrl;
     private bool _pointerInside;
     private bool _pressDragged;
-    private int _hoverStartX = -1;
-    private int _hoverEndX = -1;
-    private Border? _linkUnderline;
+    private readonly List<LinkRun> _hoverRuns = new();
+    private readonly List<Border> _linkUnderlines = new();
+    private Grid? _underlineLayer;
     private CursorGrid? _canvasHost;
     private ulong _lastClickTime;
     private ushort _lastClickX;
@@ -422,15 +422,9 @@ public sealed class TerminalPane
         };
 
         // Ghostty underlines the hovered link. The terminal grid is painted outside XAML,
-        // so the underline is a thin overlay aligned to the cell run instead of a cell style.
-        _linkUnderline = new Border
-        {
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top,
-            IsHitTestVisible = false,
-            Visibility = Visibility.Collapsed,
-            Background = new SolidColorBrush(Theme.TextStrong()),
-        };
+        // so the underline is a thin overlay aligned to the cell runs instead of a cell
+        // style; a wrapped link needs one border per row.
+        _underlineLayer = new Grid { IsHitTestVisible = false };
 
         // "search": a compact find bar over the top-right of the surface.
         _searchBox = new TextBox
@@ -780,8 +774,8 @@ public sealed class TerminalPane
         frameRoot.Children.Add(_progressBar);
         Grid.SetRow(_dim, 1);
         frameRoot.Children.Add(_dim);
-        Grid.SetRow(_linkUnderline, 1);
-        frameRoot.Children.Add(_linkUnderline);
+        Grid.SetRow(_underlineLayer, 1);
+        frameRoot.Children.Add(_underlineLayer);
         Grid.SetRow(_linkPreview, 1);
         frameRoot.Children.Add(_linkPreview);
         Grid.SetRow(_searchBar, 1);
@@ -2379,8 +2373,8 @@ public sealed class TerminalPane
         }
         if (_linkPreviewText is not null)
             _linkPreviewText.Foreground = new SolidColorBrush(Theme.TextStrong());
-        if (_linkUnderline is not null)
-            _linkUnderline.Background = new SolidColorBrush(Theme.TextStrong());
+        foreach (Border underline in _linkUnderlines)
+            underline.Background = new SolidColorBrush(Theme.TextStrong());
         if (_searchBar is not null)
         {
             _searchBar.Background = new SolidColorBrush(Theme.PaletteTint());
@@ -3492,8 +3486,11 @@ public sealed class TerminalPane
         return true;
     }
 
-    /// <summary>One hovered link: the value to open plus the cell run it covers.</summary>
-    private readonly record struct LinkTarget(string Text, bool Osc8, bool IsUrl, int StartX, int EndX);
+    /// <summary>One row of a hovered link: the cell run it covers on that viewport row.</summary>
+    private readonly record struct LinkRun(int Y, int StartX, int EndX);
+
+    /// <summary>One hovered link: the value to open plus the cell runs it covers.</summary>
+    private readonly record struct LinkTarget(string Text, bool Osc8, bool IsUrl, LinkRun[] Runs);
 
     /// <summary>
     /// Ghostty strips Shift from the comparison modifiers when it escapes a mouse capture;
@@ -3575,8 +3572,8 @@ public sealed class TerminalPane
 
         LinkTarget? link = LinkAt(x, y);
         _hoverOsc8 = link?.Osc8 == true;
-        _hoverStartX = link?.StartX ?? -1;
-        _hoverEndX = link?.EndX ?? -1;
+        _hoverRuns.Clear();
+        if (link is { } target) _hoverRuns.AddRange(target.Runs);
         SetHoverUrl(link?.Text);
     }
 
@@ -3586,49 +3583,108 @@ public sealed class TerminalPane
         if (_config.LinkOsc8)
         {
             string? uri = _session.HyperlinkAt(x, y);
-            if (uri is not null)
-            {
-                // OSC 8 links can span many cells; underline the whole run.
-                int start = x;
-                int end = x;
-                while (start > 0 && _session.HyperlinkAt((ushort)(start - 1), y) == uri) start--;
-                while (end + 1 < _cols && _session.HyperlinkAt((ushort)(end + 1), y) == uri) end++;
-                return new LinkTarget(uri, true, true, start, end);
-            }
+            if (uri is not null) return Osc8Run(uri, x, y);
         }
 
-        if (_config.LinkUrl)
-        {
-            string? url = UrlAt(x, y, out int startX, out int endX, out bool isUrl);
-            if (url is not null) return new LinkTarget(url, false, isUrl, startX, endX);
-        }
+        if (_config.LinkUrl) return UrlAt(x, y);
 
         return null;
     }
 
     /// <summary>
-    /// The URL or file path covering the cell, matching Ghostty's default matcher. The row is
-    /// mapped cell-by-cell: a grapheme can be more than one UTF-16 unit, so a plain string
-    /// index would drift and report the wrong cell.
+    /// The run of cells carrying one OSC 8 URI. The run follows the soft wrap onto the
+    /// rows above and below, so a hyperlink split by the right edge still underlines and
+    /// opens as one link.
     /// </summary>
-    private string? UrlAt(ushort x, ushort y, out int startCell, out int endCell, out bool isUrl)
+    private LinkTarget Osc8Run(string uri, ushort x, ushort y)
     {
-        startCell = -1;
-        endCell = -1;
-        isUrl = false;
-
-        _session.UpdateRenderState();
-        string[]? row = _session.RowCells(y);
-        if (row is null || x >= row.Length) return null;
-
-        var starts = new int[row.Length + 1];
-        var text = new System.Text.StringBuilder();
-        for (int i = 0; i < row.Length; i++)
+        int firstY = y;
+        int firstX = x;
+        while (true)
         {
-            starts[i] = text.Length;
-            text.Append(row[i]);
+            if (firstX > 0 && _session.HyperlinkAt((ushort)(firstX - 1), (ushort)firstY) == uri)
+            {
+                firstX--;
+                continue;
+            }
+            if (firstX == 0 && firstY > 0 && _session.RowIsContinuation(firstY) &&
+                _session.HyperlinkAt((ushort)(_cols - 1), (ushort)(firstY - 1)) == uri)
+            {
+                firstY--;
+                firstX = _cols - 1;
+                continue;
+            }
+            break;
         }
-        starts[row.Length] = text.Length;
+
+        var runs = new List<LinkRun>();
+        int rowStart = firstX;
+        int currentY = firstY;
+        int currentX = firstX;
+        while (true)
+        {
+            if (_session.HyperlinkAt((ushort)currentX, (ushort)currentY) != uri)
+            {
+                // The cell clicked is always part of the run; the scan only leaves it when
+                // the run itself has no cells there (a stale render state).
+                if (runs.Count == 0) runs.Add(new LinkRun(y, x, x));
+                break;
+            }
+
+            if (currentX + 1 < _cols &&
+                _session.HyperlinkAt((ushort)(currentX + 1), (ushort)currentY) == uri)
+            {
+                currentX++;
+                continue;
+            }
+
+            runs.Add(new LinkRun(currentY, rowStart, currentX));
+            if (_session.RowWraps(currentY) && currentY + 1 < _rows)
+            {
+                currentY++;
+                currentX = 0;
+                rowStart = 0;
+                continue;
+            }
+            break;
+        }
+
+        return new LinkTarget(uri, true, true, runs.ToArray());
+    }
+
+    /// <summary>
+    /// The URL or file path covering the cell, matching Ghostty's default matcher. A
+    /// soft-wrapped line is matched as one string, so a URL split by the right edge is found
+    /// whole; the joined text is mapped back to cells so the covered runs can be underlined
+    /// row by row. A grapheme can be more than one UTF-16 unit, so a plain string index would
+    /// drift and report the wrong cell.
+    /// </summary>
+    private LinkTarget? UrlAt(ushort x, ushort y)
+    {
+        _session.UpdateRenderState();
+        List<(int Y, string[] Cells)>? line = _session.WrappedLineAt(y);
+        if (line is null || line.Count == 0) return null;
+
+        var text = new System.Text.StringBuilder();
+        var cellTextStart = new List<int>();
+        var cellY = new List<int>();
+        var cellX = new List<int>();
+        int targetCell = -1;
+
+        for (int r = 0; r < line.Count; r++)
+        {
+            (int rowY, string[] cells) = line[r];
+            for (int i = 0; i < cells.Length; i++)
+            {
+                if (rowY == y && i == x) targetCell = cellTextStart.Count;
+                cellTextStart.Add(text.Length);
+                cellY.Add(rowY);
+                cellX.Add(i);
+                text.Append(cells[i]);
+            }
+        }
+        if (targetCell < 0) return null;
+        cellTextStart.Add(text.Length);
 
         try
         {
@@ -3636,31 +3692,38 @@ public sealed class TerminalPane
             {
                 int matchStart = match.Index;
                 int matchEnd = match.Index + match.Length;
+                if (matchEnd <= cellTextStart[targetCell] || matchStart >= cellTextStart[targetCell + 1])
+                    continue;
 
-                int first = -1;
-                int last = -1;
-                for (int i = 0; i < row.Length; i++)
+                // One run per row: a wrapped match is underlined on every row it covers.
+                var runs = new List<LinkRun>();
+                int runY = -1, runStart = 0, runEnd = -1;
+                for (int cell = 0; cell < cellY.Count; cell++)
                 {
-                    if (starts[i + 1] <= matchStart || starts[i] >= matchEnd) continue;
-                    if (first < 0) first = i;
-                    last = i;
+                    if (cellTextStart[cell + 1] <= matchStart || cellTextStart[cell] >= matchEnd) continue;
+                    if (cellY[cell] != runY)
+                    {
+                        if (runY >= 0) runs.Add(new LinkRun(runY, runStart, runEnd));
+                        runY = cellY[cell];
+                        runStart = cellX[cell];
+                    }
+                    runEnd = cellX[cell];
                 }
-                if (first < 0 || x < first || x > last) continue;
+                if (runY >= 0) runs.Add(new LinkRun(runY, runStart, runEnd));
+                if (runs.Count == 0) continue;
 
                 string value = match.Value;
-                isUrl = UrlSchemePattern.IsMatch(value) ||
-                        value.StartsWith("www.", StringComparison.OrdinalIgnoreCase);
+                bool isUrl = UrlSchemePattern.IsMatch(value) ||
+                             value.StartsWith("www.", StringComparison.OrdinalIgnoreCase);
                 if (value.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
                     value = "https://" + value;
 
-                startCell = first;
-                endCell = last;
-                return value;
+                return new LinkTarget(value, false, isUrl, runs.ToArray());
             }
         }
         catch (RegexMatchTimeoutException)
         {
-            // A pathological row must not stall the pointer; treat it as plain text.
+            // A pathological line must not stall the pointer; treat it as plain text.
         }
 
         return null;
@@ -3672,8 +3735,7 @@ public sealed class TerminalPane
         if (url is null)
         {
             _hoverOsc8 = false;
-            _hoverStartX = -1;
-            _hoverEndX = -1;
+            _hoverRuns.Clear();
         }
         UpdateLinkPreview();
         UpdateLinkUnderline();
@@ -3709,26 +3771,50 @@ public sealed class TerminalPane
         _linkPreview.Margin = new Thickness(left, top, 0, 0);
     }
 
-    /// <summary>Draws Ghostty's hover underline across the link's cell run.</summary>
+    /// <summary>
+    /// Draws Ghostty's hover underline across the link's cell runs: one border per viewport
+    /// row, so a link that wraps at the right edge is underlined on every row it covers.
+    /// </summary>
     private void UpdateLinkUnderline()
     {
-        if (_linkUnderline is null) return;
+        if (_underlineLayer is null) return;
 
         CellMetrics metrics = _renderer.CellMetrics;
-        if (_hoverUrl is null || !_pointerInside || _hoverStartX < 0 ||
-            _hoverEndX < _hoverStartX || metrics.Width == 0 || metrics.Height == 0)
+        bool visible = _hoverUrl is not null && _pointerInside && _hoverRuns.Count > 0 &&
+                       metrics.Width != 0 && metrics.Height != 0;
+
+        for (int i = 0; i < _hoverRuns.Count; i++)
         {
-            _linkUnderline.Visibility = Visibility.Collapsed;
-            return;
+            if (!visible) break;
+
+            LinkRun run = _hoverRuns[i];
+            if (run.StartX < 0 || run.EndX < run.StartX) continue;
+
+            while (_linkUnderlines.Count <= i)
+            {
+                var underline = new Border
+                {
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    IsHitTestVisible = false,
+                    Visibility = Visibility.Collapsed,
+                    Background = new SolidColorBrush(Theme.TextStrong()),
+                };
+                _linkUnderlines.Add(underline);
+                _underlineLayer.Children.Add(underline);
+            }
+
+            Border border = _linkUnderlines[i];
+            double left = _canvas.Margin.Left + run.StartX * (double)_renderer.CellAdvanceX;
+            double top = _canvas.Margin.Top + run.Y * (double)metrics.Height + metrics.Height - 1.5;
+            border.Margin = new Thickness(left, top, 0, 0);
+            border.Width = Math.Max(1.0, (run.EndX - run.StartX + 1) * (double)_renderer.CellAdvanceX);
+            border.Height = 1.5;
+            border.Visibility = Visibility.Visible;
         }
 
-        double left = _canvas.Margin.Left + _hoverStartX * (double)_renderer.CellAdvanceX;
-        double top = _canvas.Margin.Top + _hoverY * (double)metrics.Height + metrics.Height - 1.5;
-        _linkUnderline.Margin = new Thickness(left, top, 0, 0);
-        _linkUnderline.Width = Math.Max(1.0,
-            (_hoverEndX - _hoverStartX + 1) * (double)_renderer.CellAdvanceX);
-        _linkUnderline.Height = 1.5;
-        _linkUnderline.Visibility = Visibility.Visible;
+        for (int i = visible ? _hoverRuns.Count : 0; i < _linkUnderlines.Count; i++)
+            _linkUnderlines[i].Visibility = Visibility.Collapsed;
     }
 
     /// <summary>

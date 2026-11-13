@@ -161,9 +161,14 @@ internal static unsafe class GhosttyNative
     internal const int BUILD_INFO_KITTY_GRAPHICS = 2;
 
     // ---- GhosttyRenderStateRowData ----
+    internal const int ROW_DATA_RAW = 2;
     internal const int ROW_DATA_CELLS = 3;
     internal const int ROW_DATA_SELECTION = 4;
     internal const int ROW_VIEWPORT_Y = 6;
+
+    // ---- GhosttyRowData ----
+    internal const int ROW_DATA_WRAP = 1;
+    internal const int ROW_DATA_WRAP_CONTINUATION = 2;
 
     // ---- GhosttyRenderStateRowCellsData ----
     internal const int CELL_RAW = 1;
@@ -793,6 +798,9 @@ internal static unsafe class GhosttyNative
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_render_state_row_get(IntPtr iterator, int data, void* output);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_row_get(ulong row, int data, void* output);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_render_state_row_cells_new(IntPtr allocator, out IntPtr cells);
