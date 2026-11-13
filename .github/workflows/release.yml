@@ -1,0 +1,88 @@
+﻿name: Release
+
+# Tag-driven: "git tag v1.2.3 && git push origin v1.2.3". The tag is the version, so an
+# accidental push to main can never cut a release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The changelog is built from the commits since the previous tag, so the tag
+          # history has to be present.
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Inno Setup
+        # build-installer.ps1 looks for ISCC.exe in the usual install locations, which is
+        # where the Chocolatey package puts it.
+        run: choco install innosetup --no-progress -y
+
+      - name: Read the version from the tag
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag -replace '^v', ''
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.+-]+)?$') {
+            throw "tag '$tag' is not a version (expected v1.2.3 or v1.2.3-beta.1)"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+          $prerelease = if ($version.Contains('-')) { 'true' } else { 'false' }
+          "PRERELEASE=$prerelease" >> $env:GITHUB_ENV
+
+      - name: Build installer
+        # Runs the unit and ABI tests first, so a release cannot be cut on a broken build.
+        run: ./build-installer.ps1 -Version $env:VERSION -Platform x64
+
+      - name: Write the changelog
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $repo = $env:GITHUB_REPOSITORY
+          $previous = git describe --tags --abbrev=0 --exclude $tag "$tag" 2>$null
+          $range = if ($previous) { "$previous..$tag" } else { $tag }
+          $commits = @(git log $range --no-merges --pretty=format:'- %s (%h)')
+
+          $notes = [System.Collections.Generic.List[string]]::new()
+          $notes.Add('## What''s changed')
+          $notes.Add('')
+          if ($commits.Count -gt 0) {
+            $commits | ForEach-Object { $notes.Add($_) }
+          } else {
+            $notes.Add('- No changes since the previous release.')
+          }
+          if ($previous) {
+            $notes.Add('')
+            $notes.Add("**Full changelog**: https://github.com/$repo/compare/$previous...$tag")
+          }
+
+          $path = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -Path $path -Value $notes -Encoding utf8
+          "NOTES=$path" >> $env:GITHUB_ENV
+          Get-Content $path | Write-Host
+
+      - name: Create the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $arguments = @(
+            'release', 'create', $env:GITHUB_REF_NAME,
+            '--title', "Gui $env:VERSION",
+            '--notes-file', $env:NOTES,
+            "dist/Gui-$env:VERSION-x64-setup.exe"
+          )
+          if ($env:PRERELEASE -eq 'true') { $arguments += '--prerelease' }
+          gh @arguments
