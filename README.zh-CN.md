@@ -1,6 +1,6 @@
 ﻿# Gui
 
-一个 Windows 终端，目标成为 Windows 上的 Ghostty。
+Gui 说：“我就是要一步一步一步一步一步一步地追到最高，我要做 Windows 上的 Ghostty”。
 
 [English](README.md) | **简体中文**
 
