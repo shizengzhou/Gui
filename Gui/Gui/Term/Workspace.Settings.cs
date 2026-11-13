@@ -908,6 +908,10 @@ public sealed partial class Workspace
             SettingsRow(Strings.SettingsCursorBlink, null,
                 SettingsSwitch(_config.CursorBlink != false, ApplyCursorBlinkChoice)))));
 
+        page.Children.Add(SettingsGroup(Strings.SettingsSelection, SettingsCard(
+            SettingsRow(Strings.SettingsCopyOnSelect, Strings.SettingsCopyOnSelectDescription,
+                SettingsSwitch(_config.CopyOnSelect, ApplyCopyOnSelectChoice)))));
+
         return page;
     }
 
@@ -1320,6 +1324,17 @@ public sealed partial class Workspace
         _config.CursorBlink = blink;
         Config.SaveValue("cursor-style-blink", blink ? "true" : "false");
         RefreshPaneFonts();
+    }
+
+    private void ApplyCopyOnSelectChoice(bool copy)
+    {
+        _config.CopyOnSelect = copy;
+        Config.SaveValue("copy-on-select", copy ? "true" : "false");
+
+        // Split panes and inherited tabs hold a snapshot of the config; the selection code
+        // reads it at copy time, so it just has to be pushed across.
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane => pane.SyncConfig(_config));
     }
 
     private void RefreshPaneFonts()
