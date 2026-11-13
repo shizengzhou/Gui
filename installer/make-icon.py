@@ -141,27 +141,38 @@ def _ink_layer(draw_fn):
     return layer.crop(box)
 
 
-def chevron_g_mark(font_path, color, with_cursor=True, gap=0.22, bar_cursor=False):
-    """The prompt of the icon: a ">" followed by the app's initial (and a cursor)."""
-    chevron = _ink_layer(lambda d: prompt(d, color, cx=0.5, cy=0.5, cursor=False))
-    glyph = _ink_layer(lambda d: d.text(
-        (S * 0.1, S * 0.1), "G",
-        font=ImageFont.truetype(font_path, int(S * 0.5)), fill=color))
+def _glyph_layer(font, text, color):
+    """One character cropped to its ink, plus that ink's box.
 
-    # Match heights so the two pieces read as one line of text.
-    height = glyph.height
-    chevron = chevron.resize((max(1, round(chevron.width * height / chevron.height)), height),
-                             Image.LANCZOS)
+    Every glyph is drawn from the same origin, so two of them keep their shared baseline as
+    long as the crops are laid out by their boxes instead of by their tops.
+    """
+    layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((0, 0), text, font=font, fill=color)
+    box = layer.getbbox()
+    return layer.crop(box), box
 
-    widths = chevron.width + int(gap * glyph.width) + glyph.width
+
+def prompt_mark(font_path, color, with_cursor=True, gap=0.22, bar_cursor=False):
+    """The prompt of the icon: a "$" followed by the app's initial (and a cursor)."""
+    font = ImageFont.truetype(font_path, int(S * 0.5))
+    dollar, dollar_box = _glyph_layer(font, "$", color)
+    glyph, glyph_box = _glyph_layer(font, "G", color)
+
+    # Set at one size and drawn from one origin, the two characters already share a baseline;
+    # the "$" simply reaches above and below it, so nothing has to be rescaled.
+    top = min(dollar_box[1], glyph_box[1])
+    height = max(dollar_box[3], glyph_box[3]) - top
+
+    widths = dollar.width + int(gap * glyph.width) + glyph.width
     cursor_w = int(glyph.width * (0.88 if bar_cursor else 0.34))
     if with_cursor:
         widths += int(glyph.width * 0.18) + cursor_w
 
     group = Image.new("RGBA", (widths, height), (0, 0, 0, 0))
-    group.alpha_composite(chevron, (0, 0))
-    x = chevron.width + int(gap * glyph.width)
-    group.alpha_composite(glyph, (x, 0))
+    group.alpha_composite(dollar, (0, dollar_box[1] - top))
+    x = dollar.width + int(gap * glyph.width)
+    group.alpha_composite(glyph, (x, glyph_box[1] - top))
     if with_cursor:
         x += glyph.width + int(glyph.width * 0.18)
         if bar_cursor:
@@ -178,19 +189,19 @@ def chevron_g_mark(font_path, color, with_cursor=True, gap=0.22, bar_cursor=Fals
     return group
 
 
-def candidate_chevron_g(font_path, with_cursor=False):
+def candidate_dollar_g(font_path, with_cursor=False):
     img = tile()
-    mark = chevron_g_mark(font_path, MARK, with_cursor=with_cursor)
+    mark = prompt_mark(font_path, MARK, with_cursor=with_cursor)
     target = S * 0.60
     scaled = mark.resize((int(target), max(1, round(mark.height * target / mark.width))), Image.LANCZOS)
     img.alpha_composite(scaled, ((S - scaled.width) // 2, (S - scaled.height) // 2))
     return img
 
 
-def candidate_chevron_g_corner(font_path, width=0.60, inset=0.145):
+def candidate_dollar_g_corner(font_path, width=0.60, inset=0.145):
     """The three-part prompt (chevron, G, cursor) sitting in the tile's top-left corner."""
     img = tile()
-    mark = chevron_g_mark(font_path, MARK, with_cursor=True)
+    mark = prompt_mark(font_path, MARK, with_cursor=True)
     target = S * width
     scaled = mark.resize((round(target), max(1, round(mark.height * target / mark.width))), Image.LANCZOS)
     xy = (round(S * inset), round(S * inset))
@@ -217,7 +228,7 @@ def render_icon(font_path, px, corner=False, bar_cursor=False, frame=FRAME,
     """
     width, inset = mark_metrics(px, corner)
     img = framed_tile(frame=frame, color=frame_color) if frame and px >= 32 else tile()
-    mark = chevron_g_mark(font_path, MARK, with_cursor=True, bar_cursor=bar_cursor)
+    mark = prompt_mark(font_path, MARK, with_cursor=True, bar_cursor=bar_cursor)
     target = S * width
     scaled = mark.resize((round(target), max(1, round(mark.height * target / mark.width))), Image.LANCZOS)
     if corner:
@@ -343,9 +354,9 @@ def main():
         "g-g-solo": candidate_glyph_nocursor(font),
         "h-g-small-cursor": candidate_glyph_small_cursor(font),
         "i-g-small-regular": candidate_glyph_small_cursor_regular(font),
-        "j-gt-g": candidate_chevron_g(font),
-        "k-gt-g-cursor": candidate_chevron_g(font, with_cursor=True),
-        "l-corner": candidate_chevron_g_corner(font),
+        "j-dollar-g": candidate_dollar_g(font),
+        "k-dollar-g-cursor": candidate_dollar_g(font, with_cursor=True),
+        "l-corner": candidate_dollar_g_corner(font),
         "m-center-bar": render_icon(font, S, corner=False, bar_cursor=True),
         "n-corner-bar": render_icon(font, S, corner=True, bar_cursor=True),
     }
