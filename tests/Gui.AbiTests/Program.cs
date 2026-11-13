@@ -484,7 +484,11 @@ internal static class Program
 
         new("ROW_DATA_CELLS", "GhosttyRenderStateRowData", "CELLS"),
         new("ROW_DATA_SELECTION", "GhosttyRenderStateRowData", "SELECTION"),
+        new("ROW_DATA_RAW", "GhosttyRenderStateRowData", "RAW"),
         new("ROW_VIEWPORT_Y", "GhosttyRenderStateRowData", "VIEWPORT_Y"),
+        // ghostty_row_get takes the raw row enum, a different type from the render state's.
+        new("ROW_DATA_WRAP", "GhosttyRowData", "WRAP"),
+        new("ROW_DATA_WRAP_CONTINUATION", "GhosttyRowData", "WRAP_CONTINUATION"),
 
         new("CELL_RAW", "GhosttyRenderStateRowCellsData", "RAW"),
         new("CELL_STYLE", "GhosttyRenderStateRowCellsData", "STYLE"),
