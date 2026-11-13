@@ -1211,6 +1211,11 @@ public sealed unsafe class TerminalRenderer
         var rowRuns = new List<RowRuns>(64);
         string cursorText = string.Empty;
         Color cursorFg = defaultFg;
+        // The cursor sits on a wide glyph, which covers two cells: the block has to cover both
+        // or a CJK character ends up half inverted.
+        bool cursorWide = false;
+        // The cursor is on the trailing half of that glyph, so it has to start one cell left.
+        bool cursorWideTail = false;
 
         // Debug aid: a cheap signature of what this frame painted. Two frames with the same
         // signature must look identical, so a screen that alternates points outside the renderer.
@@ -1335,11 +1340,22 @@ public sealed unsafe class TerminalRenderer
                         Wide = wide,
                     };
 
-                    if (haveCursor && cursor.ViewportHasValue != 0 &&
-                        viewportY == cursor.ViewportY && col == cursor.ViewportX)
+                    if (haveCursor && cursor.ViewportHasValue != 0 && viewportY == cursor.ViewportY)
                     {
-                        cursorText = text;
-                        cursorFg = fg;
+                        if (col == cursor.ViewportX)
+                        {
+                            cursorText = text;
+                            cursorFg = fg;
+                            cursorWide = wide;
+                            cursorWideTail = false;
+                        }
+                        else if (wide && cursor.WideTail != 0 && col + 1 == cursor.ViewportX)
+                        {
+                            cursorText = text;
+                            cursorFg = fg;
+                            cursorWide = true;
+                            cursorWideTail = true;
+                        }
                     }
 
                     bool merged = false;
@@ -1438,7 +1454,9 @@ public sealed unsafe class TerminalRenderer
         {
             int cursorCol = compositionEnd >= 0 ? compositionEnd : cursor.ViewportX;
             float top = cursor.ViewportY * cellH;
-            var rect = new Rect(cursorCol * cellW, top, cellW, cellH);
+            float cursorWidth = compositionEnd < 0 && cursorWide ? cellW * 2f : cellW;
+            float cursorLeft = (cursorCol - (compositionEnd < 0 && cursorWideTail ? 1 : 0)) * cellW;
+            var rect = new Rect(cursorLeft, top, cursorWidth, cellH);
 
             Color color = cursorHasValue ? Color.FromArgb(255, cursorRgb.R, cursorRgb.G, cursorRgb.B) : defaultFg;
             float opacity = _config?.CursorOpacity ?? 1.0f;
