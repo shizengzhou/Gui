@@ -1,6 +1,6 @@
 ﻿# Gui
 
-A Windows terminal that aims to be Ghostty on Windows.
+Gui says: "Step by step, step after step after step, I climb to the very top. I want to be Ghostty on Windows."
 
 **English** | [简体中文](README.zh-CN.md)
 
