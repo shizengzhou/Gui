@@ -623,7 +623,7 @@ public sealed partial class Workspace
 
         // The settings page draws its own labels, so it is rebuilt in the new language. It
         // stays on the same category and keeps its active state.
-        if (_settingsLayer is not null) Diag.Guard("ws.settings.language", BuildSettings);
+        if (_settingsActive) Diag.Guard("ws.settings.language", BuildSettings);
     }
 
     /// <summary>
@@ -1310,9 +1310,11 @@ public sealed partial class Workspace
 
         BuildPalette();
 
-        // The settings page is a layer over the body, built with the same chrome so a rebuild
-        // (tab rail move, config reload) keeps it reachable.
-        BuildSettings();
+        // The settings page is a layer over the body. It is built on first open (ShowSettings
+        // rebuilds it from the live config), so a window that never opens it does not pay for
+        // ~400 ms of page construction at start-up; a chrome rebuild while it is open has to
+        // carry it over to the new shell.
+        if (_settingsActive) BuildSettings();
     }
 
     /// <summary>
