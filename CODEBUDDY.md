@@ -45,6 +45,14 @@ dotnet run --project tests/Gui.AbiTests -c Release
 # Unit tests (no WinUI; includes the repository encoding check)
 dotnet test tests/Gui.LogicTests -c Release
 
+# Performance regression, headless pipeline (libghostty-vt parse / per-frame read
+# path / scrollback). First run on a machine records the baseline with --save.
+dotnet run --project tests/Gui.PerfTests -c Release
+
+# Performance regression, GUI side (start-up, shell hand-off, idle CPU, private bytes);
+# builds Release x64 unless -NoBuild, records the baseline with -Save
+./tests/perf-gui.ps1
+
 # Installer: tests, self-contained publish and Inno Setup in one step; the version is
 # stamped into the exe, the setup and the file name -> dist/Gui-<version>-x64-setup.exe
 ./build-installer.ps1 1.2.3
@@ -61,6 +69,17 @@ build of the DLL. Exit code 0 = pass, 1 = ABI mismatch.
 `Term/TerminalTheme.cs`, `Term/WideText.cs` and `Diag.cs` and covers the config parser,
 the key map, the theme helpers, the cell-width rules, the log level parsing and the
 UTF-8 BOM + CRLF rule for every source file in the repo.
+
+`tests/Gui.PerfTests` is the release performance harness: it compiles the same
+`GhosttyNative.cs` / `CellText.cs` the app uses and measures parse throughput for plain, SGR and
+Unicode output, the cost of the per-frame render-state walk (rows, cells, style, colours, text)
+and scrollback trimming plus the retained private bytes. `--only <prefix>` limits a run,
+`--save` writes `tests/Gui.PerfTests/baseline.json` and a plain run fails (exit 1) when a metric
+is more than 25% worse than that baseline. `tests/perf-gui.ps1` covers what only a window shows:
+process start to window, shell hand-off, idle CPU (caret blink, IME anchor) and private bytes,
+with the same save/compare flow against `tests/perf-gui-baseline.json`. Both baselines are
+per-machine and git-ignored: record them with `--save` / `-Save` on the machine that gates a
+release (or on a dedicated CI runner), otherwise the harness only reports numbers.
 
 There is no analyzer/lint configuration in this repo. `.github/workflows/ci.yml` builds the
 solution and runs both test suites on Windows.

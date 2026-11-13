@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <RootNamespace>Gui.PerfTests</RootNamespace>
+    <AssemblyName>Gui.PerfTests</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Compile the shipped P/Invoke declarations and cell reader themselves, not a copy, so the
+       benchmark follows the product's hot path instead of drifting from it. -->
+  <ItemGroup>
+    <Compile Include="../../Gui/Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
+    <Compile Include="../../Gui/Gui/Term/CellText.cs" Link="CellText.cs" />
+    <Compile Include="../../Gui/Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />
+  </ItemGroup>
+</Project>

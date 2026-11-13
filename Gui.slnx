@@ -19,6 +19,11 @@
     <Platform Solution="*|x64" Project="AnyCPU" />
     <Platform Solution="*|x86" Project="AnyCPU" />
   </Project>
+  <Project Path="tests/Gui.PerfTests/Gui.PerfTests.csproj">
+    <Platform Solution="*|ARM64" Project="AnyCPU" />
+    <Platform Solution="*|x64" Project="AnyCPU" />
+    <Platform Solution="*|x86" Project="AnyCPU" />
+  </Project>
   <Project Path="tests/Gui.LogicTests/Gui.LogicTests.csproj">
     <Platform Solution="*|ARM64" Project="AnyCPU" />
     <Platform Solution="*|x64" Project="AnyCPU" />
