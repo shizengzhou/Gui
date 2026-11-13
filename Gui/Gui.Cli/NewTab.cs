@@ -17,8 +17,9 @@ public static class NewTab
     public const string Help =
         "Usage: gui +new-tab [options] [--] [-e command...]\n" +
         "\n" +
-        "Open a new tab in the running Gui window. Without --working-directory the directory\n" +
-        "this command runs in is used, the same as ghostty.\n" +
+        "Open a new tab in the running Gui window; when nothing is running, start the app\n" +
+        "with that tab. Without --working-directory the directory this command runs in is\n" +
+        "used, the same as ghostty.\n" +
         "\n" +
         "Options:\n" +
         "  --working-directory=DIR  directory for the new shell; relative paths resolve against\n" +
@@ -241,6 +242,10 @@ public static class NewTab
         IpcProtocol.Response? response = Send(pipeName, request);
         if (response is null)
         {
+            // Nothing is listening: open a window instead, the way "wt new-tab" does. The
+            // window runs the command as its first tab, because there is no IPC yet to add
+            // one to.
+            if (Launch(options)) return 0;
             Console.Error.WriteLine($"gui: no running instance of Gui answered on '{pipeName}'");
             return 1;
         }
@@ -252,6 +257,47 @@ public static class NewTab
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Starts Gui.exe with the same request when nothing answered the pipe. The app opens the
+    /// window with the requested command as its first tab: "gui +new-tab -e foo" therefore
+    /// works whether or not the terminal was already running, like "wt new-tab".
+    /// </summary>
+    private static bool Launch(Options options)
+    {
+        // The CLI sits in bin; the app is one level up.
+        string exe = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "Gui.exe"));
+        if (!File.Exists(exe)) return false;
+
+        // ShellExecute on purpose: started through CreateProcess the app would inherit this
+        // console's handles, and a pane that falls back to them writes its output here instead
+        // of into the terminal.
+        var arguments = new StringBuilder();
+        if (!string.IsNullOrEmpty(options.Command))
+        {
+            arguments.Append("-e \"").Append(options.Command!.Replace("\"", "\\\"")).Append('"');
+        }
+        if (!string.IsNullOrEmpty(options.WorkingDirectory))
+        {
+            if (arguments.Length > 0) arguments.Append(' ');
+            arguments.Append("--working-directory=\"").Append(options.WorkingDirectory).Append('"');
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe)
+            {
+                UseShellExecute = true,
+                Arguments = arguments.ToString(),
+            });
+            return true;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"gui: could not start {exe}: {error.Message}");
+            return false;
+        }
     }
 
     private static IpcProtocol.Response? Send(string pipeName, IpcProtocol.Request request)

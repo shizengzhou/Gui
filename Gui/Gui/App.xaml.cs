@@ -83,6 +83,34 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// Reads "-e COMMAND" and "--working-directory=DIR" from the command line. "gui +new-tab"
+    /// passes them when nothing was running and it had to start the app itself, so the window
+    /// it opens carries the requested tab. Every other argument (WinUI passes its own) is
+    /// ignored.
+    /// </summary>
+    private static void ParseLaunchArgs(string[] args, out string? command, out string? directory)
+    {
+        command = null;
+        directory = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (arg is "-e" or "--command")
+            {
+                if (i + 1 < args.Length) command = args[++i];
+            }
+            else if (arg.StartsWith("--command=", StringComparison.Ordinal))
+            {
+                command = arg["--command=".Length..];
+            }
+            else if (arg.StartsWith("--working-directory=", StringComparison.Ordinal))
+            {
+                directory = arg["--working-directory=".Length..];
+            }
+        }
+    }
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         try
@@ -93,18 +121,31 @@ public partial class App : Application
             // finished icon straight out of it.
             _ = Term.ShellIcon.GetAsync(Term.TerminalSession.PreferredShellPath(_config.Command));
 
-            // "window-save-state": reopen exactly what was on screen when the last window
-            // closed. A missing or unreadable file falls back to one fresh window.
-            List<Term.WindowState>? restored =
-                _config.WindowSaveState == "never" ? null : Term.WindowStateStore.Load();
-            if (restored is { Count: > 0 })
+            // "gui +new-tab" starts this process with -e when no window was running, and the
+            // window it opens runs that command instead of restoring the saved session (the
+            // same way "wt new-tab" opens a window rather than failing).
+            ParseLaunchArgs(Environment.GetCommandLineArgs(),
+                out string? launchCommand, out string? launchDirectory);
+            if (launchCommand is not null)
             {
-                Diag.Log("window-state", $"launch: restoring {restored.Count} window(s)");
-                foreach (Term.WindowState state in restored) ShowWindow(null, null, state);
+                Diag.Log("launch", $"command={launchCommand} cwd={launchDirectory ?? "-"}");
+                ShowWindow(launchDirectory, null, null, launchCommand);
             }
             else
             {
-                ShowWindow(null);
+                // "window-save-state": reopen exactly what was on screen when the last window
+                // closed. A missing or unreadable file falls back to one fresh window.
+                List<Term.WindowState>? restored =
+                    _config.WindowSaveState == "never" ? null : Term.WindowStateStore.Load();
+                if (restored is { Count: > 0 })
+                {
+                    Diag.Log("window-state", $"launch: restoring {restored.Count} window(s)");
+                    foreach (Term.WindowState state in restored) ShowWindow(null, null, state);
+                }
+                else
+                {
+                    ShowWindow(null);
+                }
             }
             Microsoft.UI.Dispatching.DispatcherQueue? queue =
                 Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
