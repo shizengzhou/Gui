@@ -53,6 +53,11 @@ dotnet run --project tests/Gui.PerfTests -c Release
 # builds Release x64 unless -NoBuild, records the baseline with -Save
 ./tests/perf-gui.ps1
 
+# Compare Gui with the Windows Terminal and otty installed on this machine: start-up to
+# window, idle CPU/private bytes, and a fixed flood through the pane (tests/perf-emitter)
+./tests/perf-terminals.ps1 -Mode startup
+./tests/perf-terminals.ps1 -Mode emit
+
 # Installer: tests, self-contained publish and Inno Setup in one step; the version is
 # stamped into the exe, the setup and the file name -> dist/Gui-<version>-x64-setup.exe
 ./build-installer.ps1 1.2.3
@@ -80,6 +85,19 @@ process start to window, shell hand-off, idle CPU (caret blink, IME anchor) and 
 with the same save/compare flow against `tests/perf-gui-baseline.json`. Both baselines are
 per-machine and git-ignored: record them with `--save` / `-Save` on the machine that gates a
 release (or on a dedicated CI runner), otherwise the harness only reports numbers.
+
+`tests/perf-terminals.ps1` puts Gui next to the Windows Terminal (`wt.exe`) and otty
+(`otty.exe`) installed on the machine: process start to a visible window, idle CPU and private
+bytes with a prompt on screen, and a fixed 64 MiB flood written by `tests/perf-emitter` (built
+on demand and copied to %TEMP% along with its runtime files). Read the flood numbers with the
+buffering difference in mind: Gui's reader thread takes the pipe and queues the backlog for the
+UI thread, so its MB/s is pipe acceptance and its peak private bytes show the queue, while
+Windows Terminal parses on its UI thread and stays flat — the end-to-end column (emit + drain)
+is the comparable one. Windows are measured in the foreground because a background window is
+composited, and in a terminal that parses on the UI thread also processed, at a throttled rate.
+otty restores its own window set and ignores `--command` while doing so, so its flood is
+opt-in (`-OttyPaste`, only with a single otty window) or pasted by hand from the command the
+script prints.
 
 There is no analyzer/lint configuration in this repo. `.github/workflows/ci.yml` builds the
 solution and runs both test suites on Windows.
