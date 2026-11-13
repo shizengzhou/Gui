@@ -1534,7 +1534,10 @@ public sealed unsafe class TerminalRenderer
             return;
         }
 
-        float cellWidth = _metrics.Width;
+        // The cursor is drawn on the exact advance, not the rounded cell width used for
+        // column math; the two differ by a fraction of a pixel per column, which over a row
+        // drifts shader effects a whole cell right of the cursor.
+        float cellWidth = _cellAdvanceX;
         float cellHeight = _metrics.Height;
         float left = cursor.ViewportX * cellWidth;
         float bottom = viewportHeight - (cursor.ViewportY + 1) * cellHeight;
