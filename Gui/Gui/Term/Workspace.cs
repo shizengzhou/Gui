@@ -265,6 +265,15 @@ public sealed partial class Workspace
     private bool _imeDiscard;
     private DispatcherQueueTimer? _imeTimer;
 
+    // The IME anchor only has to move when the cursor cell, the font or the pane's place on
+    // screen changes. The timer still ticks four times a second, but writing the same Margin
+    // and Width back costs a layout pass each time, which is what kept an idle window busy.
+    private TerminalPane? _imeAnchorPane;
+    private double _imeCursorX = double.NaN, _imeCursorY = double.NaN;
+    private double _imeSinkX = double.NaN, _imeSinkY = double.NaN;
+    private double _imeSinkW = double.NaN, _imeSinkH = double.NaN;
+    private bool _imeAnchorDirty = true;
+
     // Every themed brush is created once and shared: switching the theme only has to
     // update the Color of these instances, and every element that captured a brush
     // repaints with the new palette.
@@ -360,6 +369,8 @@ public sealed partial class Workspace
     {
         _root = root;
         _window = window;
+        // Any layout pass can move the focused pane, so the next tick re-measures.
+        _root.LayoutUpdated += (_, _) => _imeAnchorDirty = true;
 
         // Borderless-over-its-frame window: the title bar is drawn by this class, so the
         // client area covers the whole window while the frame keeps its shadow, rounding

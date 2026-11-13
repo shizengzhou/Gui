@@ -501,18 +501,42 @@ public sealed partial class Workspace
         Tab tab = _tabs[_active];
         if (tab.Focused is null)
         {
-            _imeSink.Visibility = Visibility.Collapsed;
+            if (_imeSink.Visibility != Visibility.Collapsed) _imeSink.Visibility = Visibility.Collapsed;
+            _imeAnchorPane = null;
             return;
         }
-        _imeSink.Visibility = Visibility.Visible;
+        if (_imeSink.Visibility != Visibility.Visible)
+        {
+            _imeSink.Visibility = Visibility.Visible;
+            _imeAnchorDirty = true;
+        }
 
-        if (!tab.Focused.CursorOrigin(out double cx, out double cy)) return;
+        TerminalPane pane = tab.Focused;
+        CellMetrics metrics = pane.CellMetricsDip;
+        double width = Math.Max(1, metrics.Width);
+        double height = Math.Max(1, metrics.Height);
+        if (!pane.CursorOrigin(out double cx, out double cy)) return;
 
-        Point origin = tab.Focused.Visual.TransformToVisual(_root).TransformPoint(new Point(0, 0));
-        _imeSink.Margin = new Thickness(origin.X + cx, origin.Y + cy, 0, 0);
-        CellMetrics metrics = tab.Focused.CellMetricsDip;
-        _imeSink.Width = Math.Max(1, metrics.Width);
-        _imeSink.Height = Math.Max(1, metrics.Height);    }
+        bool sameCell = ReferenceEquals(pane, _imeAnchorPane) && cx == _imeCursorX &&
+            cy == _imeCursorY && width == _imeSinkW && height == _imeSinkH;
+        if (sameCell && !_imeAnchorDirty) return;
+
+        Point origin = pane.Visual.TransformToVisual(_root).TransformPoint(new Point(0, 0));
+        double x = origin.X + cx;
+        double y = origin.Y + cy;
+        if (x != _imeSinkX || y != _imeSinkY) _imeSink.Margin = new Thickness(x, y, 0, 0);
+        if (width != _imeSinkW) _imeSink.Width = width;
+        if (height != _imeSinkH) _imeSink.Height = height;
+
+        _imeAnchorPane = pane;
+        _imeCursorX = cx;
+        _imeCursorY = cy;
+        _imeSinkX = x;
+        _imeSinkY = y;
+        _imeSinkW = width;
+        _imeSinkH = height;
+        _imeAnchorDirty = false;
+    }
 
     /// <summary>
     /// Focuses the invisible IME sink. WinUI only feeds the text services while a text
