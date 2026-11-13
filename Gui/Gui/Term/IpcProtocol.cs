@@ -19,12 +19,6 @@ public static class IpcProtocol
     /// <summary>Application class, the ghostty "class" equivalent used in the pipe name.</summary>
     public const string DefaultClass = "Gui";
 
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     /// <summary>
     /// Per-user, per-session pipe name, so two signed-in users (or two sessions) cannot reach
     /// each other's window and a stale server from another session is never found.
@@ -55,15 +49,17 @@ public static class IpcProtocol
         return text.ToString();
     }
 
-    public static string Serialize(Request request) => JsonSerializer.Serialize(request, Json);
+    public static string Serialize(Request request) =>
+        JsonSerializer.Serialize(request, IpcJsonContext.Default.Request);
 
-    public static string Serialize(Response response) => JsonSerializer.Serialize(response, Json);
+    public static string Serialize(Response response) =>
+        JsonSerializer.Serialize(response, IpcJsonContext.Default.Response);
 
     public static Request? ParseRequest(string line)
     {
         try
         {
-            return JsonSerializer.Deserialize<Request>(line, Json);
+            return JsonSerializer.Deserialize(line, IpcJsonContext.Default.Request);
         }
         catch (JsonException)
         {
@@ -75,7 +71,7 @@ public static class IpcProtocol
     {
         try
         {
-            return JsonSerializer.Deserialize<Response>(line, Json);
+            return JsonSerializer.Deserialize(line, IpcJsonContext.Default.Response);
         }
         catch (JsonException)
         {
@@ -107,3 +103,21 @@ public static class IpcProtocol
         public string? Error { get; set; }
     }
 }
+
+/// <summary>
+/// The wire shape, generated at compile time. The CLI ships trimmed and single-file, where
+/// reflection-based System.Text.Json is disabled by default and its metadata can be trimmed
+/// away; a generated context removes both hazards and lets the analyzer prove the shape
+/// instead of reporting IL2026. The options reproduce the reflection setup this replaced:
+/// camelCase names and null members omitted.
+///
+/// It sits outside <see cref="IpcProtocol"/> rather than inside it: a nested context requires
+/// every containing type to be partial (SYSLIB1032), and there is no reason to make the public
+/// IPC class partial just to host generated code.
+/// </summary>
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(IpcProtocol.Request))]
+[JsonSerializable(typeof(IpcProtocol.Response))]
+internal partial class IpcJsonContext : JsonSerializerContext;

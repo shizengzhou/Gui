@@ -17,12 +17,6 @@
          Under a plain net8.0 TFM the platform analyzer still flags those call sites. -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
 
-    <!-- The installer ships gui-cli trimmed. IPC goes through reflection-based System.Text.Json,
-         which a trimmed app disables by default and whose metadata the trimmer would otherwise
-         drop; keeping this assembly whole plus re-enabling reflection JSON keeps "+new-tab"
-         alive while the .NET runtime around it still shrinks from 93 MB to 13 MB. -->
-    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
-
     <!-- Follow the solution's Platform so the RID (and therefore the output folder) matches
          the terminal's win-x64 / win-x86 / win-arm64 layout. -->
     <Platforms>x86;x64;ARM64</Platforms>
@@ -35,6 +29,11 @@
        so the CLI needs no WinUI, Win2D or NuGet packages and stays independent of the app's
        runtime bootstrap. LoadRaw() keeps parsing free of any libghostty-vt call. -->
   <ItemGroup>
+    <!-- The installer ships gui-cli trimmed, and this assembly is rooted whole: it is 177 KB,
+         so trimming it saves nothing worth the risk of a reflection or interop member
+         disappearing. IPC's JSON does not need the root - IpcProtocol carries its own
+         generated JsonSerializerContext - so what the root now protects is the rest of what
+         the CLI links: Config, Keybinds and the GhosttyNative P/Invoke surface. -->
     <TrimmerRootAssembly Include="gui-cli" />
   </ItemGroup>
 
