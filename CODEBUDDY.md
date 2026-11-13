@@ -411,9 +411,16 @@ Only the x64 binary is checked in; other platforms need the script with `PLATFOR
 ## Build configuration notes
 
 - Target: `net8.0-windows10.0.19041.0`, min OS `10.0.17763.0`, `Nullable` enabled, `OutputType` WinExe.
-- `Microsoft.WindowsAppSDK` is pinned to **1.8.260921001** and `Microsoft.Windows.SDK.BuildTools` to
-  **10.0.28000.2957**, matching the native project's `packages.config`; keep them in sync. Win2D is
-  `Microsoft.Graphics.Win2D` 1.4.0.
+- The Windows App SDK is referenced as **component packages** (`WindowsAppSDK.WinUI`,
+  `.DWrite`, `.Runtime`, which pull `.Base` / `.Foundation` / `.InteractiveExperiences`) at the
+  versions the 1.8.260921001 umbrella pinned, not as the umbrella: the umbrella also pulls
+  `.AI` and `.ML`, and self-contained mode extracts the whole framework MSIX, so a build that
+  never calls a Windows AI API still shipped `onnxruntime.dll` (20.7 MB) and `DirectML.dll`
+  (17.8 MB). `DropWindowsAppSdkAiPayload` in `Gui.csproj` removes them from the payload (the
+  SDK only exposes that file list as `None` items, so the target filters them right after
+  `AddMicrosoftWindowsAppSDKPayloadFilesFromMsix`). `Microsoft.Windows.SDK.BuildTools` is
+  pinned to **10.0.28000.2957**, matching the native project's `packages.config`; keep them in
+  sync. Win2D is `Microsoft.Graphics.Win2D` 1.4.0.
 - Do **not** drop `WindowsAppSDKSelfContained`: without it the DeploymentManager initializer tries to
   install the runtime package and fails with `0x80070005` (ACCESS_DENIED) before `App`'s constructor
   runs, and the process exits with no UI.

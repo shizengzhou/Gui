@@ -41,7 +41,15 @@
   <ItemGroup>
     <!-- Same versions as the native project's packages.config. -->
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <!-- The Windows App SDK as component packages instead of the umbrella: the umbrella also
+         pulls Microsoft.WindowsAppSDK.AI and .ML, which drag onnxruntime.dll (20.7 MB) and
+         DirectML.dll (17.8 MB) into the payload although nothing here calls a Windows AI API.
+         Widgets is left out for the same reason (unused). The versions are the ones the
+         umbrella 1.8.260921001 pinned, so the runtime payload is the same build; the bracket
+         form keeps a later restore from floating them. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="[1.8.260803003]" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="[1.8.25122902]" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="[1.8.260921001]" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
     <!-- "custom-shader": compile Shadertoy-style GLSL at runtime. Shaderc turns the source
          into SPIR-V, SPIRV-Cross emits HLSL, and D3DCompiler builds the pixel shader blob
@@ -88,6 +96,20 @@
          own publish below, where the trimmer sees the IL it actually needs. -->
     <PublishTrimmed>False</PublishTrimmed>
   </PropertyGroup>
+
+  <!-- A self-contained Windows App SDK is extracted from the framework MSIX, and that MSIX also
+       carries the AI/ML native libraries: onnxruntime.dll (20.7 MB) and DirectML.dll (17.8 MB).
+       Nothing here calls a Windows AI API, so they are dropped from the payload instead of
+       shipping 38 MB that is never loaded. The SDK exposes the file list only as `None` items
+       (see Microsoft.WindowsAppSDK.SelfContained.targets), so they are filtered here, right
+       after the target that adds them and before they are copied to the output. -->
+  <Target Name="DropWindowsAppSdkAiPayload" AfterTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromMsix">
+    <ItemGroup>
+      <_WindowsAppSdkAiFile Include="@(None)"
+          Condition="'%(Filename)' == 'onnxruntime' or '%(Filename)' == 'onnxruntime_providers_shared' or '%(Filename)' == 'DirectML'" />
+      <None Remove="@(_WindowsAppSdkAiFile)" />
+    </ItemGroup>
+  </Target>
 
   <!-- ReferenceOutputAssembly=false keeps the CLI's assembly out of the app's compile
        references, but MSBuild still copies its apphost, .deps.json and .runtimeconfig.json.
