@@ -146,8 +146,10 @@ public sealed unsafe class TerminalRenderer
     private float _shaderFocusTime;
     private float _shaderCursorChangeTime;
 
-    // Shader uniforms use Ghostty's -X, +Y corner convention, in DIPs (the unit D2D
-    // delivers to SV_Position).
+    // Shader uniforms use Ghostty's -X, +Y corner convention. They are kept in DIPs here and
+    // converted to physical pixels when uploaded: D2D hands the pixel shader SV_Position in
+    // pixels, and Ghostty defines these uniforms in the surface's pixel space, so uploading
+    // DIPs rendered the whole surface at 1/scale on a HiDPI display.
     private Vector4 _shaderCursor = new(-1, -1, 0, 0);
     private Vector4 _shaderPreviousCursor = new(-1, -1, 0, 0);
     private Vector4 _shaderCursorColor;
@@ -1841,9 +1843,10 @@ public sealed unsafe class TerminalRenderer
             _shaderCursorColor != _shaderPreviousCursorColor;
         if (cursorChanged) _shaderCursorChangeTime = now;
 
-        // D2D sees SV_Position in DIPs, so every coordinate uniform uses DIP units too;
-        // uv = fragCoord / iResolution then maps the whole surface exactly once.
-        var resolution = new Vector3(width, height, 1f);
+        // Pixel space, like Ghostty's own uniforms: uv = fragCoord / iResolution has to map
+        // the surface exactly once, and fragCoord arrives in physical pixels.
+        float scale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
+        var resolution = new Vector3(width * scale, height * scale, 1f);
         Vector3[]? palette = ShaderPalette();
 
         ICanvasImage source = scene;
@@ -1905,8 +1908,10 @@ public sealed unsafe class TerminalRenderer
         Set(properties, "iMouse", Vector4.Zero);
         Set(properties, "iDate", Vector4.Zero);
         Set(properties, "iSampleRate", 0f);
-        Set(properties, "iCurrentCursor", _shaderCursor);
-        Set(properties, "iPreviousCursor", _shaderPreviousCursor);
+        // The cursor and its cell are tracked in DIPs; the shader draws in pixels.
+        float scale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
+        Set(properties, "iCurrentCursor", Scaled(_shaderCursor, scale));
+        Set(properties, "iPreviousCursor", Scaled(_shaderPreviousCursor, scale));
         Set(properties, "iCurrentCursorColor", _shaderCursorColor);
         Set(properties, "iPreviousCursorColor", _shaderPreviousCursorColor);
         Set(properties, "iCurrentCursorStyle", _shaderCursorStyle);
@@ -1924,6 +1929,10 @@ public sealed unsafe class TerminalRenderer
         Set(properties, "iSelectionForegroundColor", _shaderSelectionForeground);
         Set(properties, "iSelectionBackgroundColor", _shaderSelectionBackground);
     }
+
+    /// <summary>DIPs to physical pixels, for every uniform Ghostty defines in pixel space.</summary>
+    private static Vector4 Scaled(Vector4 value, float scale) =>
+        new(value.X * scale, value.Y * scale, value.Z * scale, value.W * scale);
 
     private void Set(IDictionary<string, object> properties, string name, object value)
     {
