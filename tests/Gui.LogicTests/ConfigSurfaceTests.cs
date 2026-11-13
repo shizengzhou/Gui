@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
 using Gui.Term;
 using Xunit;
 
@@ -588,37 +587,6 @@ public class ConfigSurfaceTests : IDisposable
 
         Assert.True(ConfigSchema.TryGet("cwd", out ConfigOption cwd));
         Assert.Equal("working-directory", cwd.Name);
-    }
-
-    /// <summary>
-    /// The checklist is the contract for "all Ghostty options": every schema option must be
-    /// listed, nothing unknown may appear, and no key may be listed twice. The checklist also
-    /// documents a few app-only options, so the counts need not match exactly.
-    /// </summary>
-    [Fact]
-    public void TheChecklistListsExactlyTheSchemaOptions()
-    {
-        string[] documented = File.ReadAllLines(Path.Combine(RepositoryRoot(), "GHOSTTY-CONFIG-TODO.md"))
-            .Select(line => Regex.Match(line, "^- \\[[ x]\\] `([^`]+)`"))
-            .Where(match => match.Success)
-            .Select(match => match.Groups[1].Value)
-            .ToArray();
-
-        string[] schema = ConfigSchema.Ghostty.Select(option => option.Name).ToArray();
-
-        Assert.Empty(schema.Except(documented, StringComparer.OrdinalIgnoreCase));
-        Assert.Equal(documented.Length, documented.Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        foreach (string name in documented) Assert.True(ConfigSchema.IsKnown(name), name);
-    }
-
-    private static string RepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Gui.slnx")))
-            directory = directory.Parent;
-
-        Assert.NotNull(directory);
-        return directory!.FullName;
     }
 
     [Fact]

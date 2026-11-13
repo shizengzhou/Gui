@@ -285,8 +285,8 @@ focused pane.
 ## Configuration and theming
 
 `%APPDATA%\gui\config` is ghostty-shaped: one `key = value` per line, `#` starts a comment.
-Every Ghostty 1.4 key is recognized — `GHOSTTY-CONFIG-TODO.md` records which ones this build
-actually applies. On top of Ghostty's surface the app adds `tab-position`, `compact`,
+Every Ghostty 1.4 key is recognized — `Term/ConfigSchema.cs` lists them; some are parsed without
+behavior behind them yet. On top of Ghostty's surface the app adds `tab-position`, `compact`,
 `sidebar-width-left`, `sidebar-width-right` (written by the app when each rail's edge is
 dragged, 120..800), `debug-tap` and `crash-dumps`.
 
