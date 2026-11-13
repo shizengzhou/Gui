@@ -369,6 +369,14 @@ public sealed class Config
     /// <summary>Directory of the file being parsed, used to resolve relative paths.</summary>
     private string _configDirectory = string.Empty;
 
+    /// <summary>
+    /// Set when "language" was written with a value this build does not know. The value is
+    /// dropped like any other invalid one, but the key was present: resolving it as "absent"
+    /// would follow the system language, while an unusable explicit value falls back to
+    /// English (with the warning Validate already recorded).
+    /// </summary>
+    private bool _languageRejected;
+
     /// <summary>Raw values for every recognized option, in file order.</summary>
     public IReadOnlyDictionary<string, List<string>> Values => _values;
 
@@ -762,6 +770,7 @@ public sealed class Config
             if (!Validate(option, value, i + 1, out string reason))
             {
                 _diagnostics.Add(new ConfigDiagnostic(i + 1, ConfigSeverity.Warning, key, reason));
+                if (key == "language") _languageRejected = true;
                 continue;
             }
 
@@ -840,10 +849,12 @@ public sealed class Config
     {
         Command = Last("command") ?? string.Empty;
         // An unset option follows the system language; an explicit value this build does not
-        // ship falls back to English (the warning comes from Validate).
+        // ship falls back to English (the warning comes from Validate). A rejected value never
+        // reaches _values, so it is tracked separately: without that it would look unset and
+        // follow the system language instead.
         Language = Last("language") is { } language
             ? ParseLanguage(language) ?? Language.English
-            : DetectSystemLanguage();
+            : _languageRejected ? Language.English : DetectSystemLanguage();
         InitialCommand = Last("initial-command") ?? string.Empty;
         WorkingDirectory = Last("working-directory") ?? string.Empty;
         WindowTitle = Last("title") ?? string.Empty;
