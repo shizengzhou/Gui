@@ -357,6 +357,7 @@ public sealed class TerminalPane
         _config.Command = command;
         _config.WorkingDirectory = workingDirectory;
         UpdateProgressBar();
+        UpdateBlinkAnimation();
     }
 
     public TerminalPane(Config config, byte[]? snapshot = null, string? restoreBanner = null,
@@ -2149,12 +2150,7 @@ public sealed class TerminalPane
 
         // Only the focused pane blinks. The unfocused caret stays solid, so the inactive
         // pane does not animate while the user works elsewhere.
-        if (_blinkTimer is not null)
-        {
-            _cursorOn = true;
-            if (focused) _blinkTimer.Start();
-            else _blinkTimer.Stop();
-        }
+        UpdateBlinkAnimation();
         Redraw();
         ApplyFocusState();
     }
@@ -2233,6 +2229,20 @@ public sealed class TerminalPane
         UpdateShaderAnimation();
         Layout();
         Redraw();
+    }
+
+    /// <summary>
+    /// Runs the caret timer only when the cursor really blinks. "cursor-style-blink = false"
+    /// (the default) keeps the caret solid, and a timer that kept flipping it would repaint
+    /// the whole surface twice a second for nothing — 2.6% of a core on a large window,
+    /// against 0.3% while minimised.
+    /// </summary>
+    private void UpdateBlinkAnimation()
+    {
+        if (_blinkTimer is null) return;
+        _cursorOn = true;
+        if (_focused && _config.CursorBlink != false) _blinkTimer.Start();
+        else _blinkTimer.Stop();
     }
 
     /// <summary>
