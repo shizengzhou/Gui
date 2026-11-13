@@ -144,10 +144,6 @@ public static class Strings
     public static string SettingsSelection => Pick("Selection", "选择");
     public static string SettingsCopyOnSelect => Pick("Copy on select", "选中即复制");
 
-    public static string SettingsCopyOnSelectDescription => Pick(
-        "Copy the selection to the clipboard as soon as the mouse selects it.",
-        "鼠标选中文本后立即复制到剪贴板。");
-
     public static string SettingsKeysUnbound => Pick("None", "未绑定");
     public static string SettingsKeysGroupTabs => Pick("Tabs", "标签页");
     public static string SettingsKeysGroupPanes => Pick("Panes", "窗格");

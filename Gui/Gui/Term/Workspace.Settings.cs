@@ -909,7 +909,7 @@ public sealed partial class Workspace
                 SettingsSwitch(_config.CursorBlink != false, ApplyCursorBlinkChoice)))));
 
         page.Children.Add(SettingsGroup(Strings.SettingsSelection, SettingsCard(
-            SettingsRow(Strings.SettingsCopyOnSelect, Strings.SettingsCopyOnSelectDescription,
+            SettingsRow(Strings.SettingsCopyOnSelect, null,
                 SettingsSwitch(_config.CopyOnSelect, ApplyCopyOnSelectChoice)))));
 
         return page;
