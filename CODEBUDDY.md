@@ -143,7 +143,9 @@ resulting cell grid is drawn with Win2D.
 | `Term/TerminalSession.cs` | libghostty-vt facade + ConPTY + shell process + reader thread |
 | `Term/ConPty.cs` | `CreatePseudoConsole` + `CreateProcess`, pipe reader/writer |
 | `Term/GhosttyNative.cs` | P/Invoke surface for `ghostty-vt.dll` |
-| `Term/ShellIntegration.cs` | PowerShell prompt wrapper (OSC 133 + OSC 7) and the OSC 133 mark parser |
+| `Term/ShellIntegration.cs` | PowerShell and bash prompt hooks (OSC 133 + OSC 7) and the OSC 133 mark parser |
+| `Term/ShellProfiles.cs` | Git Bash and WSL profiles, discovered the way Windows Terminal discovers them |
+| `Assets/shell/bash.bash` | The bash rc file: login profile, prompt marks, OSC 7 from `PROMPT_COMMAND`, `PS0` command mark |
 | `Term/KeyMap.cs` | `VirtualKey` → libghostty-vt physical key codes |
 | `Term/ShellIcon.cs` | Extracts the shell's own icon for the pane header / tab chip; used as Windows supplies it — never recolored per theme, and no plate or outline is put behind it |
 | `Term/TerminalRenderer.cs` | Win2D renderer for a render state |
@@ -331,9 +333,28 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   PowerShell's `Set-Location` does not touch the process working directory. `ExecutableToken`
   keeps the full unquoted path (the auto-detected `pwsh.exe` lives under `C:\Program Files`),
   which the hook's "bare shell only" test needs.
+- `Term/ShellProfiles.cs` discovers the shells Windows Terminal adds beyond the Windows
+  defaults the way Windows Terminal does it: Git Bash from
+  `HKLM\SOFTWARE\GitForWindows` `InstallPath`, one entry per WSL distribution from
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`, skipping `docker-desktop*` and
+  `rancher-desktop*`. The command lines match Windows Terminal's fragment and generator:
+  `"C:/…/bin/bash.exe" -i -l` in `%USERPROFILE%`, and `%SystemRoot%\System32\wsl.exe -d
+  <name> --cd ~` (`--cd` carries the `~` starting directory Windows Terminal asks for,
+  because CreateProcess cannot take a Linux path). Nothing launches these yet: the command
+  palette rows are held back until the launch path has been exercised on a machine with both
+  shells installed.
 - `shell-integration` (default `detect`) gates that wrapper; `none` leaves the shell alone and
-  the Unix shell names are recognized with a Notice. The session only injects into a bare
-  PowerShell command. The wrapper also emits OSC 133 A/B/C/D: `Term/ShellIntegration.cs`'s
+  `zsh` / `fish` / `elvish` / `nushell` are recognized with a Notice. PowerShell is wrapped
+  inline (`-EncodedCommand`) and only as a bare command. bash reads a generated
+  `%TEMP%\gui\bash-integration-<hash>.bash` through `--rcfile`, placed in front of `-i`
+  because bash only accepts long options before short ones, and gains `-i` because a pane does
+  not look interactive to it. `Assets/shell/bash.bash` runs the login profile chain first
+  (`/etc/profile`, else `~/.bashrc`) so a non-login bash still looks like git-bash, reports
+  OSC 7 with the MSYS path converted back to `C:/`, and puts the command-start mark in `PS0`.
+  A login shell ignores `--rcfile`, so `bash -i -l` (the command Git's Windows Terminal
+  profile runs) is rewritten to `--rcfile … -i`: the login flag is dropped and the rc file
+  runs `/etc/profile` itself. A WSL launcher cannot open a Windows rc path and is left
+  alone. The wrapper also emits OSC 133 A/B/C/D: `Term/ShellIntegration.cs`'s
   mark parser turns C/D into `TerminalSession.CommandRunning` and an `OnCommandFinished`
   callback. `shell-integration-features` drives the `cursor` (bar cursor at the prompt, with
   `cursor:steady`) and `title` (cwd as the title) parts; `sudo`, `ssh-*` and `path` are parsed

@@ -140,6 +140,10 @@ internal static class ShellIcon
 
     private static IconPixels? Extract(string executable)
     {
+        // A command line may carry a forward-slash path ("C:/Program Files/Git/bin/bash.exe");
+        // ExtractIconEx and SHGetFileInfo only accept the Win32 spelling.
+        executable = executable.Replace('/', '\\');
+
         IntPtr icon = IntPtr.Zero;
         IntPtr small = IntPtr.Zero;
 

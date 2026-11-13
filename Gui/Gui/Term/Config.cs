@@ -1678,8 +1678,8 @@ public sealed class Config
     }
 
     /// <summary>
-    /// "shell-integration": none, detect, or a shell name. This build only injects into
-    /// PowerShell, so the Unix shell names are accepted but cannot be honored on Windows.
+    /// "shell-integration": none, detect, or a shell name. This build injects into
+    /// PowerShell and bash; the other Unix shell names are accepted but cannot be honored.
     /// </summary>
     private string NormalizeShellIntegration(string? value)
     {
@@ -1698,6 +1698,7 @@ public sealed class Config
             case "powershell":
                 return "powershell";
             case "bash":
+                return "bash";
             case "elvish":
             case "fish":
             case "nushell":

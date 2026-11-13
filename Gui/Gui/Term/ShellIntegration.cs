@@ -1,25 +1,185 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace Gui.Term;
 
 /// <summary>
-/// PowerShell shell integration. Ghostty upstream ships bash/zsh/fish/elvish/nushell
-/// scripts only, so the Windows port supplies its own: a prompt wrapper that emits the
-/// OSC 133 semantic marks (prompt start/end, command start/finish) plus the OSC 7
-/// working-directory report. <see cref="ShellMarkParser"/> reads those marks back from
-/// the PTY stream so the app knows when a command is still running.
+/// Shell integration for the shells this app can drive. Ghostty upstream ships
+/// bash/zsh/fish/elvish/nushell scripts, none of which fit a Windows install, so the port
+/// supplies its own: a prompt hook that emits the OSC 133 semantic marks (prompt
+/// start/end, command start/finish) plus the OSC 7 working-directory report.
+/// <see cref="ShellMarkParser"/> reads those marks back from the PTY stream so the app
+/// knows when a command is still running.
+///
+/// PowerShell takes the script inline (-EncodedCommand); bash reads it from a generated
+/// --rcfile. A login shell and a WSL launcher are left alone: bash ignores --rcfile with
+/// --login, and the Linux side cannot open a Windows path.
 /// </summary>
 internal static class ShellIntegration
 {
     /// <summary>
-    /// Wraps a bare PowerShell command line with the integration script. The command is
-    /// returned unchanged when integration is off or when it names another shell.
+    /// Wraps a shell command line with the integration script. The command is returned
+    /// unchanged when integration is off, when it names another shell, or when it already
+    /// carries startup flags the integration cannot combine with.
     /// </summary>
-    public static string Inject(string shell, string mode, ShellIntegrationFeatures features)
+    public static string Inject(string shell, string mode, ShellIntegrationFeatures features, string executable)
     {
-        if (mode is not ("detect" or "powershell" or "pwsh")) return shell;
-        return shell + " -NoExit -EncodedCommand " + Encode(Script(features));
+        if (mode is "none") return shell;
+
+        string stem = Stem(executable.Length > 0 ? executable : shell);
+        string? arguments = ArgumentsAfter(shell, executable);
+
+        if (stem is "pwsh" or "powershell")
+        {
+            if (mode is not ("detect" or "powershell" or "pwsh")) return shell;
+            if (arguments != string.Empty) return shell;
+            return shell + " -NoExit -EncodedCommand " + Encode(Script(features));
+        }
+
+        if (stem == "bash")
+        {
+            if (mode is not ("detect" or "bash")) return shell;
+            if (!BashCanUseRcFile(arguments)) return shell;
+            string? rc = WriteBashRc(features);
+            if (rc is null) return shell;
+
+            // --rcfile is a long option and bash only accepts those before the short ones:
+            // "-i --rcfile x" makes bash read "--" as an option. It also needs -i, because a
+            // pane does not look interactive to bash and only an interactive shell reads the
+            // startup file.
+            string trimmed = shell.Trim();
+            int headLength = arguments!.Length == 0 ? trimmed.Length : trimmed.Length - arguments.Length;
+            string head = trimmed[..headLength].TrimEnd();
+            // Git's Windows Terminal profile runs "bash.exe -i -l", but a login shell ignores
+            // --rcfile, so -l is dropped: the rc file runs /etc/profile, which is the login
+            // chain, and the shell stays interactive.
+            return head + " --rcfile \"" + rc + "\" -i";
+        }
+
+        return shell;
+    }
+
+    // ---------------- bash ----------------
+
+    /// <summary>
+    /// The bash template with the feature flags applied. Kept separate from the file so a
+    /// test can check the script without a temporary file on disk.
+    /// </summary>
+    internal static string BashScript(ShellIntegrationFeatures features) =>
+        BashScript(features, BashTemplate());
+
+    internal static string BashScript(ShellIntegrationFeatures features, string template) =>
+        template
+            .Replace("@CURSOR@", features.Cursor ? "1" : "0", StringComparison.Ordinal)
+            .Replace("@CURSOR_STEADY@", features.CursorSteady ? "1" : "0", StringComparison.Ordinal)
+            .Replace("@TITLE@", features.Title ? "1" : "0", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Writes the script to %TEMP%\gui and returns it as a path bash can open. The file
+    /// name carries a hash of the contents, so changing a feature produces a new file
+    /// instead of rewriting one a running shell may still be reading.
+    /// </summary>
+    private static string? WriteBashRc(ShellIntegrationFeatures features)
+    {
+        try
+        {
+            string template = BashTemplate();
+            if (template.Length == 0) return null;
+
+            string script = BashScript(features, template);
+            string directory = Path.Combine(Path.GetTempPath(), "gui");
+            Directory.CreateDirectory(directory);
+            string path = Path.Combine(directory, "bash-integration-" + Hash(script) + ".bash");
+            if (!File.Exists(path)) File.WriteAllText(path, script, new UTF8Encoding(false));
+            return path.Replace('\\', '/');
+        }
+        catch (Exception error)
+        {
+            Diag.Warn("shell-integration", "bash: " + error.Message);
+            return null;
+        }
+    }
+
+    /// <summary>The template next to the app, or from the source tree in a test run.</summary>
+    private static string BashTemplate()
+    {
+        foreach (string path in BashTemplateCandidates())
+        {
+            try
+            {
+                if (!File.Exists(path)) continue;
+                // bash chokes on CRLF: a stray \r becomes part of the command.
+                return File.ReadAllText(path).Replace("\r\n", "\n");
+            }
+            catch
+            {
+                // Try the next candidate.
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static IEnumerable<string> BashTemplateCandidates()
+    {
+        yield return Path.Combine(AppContext.BaseDirectory, "Assets", "shell", "bash.bash");
+
+        // Tests run from the test output directory; walk up to the repository root.
+        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+            yield return Path.Combine(dir.FullName, "Gui", "Gui", "Assets", "shell", "bash.bash");
+    }
+
+    /// <summary>File name stem of an executable path, without quotes or extension.</summary>
+    private static string Stem(string path)
+    {
+        string name = path.Trim().Trim('"');
+        int slash = name.LastIndexOfAny(new[] { '\\', '/' });
+        if (slash >= 0) name = name[(slash + 1)..];
+        int dot = name.LastIndexOf('.');
+        if (dot > 0) name = name[..dot];
+        return name.ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Arguments that follow the executable, or null when the command does not name that
+    /// executable at all. An auto-detected shell arrives as an unquoted path that may
+    /// contain spaces, so the executable is compared as a whole rather than by token.
+    /// </summary>
+    private static string? ArgumentsAfter(string command, string executable)
+    {
+        string trimmed = command.Trim();
+        // The executable may arrive quoted ("C:\Program Files\Git\bin\bash.exe") or bare, and
+        // an auto-detected shell may be an unquoted path with spaces.
+        string head = trimmed.StartsWith('"') ? "\"" + executable + "\"" : executable;
+        if (!trimmed.StartsWith(head, StringComparison.OrdinalIgnoreCase)) return null;
+        return trimmed[head.Length..].Trim();
+    }
+
+    /// <summary>
+    /// bash only reads --rcfile for a plain interactive shell: a login shell ignores it,
+    /// and a command line that already picks its own startup files must not be rewritten.
+    /// </summary>
+    private static bool BashCanUseRcFile(string? arguments)
+    {
+        if (arguments is null) return false;
+        foreach (string token in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // Login and interactive flags are the only ones the wrapper can rewrite; anything
+            // that selects its own startup files or a command (--rcfile, --norc, -c) cannot.
+            if (token is not ("-i" or "--interactive" or "-l" or "--login" or "-il" or "-li"))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static string Hash(string text)
+    {
+        uint hash = 2166136261;
+        foreach (char c in text) hash = unchecked((hash ^ c) * 16777619);
+        return hash.ToString("x8");
     }
 
     private static string Encode(string script) =>

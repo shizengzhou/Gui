@@ -292,10 +292,15 @@ public class ConfigSurfaceTests : IDisposable
         Assert.False(off.ShellFeatures.Cursor);
         Assert.False(off.ShellFeatures.Title);
 
-        // A Unix shell name is recognized but cannot be injected on Windows.
+        // bash is injected through a generated --rcfile; the other Unix shells are not.
         Config bash = Config.Load(Write("shell-integration = bash\n"));
         Assert.Equal("bash", bash.ShellIntegration);
-        Assert.Contains(bash.Diagnostics,
+        Assert.DoesNotContain(bash.Diagnostics,
+            d => d.Key == "shell-integration" && d.Severity == ConfigSeverity.Notice);
+
+        Config zsh = Config.Load(Write("shell-integration = zsh\n"));
+        Assert.Equal("zsh", zsh.ShellIntegration);
+        Assert.Contains(zsh.Diagnostics,
             d => d.Key == "shell-integration" && d.Severity == ConfigSeverity.Notice);
     }
 

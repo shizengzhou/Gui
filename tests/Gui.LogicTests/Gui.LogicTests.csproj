@@ -36,6 +36,7 @@
     <Compile Include="../../Gui/Gui/Term/KeyMap.cs" Link="KeyMap.cs" />
     <Compile Include="../../Gui/Gui/Term/Keybinds.cs" Link="Keybinds.cs" />
     <Compile Include="../../Gui/Gui/Term/ShellIntegration.cs" Link="ShellIntegration.cs" />
+    <Compile Include="../../Gui/Gui/Term/ShellProfiles.cs" Link="ShellProfiles.cs" />
     <Compile Include="../../Gui/Gui/Term/PaletteSelection.cs" Link="PaletteSelection.cs" />
     <Compile Include="../../Gui/Gui/Term/ProgramStatus.cs" Link="ProgramStatus.cs" />
     <Compile Include="../../Gui/Gui/Term/TabSelection.cs" Link="TabSelection.cs" />
