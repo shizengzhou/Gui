@@ -58,6 +58,10 @@ dotnet run --project tests/Gui.PerfTests -c Release
 ./tests/perf-terminals.ps1 -Mode startup
 ./tests/perf-terminals.ps1 -Mode emit
 
+# OSC 7501 program-status badge: feeds reports through a real pane and reads the header
+# back with UI Automation (blocked + message, working + progress, cleared)
+./tests/osc7501.ps1
+
 # Installer: tests, self-contained publish and Inno Setup in one step; the version is
 # stamped into the exe, the setup and the file name -> dist/Gui-<version>-x64-setup.exe
 ./build-installer.ps1 1.2.3
@@ -98,6 +102,16 @@ composited, and in a terminal that parses on the UI thread also processed, at a 
 otty restores its own window set and ignores `--command` while doing so, so its flood is
 opt-in (`-OttyPaste`, only with a single otty window) or pasted by hand from the command the
 script prints.
+
+`tests/osc7501.ps1` covers the OSC 7501 badge from the outside: the parser is unit-tested in
+`tests/Gui.LogicTests`, but only a window shows that a report turns into the pane header's
+state. Each scenario starts its own Gui with `TEMP` and `APPDATA` pointed at a scratch
+directory, feeds the escape sequence from a pwsh script started in the pane, and reads the
+header back through UI Automation instead of comparing pixels. A `state=blocked` report needs
+a `kind` to be worth showing — without one the header stays empty, which the script pins down.
+The XAML content lives in a child window of the top-level one, so the UIA tree is queried from
+that child (`Get-ContentWindow`), and it is resolved on every probe because the child appears a
+moment after the window.
 
 There is no analyzer/lint configuration in this repo. `.github/workflows/ci.yml` builds the
 solution and runs both test suites on Windows.
