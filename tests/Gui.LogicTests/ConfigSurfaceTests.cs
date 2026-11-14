@@ -646,7 +646,7 @@ public class ConfigSurfaceTests : IDisposable
             Assert.Equal("Tab: x", Strings.TabName("x"));
 
             Strings.Use(Language.Chinese);
-            Assert.Equal("向右拆分窗格", Strings.SplitRight);
+            Assert.Equal("向右拆分", Strings.SplitRight);
             Assert.Equal("标签页: x", Strings.TabName("x"));
         }
         finally
