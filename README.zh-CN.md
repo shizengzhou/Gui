@@ -2,6 +2,8 @@
 
 Gui 说：“我就是要一步一步一步一步一步一步地追到最高，我要做 Windows 上的 Ghostty”。
 
+https://github.com/user-attachments/assets/b5013ff2-d1bd-45a0-a6ec-2fb226c59656
+
 [English](README.md) | **简体中文**
 
 ## 配置
