@@ -1388,6 +1388,43 @@ public sealed unsafe class TerminalSession : IDisposable
         OnUpdate?.Invoke();
     }
 
+    /// <summary>
+    /// Moves a full-screen program on the alternate screen with the wheel. That screen has no
+    /// scrollback, so xterm's alternate scroll (DEC private 1007, on unless the program turned
+    /// it off) sends cursor up/down instead, the way the program would get them from the
+    /// keyboard; application cursor keys (DECCKM) decide which escape it expects. False when
+    /// the terminal is not on the alternate screen, so the caller scrolls the scrollback.
+    /// </summary>
+    public bool ScrollAlternateScreen(bool up, int repeat)
+    {
+        if (_terminal == IntPtr.Zero || repeat <= 0) return false;
+        if (!ModeEnabled(1049) && !ModeEnabled(1047) && !ModeEnabled(47)) return false;
+        if (!ModeEnabled(1007)) return false;
+
+        byte[] escape = ModeEnabled(1)
+            ? (up ? "\u001bOA"u8.ToArray() : "\u001bOB"u8.ToArray())
+            : (up ? "\u001b[A"u8.ToArray() : "\u001b[B"u8.ToArray());
+
+        var bytes = new byte[escape.Length * repeat];
+        for (int i = 0; i < repeat; i++) escape.CopyTo(bytes, i * escape.Length);
+        WriteInput(bytes);
+        return true;
+    }
+
+    /// <summary>One DEC private mode (or ANSI mode with <paramref name="ansi"/>) as a bool.</summary>
+    private bool ModeEnabled(int mode, bool ansi = false)
+    {
+        if (_terminal == IntPtr.Zero) return false;
+
+        var config = new GhosttyNative.GhosttyTerminalModeConfig
+        {
+            Mode = (ushort)(ansi ? mode | 0x8000 : mode & 0x7FFF),
+            Value = 0,
+        };
+        return GhosttyNative.ghostty_terminal_get(_terminal, GhosttyNative.TDATA_MODE, &config)
+            == GhosttyNative.SUCCESS && config.Value != 0;
+    }
+
     /// <summary>Scrolls the viewport to the newest row ("scroll-to-bottom").</summary>
     public void ScrollToBottom()
     {

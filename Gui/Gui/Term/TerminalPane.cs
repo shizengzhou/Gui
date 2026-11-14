@@ -3098,6 +3098,15 @@ public sealed class TerminalPane
 
         // mouse-scroll-multiplier is the discrete-wheel row count (Ghostty's default is 3).
         int step = Math.Max(1, (int)Math.Round(_config.MouseScrollMultiplier));
+
+        // A full-screen program on the alternate screen leaves no scrollback to move, so the
+        // wheel reaches it as cursor keys instead (xterm's alternate scroll).
+        if (_session.ScrollAlternateScreen(delta > 0, step))
+        {
+            args.Handled = true;
+            return;
+        }
+
         _session.Scroll(delta > 0 ? -step : step);
         // The cached viewport match list moves with the rows.
         if (_searchActive) _searchTimer?.Start();
