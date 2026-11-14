@@ -2,6 +2,8 @@
 
 Gui says: "Step by step, step after step after step, I climb to the very top. I want to be Ghostty on Windows."
 
+https://github.com/user-attachments/assets/b5013ff2-d1bd-45a0-a6ec-2fb226c59656
+
 **English** | [简体中文](README.zh-CN.md)
 
 ## Configuration
