@@ -1455,6 +1455,13 @@ public sealed unsafe class TerminalRenderer
         {
             float rowTop = row.ViewportY * cellH;
 
+            // Background rectangles land on whole device pixels. A boundary at a fractional DIP
+            // coordinate makes each neighbour cover half of the shared column, and blending the
+            // two halves lands darker than either colour - the same hairline the merge above
+            // removes inside one colour, here between two.
+            float dpiScale = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
+            float Snap(float dip) => MathF.Round(dip * dpiScale) / dpiScale;
+
             // Runs that share a background fill as one rectangle. A run breaks whenever the
             // foreground, the weight or an underline changes, and painting the pieces of one
             // colour separately leaves a darker hairline wherever the shared edge lands inside
@@ -1472,9 +1479,14 @@ public sealed unsafe class TerminalRenderer
                     Run last = row.Runs[end - 1];
                     Color fill = first.Bg;
                     fill.A = cellAlpha;
+                    float left = Snap(first.Col * cellW);
+                    float right = Snap((last.Col + last.Cols) * cellW);
+                    float top = Snap(rowTop);
+                    float bottom = Snap(rowTop + cellH);
                     ds.FillRectangle(
-                        new Rect(first.Col * cellW, rowTop,
-                            (last.Col + last.Cols - first.Col) * cellW, cellH),
+                        new Rect(left, top,
+                            MathF.Max(1f / dpiScale, right - left),
+                            MathF.Max(1f / dpiScale, bottom - top)),
                         fill);
                 }
 
