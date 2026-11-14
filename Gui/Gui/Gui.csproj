@@ -145,6 +145,13 @@
   <Target Name="CopyCliOutputToPublish" AfterTargets="Publish" DependsOnTargets="CollectCliOutput" Condition="'$(SelfContained)' != 'true'">
     <Copy SourceFiles="@(_CliExe)" DestinationFiles="@(_CliExe->'$(PublishDir)bin\gui%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(_CliSide)" DestinationFiles="@(_CliSide->'$(PublishDir)bin\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <!-- The ProjectReference also drops the CLI's apphost, .deps.json and .runtimeconfig.json
+         into the payload root. Only bin may carry the CLI, or a PATH entry on the root would
+         expose the WinUI DLLs again. -->
+    <ItemGroup>
+      <_StrayFddCliFile Include="$(PublishDir)gui-cli.*" />
+    </ItemGroup>
+    <Delete Files="@(_StrayFddCliFile)" />
   </Target>
 
   <!-- A self-contained publish has an app-local hostfxr and no installed framework, so a

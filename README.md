@@ -11,7 +11,9 @@ The config is Ghostty's own format, at `%APPDATA%\gui\config`.
 ## Requirements
 
 - Windows 10 1809 (build 17763) or later, x64
-- Nothing to install at runtime: the installer payload is self-contained
+- The installer comes in two sizes: the plain one carries the .NET 8 runtime, the `-lite` one
+  leaves it out and needs .NET 8 on the machine (the setup checks for it and links to the
+  download when it is missing)
 - The checked-in native core is x64 only; x86 and ARM64 need
   `native/build-ghostty-vt.sh` with the matching `PLATFORM` (Zig 0.17)
 
@@ -22,7 +24,8 @@ The config is Ghostty's own format, at `%APPDATA%\gui\config`.
 dotnet build Gui/Gui/Gui.csproj -p:Platform=x64
 Gui/Gui/bin/x64/Debug/net8.0-windows10.0.19041.0/win-x64/Gui.exe
 
-# Installer: tests, self-contained publish, Inno Setup -> dist/Gui-<version>-x64-setup.exe
+# Installers: tests, publish, Inno Setup -> dist/Gui-<version>-x64-setup.exe (self-contained)
+# and dist/Gui-<version>-x64-lite-setup.exe (needs .NET 8); -Variant full|lite builds one
 ./build-installer.ps1 0.1.0
 ```
 

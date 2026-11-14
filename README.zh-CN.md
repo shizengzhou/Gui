@@ -11,7 +11,8 @@ Gui 说：“我就是要一步一步一步一步一步一步地追到最高，�
 ## 运行要求
 
 - Windows 10 1809（17763）及以上，x64
-- 运行时无需安装任何东西：安装包里的负载是自包含的
+- 安装包分两种：普通的那种把 .NET 8 运行时一起带上，机器上什么都不用装；`-lite` 那种不带，
+  要求机器上已有 .NET 8（安装时会检查，缺了会给出下载入口）
 - 仓库中入库的原生内核只有 x64；x86 与 ARM64 需要用 `native/build-ghostty-vt.sh` 配合对应的
   `PLATFORM` 自行构建（Zig 0.17）
 
@@ -22,7 +23,8 @@ Gui 说：“我就是要一步一步一步一步一步一步地追到最高，�
 dotnet build Gui/Gui/Gui.csproj -p:Platform=x64
 Gui/Gui/bin/x64/Debug/net8.0-windows10.0.19041.0/win-x64/Gui.exe
 
-# 安装包：测试 + 自包含发布 + Inno Setup -> dist/Gui-<version>-x64-setup.exe
+# 安装包：测试 + 发布 + Inno Setup -> dist/Gui-<version>-x64-setup.exe（自包含）
+# 与 dist/Gui-<version>-x64-lite-setup.exe（需要 .NET 8）；-Variant full|lite 只做一种
 ./build-installer.ps1 0.1.0
 ```
 

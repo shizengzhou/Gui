@@ -4,10 +4,16 @@
 ;   dotnet publish Gui/Gui/Gui.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64
 ;   iscc installer/gui.iss /DAppVersion=1.0.0
 ;
-; The app is unpackaged and self-contained, so the payload directory already carries the
-; .NET runtime, the Windows App SDK and ghostty-vt.dll; a target machine needs nothing
-; installed. Only the x64 installer exists because native/x64 is the only ghostty-vt.dll
-; checked in.
+; Two payloads can be packaged from this one script:
+;   (no define)  self-contained: the payload carries the .NET 8 runtime, so a target
+;                machine needs nothing installed
+;   /DLite=1     framework-dependent: the payload leaves the .NET runtime out, so the
+;                setup is smaller but the machine must already have .NET 8
+; Both keep the Windows App SDK and ghostty-vt.dll in the payload either way, because an
+; unpackaged WinUI app cannot start without them. Both use the same AppId and the same
+; install directory: they are one product with two download sizes, so installing one
+; over the other is an upgrade rather than a second copy. Only the x64 installer exists
+; because native/x64 is the only ghostty-vt.dll checked in.
 
 #ifndef AppVersion
   #define AppVersion "0.1.0"
@@ -15,6 +21,12 @@
 
 #define AppName "Gui"
 #define AppExe "Gui.exe"
+
+#ifdef Lite
+  #define VariantSuffix "-lite"
+#else
+  #define VariantSuffix ""
+#endif
 ; Where the publish profile dropped the payload. The profile's PublishDir has no platform
 ; folder, unlike a plain "dotnet publish -p:Platform=x64"; override with /DPublishDir=... if
 ; you published elsewhere.
@@ -42,7 +54,7 @@ VersionInfoTextVersion={#AppVersion}
 VersionInfoCompany={#AppName}
 VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} Setup
-VersionInfoOriginalFileName={#AppName}-{#AppVersion}-x64-setup.exe
+VersionInfoOriginalFileName={#AppName}-{#AppVersion}-x64{#VariantSuffix}-setup.exe
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -54,7 +66,7 @@ MinVersion=10.0.17763
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
-OutputBaseFilename={#AppName}-{#AppVersion}-x64-setup
+OutputBaseFilename={#AppName}-{#AppVersion}-x64{#VariantSuffix}-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -77,6 +89,15 @@ Name: "addpath"; Description: "Add gui to the PATH"; Flags: unchecked
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
+
+#ifdef Lite
+[InstallDelete]
+; The lite payload carries no .NET runtime. Leftover runtime files from an earlier
+; self-contained install would be picked up instead of the shared ones (a private
+; hostfxr wins) and would survive an uninstall as tens of MB of orphans, so the lite
+; setup clears the app directory and lays its own payload down again a moment later.
+Type: filesandordirs; Name: "{app}\*"
+#endif
 
 
 [Registry]
@@ -172,3 +193,57 @@ begin
     RemovePathEntry(ExpandConstant('{app}\bin'));
   end;
 end;
+
+#ifdef Lite
+// The lite payload leaves the .NET runtime out, so Setup has to make sure it is there
+// before it copies the rest. The app resolves Microsoft.NETCore.App 8.0.0, and any 8.x
+// patch release satisfies that, so a single 8.* folder is all this looks for - in the
+// machine-wide install and in a per-user one, which is where dotnet-install puts it.
+function HasDotNet8In(Root: String): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+  if not DirExists(Root) then exit;
+  if not FindFirst(AddBackslash(Root) + '8.*', FindRec) then exit;
+  try
+    repeat
+      if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+      begin
+        Result := True;
+        Exit;
+      end;
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+function DotNet8Installed: Boolean;
+begin
+  Result :=
+    HasDotNet8In(ExpandConstant('{commonpf64}\dotnet\shared\Microsoft.NETCore.App')) or
+    HasDotNet8In(ExpandConstant('{localappdata}\Microsoft\dotnet\shared\Microsoft.NETCore.App'));
+end;
+
+function InitializeSetup: Boolean;
+var
+  ErrorCode: Integer;
+begin
+  if DotNet8Installed then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  // A silent install must not block on a message or launch a browser; it fails with a
+  // non-zero exit code instead, which is what an unattended deployment can react to.
+  Result := False;
+  if not WizardSilent then
+    if MsgBox('Gui needs the .NET 8 runtime, which this package does not carry.' + #13#10 +
+              'It is a free download from dotnet.microsoft.com.' + #13#10 + #13#10 +
+              'Open the download page now?', mbConfirmation, MB_YESNO) = IDYES then
+      ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/8.0', '', '',
+                SW_SHOWNORMAL, ewNoWait, ErrorCode);
+end;
+#endif

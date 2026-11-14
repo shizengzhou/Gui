@@ -1,15 +1,24 @@
 ﻿<#
 .SYNOPSIS
-    Builds the Gui installer: publish the self-contained payload, then compile
-    installer/gui.iss into dist\Gui-<version>-<platform>-setup.exe.
+    Builds the Gui installers: publish the payloads, then compile installer/gui.iss
+    into dist\Gui-<version>-<platform>-setup.exe and dist\Gui-<version>-<platform>-lite-setup.exe.
 
 .DESCRIPTION
-    Runs the unit and ABI test suites first (skip with -SkipTests), publishes with the
-    publish profile so the payload really is self-contained, checks the payload for the
-    files a broken publish drops, and finally hands it to Inno Setup.
+    Runs the unit and ABI test suites first (skip with -SkipTests), publishes each
+    payload, checks it for the files a broken publish drops, and finally hands it to
+    Inno Setup.
+
+    Two packages come out of one version because the .NET 8 runtime is the larger half
+    of the payload:
+      full   self-contained, runs on a machine with nothing installed
+      lite   framework-dependent, needs the .NET 8 runtime, so its download is smaller
+             and its setup refuses to run when that runtime is missing
+    Both are the same product (one AppId, one install directory), so installing one
+    over the other keeps the installation and the user picks the download that suits
+    the machine.
 
 .PARAMETER Version
-    Version stamped into the assembly, the installer and the output file name.
+    Version stamped into the assembly, the installers and their file names.
     Accepts "1.2.3" and pre-release forms such as "1.2.3-beta.1".
 
 .PARAMETER Platform
@@ -17,6 +26,9 @@
 
 .PARAMETER Configuration
     Release (default) or Debug. Debug publishes without ReadyToRun.
+
+.PARAMETER Variant
+    Which packages to build: both (default), full or lite.
 
 .PARAMETER SkipTests
     Package without running tests, for a quick local installer.
@@ -26,6 +38,9 @@
 
 .EXAMPLE
     ./build-installer.ps1 -Version 1.0.0-rc.1 -Platform x64 -SkipTests
+
+.EXAMPLE
+    ./build-installer.ps1 0.2.0 -Variant lite
 #>
 [CmdletBinding()]
 param(
@@ -37,6 +52,9 @@ param(
 
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
+
+    [ValidateSet("both", "full", "lite")]
+    [string]$Variant = "both",
 
     [switch]$SkipTests
 )
@@ -89,6 +107,7 @@ Write-Host "Gui installer build" -ForegroundColor White
 Write-Detail "version       $Version"
 Write-Detail "platform      $Platform ($rid)"
 Write-Detail "configuration $Configuration"
+Write-Detail "variants      $Variant"
 
 # ---------------- tools ----------------
 
@@ -138,62 +157,100 @@ if ($SkipTests) {
     }
 }
 
-# ---------------- publish ----------------
+# ---------------- publish and installer ----------------
 
-Write-Step "Publishing the payload"
-
-$publishDir = Join-Path $repo "Gui/Gui/bin/$Configuration/net8.0-windows10.0.19041.0/$rid/publish"
-if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
-
-# The profile is what sets SelfContained, and -p:Version stamps the assembly so that
-# "gui +version" reports the same number the installer does.
-$publishArgs = @(
-    "publish", $project,
-    "-c", $Configuration,
-    "-p:Platform=$Platform",
-    "-p:PublishProfile=$rid",
-    "-p:Version=$Version",
-    "--nologo"
-)
-Invoke-Checked "dotnet publish" { & dotnet @publishArgs }
-
-$required = @(
-    "Gui.exe",
-    "bin/gui.exe",
-    "Gui.pri",
-    "App.xbf",
-    "ghostty-vt.dll",
-    "System.Private.CoreLib.dll",
-    "hostfxr.dll"
-)
-foreach ($file in $required) {
-    if (-not (Test-Path (Join-Path $publishDir $file))) {
-        Fail "the payload is missing $file - the publish did not produce a self-contained folder"
-    }
-}
-
-$payloadSize = (Get-ChildItem $publishDir -Recurse -File | Measure-Object -Property Length -Sum).Sum
-Write-Detail "payload       $([math]::Round($payloadSize / 1MB, 1)) MB"
-Write-Detail "directory     $publishDir"
-
-# ---------------- installer ----------------
-
-Write-Step "Compiling the installer"
-
+# One version, two packages: "full" carries the .NET 8 runtime in the payload, "lite" is
+# framework-dependent and so smaller to download, but it needs that runtime installed.
+# Both are the same product - one AppId, one install directory - so installing either
+# over the other keeps the installation.
+$variants = @(if ($Variant -eq "both") { "full", "lite" } else { $Variant })
 $dist = Join-Path $repo "dist"
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
+$built = @()
 
-Invoke-Checked "ISCC" {
-    & $iscc $iss "/DAppVersion=$Version" "/DVerFile=$fileVersion" "/DPublishDir=$publishDir" /Q
+foreach ($name in $variants) {
+    $lite = $name -eq "lite"
+    $label = if ($lite) { "lite" } else { "full" }
+    $suffix = if ($lite) { "-lite" } else { "" }
+
+    Write-Step "Publishing the $label payload"
+
+    # Separate folders: publishing a framework-dependent build into a folder that still
+    # holds a self-contained one keeps hostfxr.dll and the runtime DLLs around and
+    # silently produces a hybrid payload.
+    $folder = if ($lite) { "publish-fdd" } else { "publish" }
+    $publishDir = Join-Path $repo "Gui/Gui/bin/$Configuration/net8.0-windows10.0.19041.0/$rid/$folder"
+    if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
+
+    # The profile is what sets SelfContained, and -p:Version stamps the assembly so that
+    # "gui +version" reports the same number the installer does. The lite payload
+    # overrides SelfContained and its output folder; WindowsAppSDKSelfContained stays on
+    # in Gui.csproj, because an unpackaged WinUI app needs the SDK next to the exe
+    # whether or not the .NET runtime travels with it.
+    $publishArgs = @(
+        "publish", $project,
+        "-c", $Configuration,
+        "-p:Platform=$Platform",
+        "-p:PublishProfile=$rid",
+        "-p:Version=$Version",
+        "--nologo"
+    )
+    if ($lite) {
+        $publishArgs += @("-p:SelfContained=false", "-p:PublishDir=$($publishDir.TrimEnd('\'))\")
+    }
+    Invoke-Checked "dotnet publish" { & dotnet @publishArgs }
+
+    $required = @(
+        "Gui.exe",
+        "bin/gui.exe",
+        "Gui.pri",
+        "App.xbf",
+        "ghostty-vt.dll",
+        "Microsoft.ui.xaml.dll"
+    )
+    if ($lite) {
+        # The runtime must be absent here, or the app stops depending on the shared one
+        # and the smaller download buys nothing.
+        foreach ($file in @("hostfxr.dll", "coreclr.dll", "System.Private.CoreLib.dll")) {
+            if (Test-Path (Join-Path $publishDir $file)) {
+                Fail "the lite payload contains $file - the publish was not framework-dependent"
+            }
+        }
+    } else {
+        $required += @("System.Private.CoreLib.dll", "hostfxr.dll")
+    }
+    foreach ($file in $required) {
+        if (-not (Test-Path (Join-Path $publishDir $file))) {
+            Fail "the $label payload is missing $file"
+        }
+    }
+
+    $payloadSize = (Get-ChildItem $publishDir -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    Write-Detail "payload       $([math]::Round($payloadSize / 1MB, 1)) MB"
+    Write-Detail "directory     $publishDir"
+
+    Write-Step "Compiling the $label installer"
+
+    $setup = Join-Path $dist "Gui-$Version-$($Platform.ToLowerInvariant())$suffix-setup.exe"
+    $isccArgs = @(
+        $iss,
+        "/DAppVersion=$Version",
+        "/DVerFile=$fileVersion",
+        "/DPublishDir=$publishDir",
+        "/Q"
+    )
+    if ($lite) { $isccArgs += "/DLite=1" }
+    Invoke-Checked "ISCC" { & $iscc @isccArgs }
+
+    if (-not (Test-Path $setup)) {
+        Fail "ISCC finished but $setup does not exist"
+    }
+    $built += [pscustomobject]@{ Path = $setup; Size = (Get-Item $setup).Length }
 }
 
-$setup = Join-Path $dist "Gui-$Version-$($Platform.ToLowerInvariant())-setup.exe"
-if (-not (Test-Path $setup)) {
-    Fail "ISCC finished but $setup does not exist"
-}
-
-$setupSize = (Get-Item $setup).Length
 Write-Step "Done"
-Write-Host "    installer     $setup" -ForegroundColor Green
-Write-Host "    size          $([math]::Round($setupSize / 1MB, 1)) MB" -ForegroundColor Green
+foreach ($setup in $built) {
+    Write-Host "    installer     $($setup.Path)" -ForegroundColor Green
+    Write-Host "    size          $([math]::Round($setup.Size / 1MB, 1)) MB" -ForegroundColor Green
+}
 Write-Host "    elapsed       $([math]::Round($stopwatch.Elapsed.TotalSeconds, 1)) s" -ForegroundColor Green

@@ -62,8 +62,10 @@ dotnet run --project tests/Gui.PerfTests -c Release
 # back with UI Automation (blocked + message, working + progress, cleared)
 ./tests/osc7501.ps1
 
-# Installer: tests, self-contained publish and Inno Setup in one step; the version is
-# stamped into the exe, the setup and the file name -> dist/Gui-<version>-x64-setup.exe
+# Installers: tests, publish and Inno Setup in one step; the version is stamped into the
+# exe, the setups and their file names. One version yields two payloads: self-contained
+# (dist/Gui-<version>-x64-setup.exe) and framework-dependent (`-lite`, needs .NET 8,
+# dist/Gui-<version>-x64-lite-setup.exe); -Variant full|lite builds just one.
 ./build-installer.ps1 1.2.3
 ```
 
