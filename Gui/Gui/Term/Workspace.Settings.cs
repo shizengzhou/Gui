@@ -293,6 +293,7 @@ public sealed partial class Workspace
 
         panel.Children.Add(SettingsNavItem("appearance", '\uE790', Strings.SettingsNavAppearance));
         panel.Children.Add(SettingsNavItem("terminal", '\uE756', Strings.SettingsNavTerminal));
+        panel.Children.Add(SettingsNavItem("notifications", '\uE7ED', Strings.SettingsNavNotifications));
         panel.Children.Add(SettingsNavItem("keys", '\uE765', Strings.SettingsNavKeys));
         panel.Children.Add(SettingsNavItem("about", '\uE946', Strings.SettingsNavAbout));
 
@@ -428,6 +429,7 @@ public sealed partial class Workspace
 
         AddSettingsPage("appearance", BuildAppearanceSettingsPage());
         AddSettingsPage("terminal", BuildTerminalSettingsPage());
+        AddSettingsPage("notifications", BuildNotificationsSettingsPage());
         AddSettingsPage("keys", BuildKeysSettingsPage());
         AddSettingsPage("about", BuildAboutSettingsPage());
 
@@ -913,6 +915,133 @@ public sealed partial class Workspace
                 SettingsSwitch(_config.CopyOnSelect, ApplyCopyOnSelectChoice)))));
 
         return page;
+    }
+
+    // ---------------- notifications ----------------
+
+    private FrameworkElement BuildNotificationsSettingsPage()
+    {
+        var page = SettingsPageStack();
+
+        int mode = _config.NotifyOnCommandFinish switch
+        {
+            "always" => 2,
+            "never" => 0,
+            _ => 1,
+        };
+        FrameworkElement when = SettingsSegmented(
+            new[] { Strings.SettingsNotifyNever, Strings.SettingsNotifyUnfocused, Strings.SettingsNotifyAlways },
+            mode, index => ApplyNotifyMode(index switch
+            {
+                2 => "always",
+                0 => "never",
+                _ => "unfocused",
+            }));
+
+        NumberBox after = SettingsNumber(
+            Math.Round(_config.NotifyOnCommandFinishAfter.TotalSeconds), 0, 3600,
+            ApplyNotifyAfterChoice);
+
+        page.Children.Add(SettingsGroup(Strings.SettingsNotifyCommand, SettingsCard(
+            SettingsRow(Strings.SettingsNotifyOnFinish, Strings.SettingsNotifyOnFinishDescription, when),
+            SettingsRow(Strings.SettingsNotifyBell, null,
+                SettingsSwitch(_config.NotifyOnCommandFinishBell, on =>
+                {
+                    _config.NotifyOnCommandFinishBell = on;
+                    SaveNotifyAction();
+                })),
+            SettingsRow(Strings.SettingsNotifyToast, null,
+                SettingsSwitch(_config.NotifyOnCommandFinishToast, on =>
+                {
+                    _config.NotifyOnCommandFinishToast = on;
+                    SaveNotifyAction();
+                })),
+            SettingsRow(Strings.SettingsNotifyAfter, null, SettingsUnit(after, "s")))));
+
+        page.Children.Add(SettingsGroup(Strings.SettingsDesktopNotifications, SettingsCard(
+            SettingsRow(Strings.SettingsDesktopNotificationsAllow,
+                Strings.SettingsDesktopNotificationsDescription,
+                SettingsSwitch(_config.DesktopNotifications, ApplyDesktopNotificationsChoice)))));
+
+        NumberBox volume = SettingsNumber(
+            Math.Round(_config.BellAudioVolume * 100), 0, 100, ApplyBellVolumeChoice);
+
+        page.Children.Add(SettingsGroup(Strings.SettingsBell, SettingsCard(
+            SettingsRow(Strings.SettingsBellSystem, null,
+                BellFeatureSwitch(_config.BellSystem, on => _config.BellSystem = on)),
+            SettingsRow(Strings.SettingsBellAudio, null,
+                BellFeatureSwitch(_config.BellAudio, on => _config.BellAudio = on)),
+            SettingsRow(Strings.SettingsBellAttention, null,
+                BellFeatureSwitch(_config.BellAttention, on => _config.BellAttention = on)),
+            SettingsRow(Strings.SettingsBellTitle, null,
+                BellFeatureSwitch(_config.BellTitle, on => _config.BellTitle = on)),
+            SettingsRow(Strings.SettingsBellBorder, null,
+                BellFeatureSwitch(_config.BellBorder, on => _config.BellBorder = on)),
+            SettingsRow(Strings.SettingsBellVolume, null, SettingsUnit(volume, "%")))));
+
+        return page;
+    }
+
+    private FrameworkElement BellFeatureSwitch(bool value, Action<bool> set) =>
+        SettingsSwitch(value, on =>
+        {
+            set(on);
+            SaveBellFeatures();
+        });
+
+    private void ApplyNotifyMode(string mode)
+    {
+        _config.NotifyOnCommandFinish = mode;
+        Config.SaveValue("notify-on-command-finish", mode);
+    }
+
+    /// <summary>
+    /// "notify-on-command-finish-action" is a list with "no-" negations. Both tokens are
+    /// written, otherwise the omitted one keeps its default and a switch would lie.
+    /// </summary>
+    private void SaveNotifyAction()
+    {
+        string action = (_config.NotifyOnCommandFinishBell ? "bell" : "no-bell") + "," +
+                        (_config.NotifyOnCommandFinishToast ? "notify" : "no-notify");
+        Config.SaveValue("notify-on-command-finish-action", action);
+    }
+
+    private void ApplyNotifyAfterChoice(double seconds)
+    {
+        _config.NotifyOnCommandFinishAfter = TimeSpan.FromSeconds(seconds);
+        Config.SaveValue("notify-on-command-finish-after",
+            seconds.ToString("0.##", CultureInfo.InvariantCulture) + "s");
+    }
+
+    private void ApplyDesktopNotificationsChoice(bool enabled)
+    {
+        _config.DesktopNotifications = enabled;
+        Config.SaveValue("desktop-notifications", enabled ? "true" : "false");
+    }
+
+    /// <summary>
+    /// "bell-features" starts from Ghostty's defaults and only names what changes, so every
+    /// token is written: the checkboxes then describe the whole state instead of a delta.
+    /// </summary>
+    private void SaveBellFeatures()
+    {
+        var parts = new List<string>(5)
+        {
+            _config.BellSystem ? "system" : "no-system",
+            _config.BellAudio ? "audio" : "no-audio",
+            _config.BellAttention ? "attention" : "no-attention",
+            _config.BellTitle ? "title" : "no-title",
+            _config.BellBorder ? "border" : "no-border",
+        };
+        Config.SaveValue("bell-features", string.Join(",", parts));
+    }
+
+    private void ApplyBellVolumeChoice(double percent)
+    {
+        float volume = Math.Clamp((float)(percent / 100.0), 0f, 1f);
+        _config.BellAudioVolume = volume;
+        Config.SaveValue("bell-audio-volume",
+            volume.ToString("0.##", CultureInfo.InvariantCulture));
     }
 
     // ---------------- key bindings ----------------
@@ -1703,6 +1832,20 @@ public sealed partial class Workspace
             if (args.NewValue != args.OldValue) changed(args.NewValue);
         };
         return box;
+    }
+
+    /// <summary>A number field with its unit beside it; NumberBox has no suffix of its own.</summary>
+    private FrameworkElement SettingsUnit(NumberBox box, string unit)
+    {
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        row.Children.Add(box);
+        row.Children.Add(Label(unit, Theme.FontSmall, TextFaintBrush()));
+        return row;
     }
 
     /// <summary>

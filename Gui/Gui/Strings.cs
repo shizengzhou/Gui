@@ -33,10 +33,10 @@ public static class Strings
 
     // ---- terminal pane ----------------------------------------------------
 
-    public static string SplitRight => Pick("Split right", "向右拆分窗格");
-    public static string SplitDown => Pick("Split down", "向下拆分窗格");
-    public static string SplitLeft => Pick("Split left", "向左拆分窗格");
-    public static string SplitUp => Pick("Split up", "向上拆分窗格");
+    public static string SplitRight => Pick("Split right", "向右拆分");
+    public static string SplitDown => Pick("Split down", "向下拆分");
+    public static string SplitLeft => Pick("Split left", "向左拆分");
+    public static string SplitUp => Pick("Split up", "向上拆分");
     public static string ToggleZoom => Pick("Toggle Split Zoom", "切换分屏缩放");
     public static string ClosePane => Pick("Close pane", "关闭窗格");
     public static string CloseSplit => Pick("Close split", "关闭拆分");
@@ -101,6 +101,7 @@ public static class Strings
     public static string SettingsNavTerminal => Pick("Terminal", "终端");
     public static string SettingsNavKeys => Pick("Key bindings", "快捷键");
     public static string SettingsNavAbout => Pick("About", "关于");
+    public static string SettingsNavNotifications => Pick("Notifications", "通知");
     public static string SettingsLanguage => Pick("Language", "语言");
     public static string SettingsWindowAppearance => Pick("Window theme", "窗口外观");
     public static string SettingsTabPosition => Pick("Tab bar position", "标签栏位置");
@@ -143,6 +144,31 @@ public static class Strings
 
     public static string SettingsSelection => Pick("Selection", "选择");
     public static string SettingsCopyOnSelect => Pick("Copy on select", "选中即复制");
+
+    public static string SettingsNotifyCommand => Pick("Command notifications", "命令通知");
+    public static string SettingsNotifyOnFinish => Pick("Notify when a command finishes", "命令结束时通知");
+    public static string SettingsNotifyOnFinishDescription => Pick(
+        "Reads the OSC 133 D report from the shell integration. \"Unfocused\" only fires while the pane or the window is in the background.",
+        "依赖 shell 集成上报的 OSC 133 D。选择“未聚焦时”只在窗格或窗口处于后台时通知。");
+    public static string SettingsNotifyNever => Pick("Never", "从不");
+    public static string SettingsNotifyUnfocused => Pick("Unfocused", "未聚焦时");
+    public static string SettingsNotifyAlways => Pick("Always", "总是");
+    public static string SettingsNotifyBell => Pick("Bell", "响铃");
+    public static string SettingsNotifyToast => Pick("System notification", "系统通知");
+    public static string SettingsNotifyAfter => Pick("Minimum runtime", "最短运行时长");
+    public static string SettingsDesktopNotifications => Pick("Desktop notifications", "桌面通知");
+    public static string SettingsDesktopNotificationsAllow => Pick(
+        "Allow programs to send notifications", "允许程序发送通知");
+    public static string SettingsDesktopNotificationsDescription => Pick(
+        "Allow programs to raise a notification with OSC 9 or OSC 777.",
+        "允许程序通过 OSC 9 / OSC 777 发起通知。");
+    public static string SettingsBell => Pick("Bell", "提示音");
+    public static string SettingsBellSystem => Pick("System beep", "系统提示音");
+    public static string SettingsBellAudio => Pick("Custom audio file", "自定义音频");
+    public static string SettingsBellAttention => Pick("Flash the taskbar", "任务栏闪烁");
+    public static string SettingsBellTitle => Pick("Mark the title", "标题标记");
+    public static string SettingsBellBorder => Pick("Highlight the pane border", "高亮窗格边框");
+    public static string SettingsBellVolume => Pick("Volume", "音量");
 
     public static string SettingsKeysUnbound => Pick("None", "未绑定");
     public static string SettingsKeysGroupTabs => Pick("Tabs", "标签页");

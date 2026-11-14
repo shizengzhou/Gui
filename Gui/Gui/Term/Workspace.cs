@@ -608,6 +608,12 @@ public sealed partial class Workspace
         if (_paletteLayer is not null)
             _body.Children.Remove(_paletteLayer);
         Diag.Guard("ws.palette", BuildPalette);
+
+        // The key list takes its labels from the palette rows, so the settings page can only
+        // be rebuilt once those rows exist in the new language; rebuilding it before BuildPalette
+        // left every action the palette names untranslated until a restart.
+        if (languageChanged && _settingsActive)
+            Diag.Guard("ws.settings.language", BuildSettings);
     }
 
     /// <summary>
@@ -620,10 +626,6 @@ public sealed partial class Workspace
             ForEachPane(tab, pane => pane.ApplyLanguage());
 
         UpdateHeaders();
-
-        // The settings page draws its own labels, so it is rebuilt in the new language. It
-        // stays on the same category and keeps its active state.
-        if (_settingsActive) Diag.Guard("ws.settings.language", BuildSettings);
     }
 
     /// <summary>
