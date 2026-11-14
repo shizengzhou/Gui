@@ -1454,12 +1454,31 @@ public sealed unsafe class TerminalRenderer
         foreach (RowRuns row in rowRuns)
         {
             float rowTop = row.ViewportY * cellH;
-            foreach (Run run in row.Runs)
+
+            // Runs that share a background fill as one rectangle. A run breaks whenever the
+            // foreground, the weight or an underline changes, and painting the pieces of one
+            // colour separately leaves a darker hairline wherever the shared edge lands inside
+            // a pixel: each rectangle covers about half of that column and SourceOver over the
+            // two halves only reaches three quarters of the colour.
+            int at = 0;
+            while (at < row.Runs.Count)
             {
-                if (run.Bg == defaultBg) continue;
-                Color fill = run.Bg;
-                fill.A = cellAlpha;
-                ds.FillRectangle(new Rect(run.Col * cellW, rowTop, run.Cols * cellW, cellH), fill);
+                Run first = row.Runs[at];
+                int end = at + 1;
+                while (end < row.Runs.Count && row.Runs[end].Bg == first.Bg) end++;
+
+                if (first.Bg != defaultBg)
+                {
+                    Run last = row.Runs[end - 1];
+                    Color fill = first.Bg;
+                    fill.A = cellAlpha;
+                    ds.FillRectangle(
+                        new Rect(first.Col * cellW, rowTop,
+                            (last.Col + last.Cols - first.Col) * cellW, cellH),
+                        fill);
+                }
+
+                at = end;
             }
 
             if (!row.HasSelection) continue;
