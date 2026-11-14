@@ -37,7 +37,17 @@ public sealed unsafe class TerminalRenderer
     private readonly StringBuilder _text = new(64);
 
     /// <summary>Cached text layouts, keyed by the run text and the face it is drawn with.</summary>
-    private readonly Dictionary<LayoutKey, CanvasTextLayout> _layouts = new();
+    private readonly Dictionary<LayoutKey, CachedLayout> _layouts = new();
+
+    /// <summary>
+    /// A cached layout plus the distance from its top to the first baseline. Fallback faces
+    /// have their own ascent, so every layout is drawn shifted onto the primary face's
+    /// baseline; without that, CJK text sits a few pixels off the Latin text.
+    /// </summary>
+    private sealed record CachedLayout(CanvasTextLayout Layout, float Baseline);
+
+    /// <summary>The primary face's baseline, in DIPs from the top of its layout.</summary>
+    private float _primaryBaseline;
 
     /// <summary>
     /// Typography for "font-feature"; null when no feature this build understands is set.
@@ -484,6 +494,14 @@ public sealed unsafe class TerminalRenderer
         float offset = (float)((_metrics.Height - layout.LayoutBounds.Height) / 2.0);
         if (_config is not null) offset -= _config.FontBaselineAdjust.Delta(_metrics.Height, _rasterizationScale);
         _textOffsetY = offset;
+        _primaryBaseline = BaselineOf(layout);
+    }
+
+    /// <summary>The distance from a layout's top to its first baseline, in DIPs.</summary>
+    private static float BaselineOf(CanvasTextLayout layout)
+    {
+        CanvasLineMetrics[] metrics = layout.LineMetrics;
+        return metrics.Length > 0 ? metrics[0].Baseline : 0f;
     }
 
     /// <summary>The format for a face, with the family it was drawn with.</summary>
@@ -842,7 +860,7 @@ public sealed unsafe class TerminalRenderer
 
     private void InvalidateLayouts()
     {
-        foreach (CanvasTextLayout layout in _layouts.Values) layout.Dispose();
+        foreach (CachedLayout cached in _layouts.Values) cached.Layout.Dispose();
         _layouts.Clear();
     }
 
@@ -952,13 +970,13 @@ public sealed unsafe class TerminalRenderer
         return true;
     }
 
-    private CanvasTextLayout? GetLayout(string text, bool bold, bool italic, string? family = null)
+    private CachedLayout? GetLayout(string text, bool bold, bool italic, string? family = null)
     {
         if (!UseTextLayout || text.Length == 0) return null;
 
         int face = (bold ? 1 : 0) | (italic ? 2 : 0);
         var key = new LayoutKey(text, face, family ?? FamilyFor(face));
-        if (_layouts.TryGetValue(key, out CanvasTextLayout? cached)) return cached;
+        if (_layouts.TryGetValue(key, out CachedLayout? cached)) return cached;
 
         CanvasTextLayout layout;
         try
@@ -973,8 +991,9 @@ public sealed unsafe class TerminalRenderer
 
         ApplyLayoutOptions(layout, text);
 
-        _layouts[key] = layout;
-        return layout;
+        var entry = new CachedLayout(layout, BaselineOf(layout));
+        _layouts[key] = entry;
+        return entry;
     }
 
     /// <summary>Applies the per-character options that a CanvasTextFormat cannot express.</summary>
@@ -1053,9 +1072,16 @@ public sealed unsafe class TerminalRenderer
     private void DrawTextRun(CanvasDrawingSession ds, string text, float x, float y, Color color,
         bool bold, bool italic, string? family = null)
     {
-        CanvasTextLayout? layout = GetLayout(text, bold, italic, family);
-        if (layout is null) ds.DrawText(text, x, y, color, FormatFor(bold, italic, family));
-        else ds.DrawTextLayout(layout, x, y, color);
+        CachedLayout? cached = GetLayout(text, bold, italic, family);
+        if (cached is null)
+        {
+            ds.DrawText(text, x, y, color, FormatFor(bold, italic, family));
+            return;
+        }
+
+        // Sit every face on the primary face's baseline, so a fallback font's taller
+        // ascent does not lift CJK off the line the Latin text sits on.
+        ds.DrawTextLayout(cached.Layout, x, y + _primaryBaseline - cached.Baseline, color);
     }
 
     /// <summary>Char index where the cursor cell starts inside a run, or -1 when there is none.</summary>
@@ -1510,14 +1536,14 @@ public sealed unsafe class TerminalRenderer
         if (_shaderEffects.Count > 0)
         {
             CaptureShaderColors(themeBg, themeFg, cursorRgb, cursorHasValue, haveCursor, cursor,
-                defaultBg, viewportHeight);
+                cursorWide, cursorWideTail, defaultBg, viewportHeight);
         }
     }
 
     /// <summary>Copies the values the shader uniforms need out of this frame's state.</summary>
     private void CaptureShaderColors(Rgb background, Rgb foreground, Rgb cursorRgb,
         bool cursorHasValue, bool haveCursor, GhosttyNative.GhosttyRenderStateCursor cursor,
-        Color defaultBg, float viewportHeight)
+        bool cursorWide, bool cursorWideTail, Color defaultBg, float viewportHeight)
     {
         _shaderBackground = Normalize(background);
         _shaderForeground = Normalize(foreground);
@@ -1549,9 +1575,13 @@ public sealed unsafe class TerminalRenderer
         // drifts shader effects a whole cell right of the cursor.
         float cellWidth = _cellAdvanceX;
         float cellHeight = _metrics.Height;
-        float left = cursor.ViewportX * cellWidth;
+        // A wide glyph owns two cells, and the block cursor covers both. The shader has
+        // to see the same rectangle, or effects keyed to the cursor draw a rim through
+        // the middle of the character. A cursor on the trailing half starts one left.
+        float width = cursorWide ? cellWidth * 2f : cellWidth;
+        float left = (cursor.ViewportX - (cursorWideTail ? 1 : 0)) * cellWidth;
         float bottom = viewportHeight - (cursor.ViewportY + 1) * cellHeight;
-        _shaderCursor = new Vector4(left, bottom, cellWidth, cellHeight);
+        _shaderCursor = new Vector4(left, bottom, width, cellHeight);
     }
 
     private static Vector3 Normalize(Rgb color) =>
