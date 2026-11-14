@@ -1372,6 +1372,7 @@ public sealed unsafe class TerminalSession : IDisposable
         Diag.Debug("session.resize", $"cols={cols} rows={rows} pty={_pty is not null}");
         _pty?.Resize((short)cols, (short)rows);
         GhosttyNative.ghostty_terminal_resize(_terminal, cols, rows, metrics.Width, metrics.Height);
+        SetMouseEncoderSize(cols, rows);
         OnUpdate?.Invoke();
     }
 
@@ -1458,9 +1459,9 @@ public sealed unsafe class TerminalSession : IDisposable
 
     /// <summary>
     /// Encodes one mouse event into the escape sequence the running program asked for.
-    /// The position is in cell coordinates: the encoder's default 1x1 cell geometry then
-    /// maps it straight to a terminal cell. False when nothing was reported (the terminal
-    /// is not in a mouse tracking mode).
+    /// The position is in cell coordinates: the encoder is told one cell is the unit (see
+    /// <see cref="SetMouseEncoderSize"/>), so it maps straight to a terminal cell. False when
+    /// nothing was reported (the terminal is not in a mouse tracking mode).
     /// </summary>
     public bool EncodeMouse(int action, int button, int mods, double cellX, double cellY,
         out byte[] bytes)
@@ -1493,6 +1494,27 @@ public sealed unsafe class TerminalSession : IDisposable
             bytes = buffer.AsSpan(0, (int)written).ToArray();
             return true;
         }
+    }
+
+    /// <summary>
+    /// The mouse encoder drops any position outside the screen it was told about, so it has
+    /// to learn the grid. Positions are cell coordinates, so one cell is the unit and the
+    /// screen is the grid itself; without this every report is silently discarded.
+    /// </summary>
+    private void SetMouseEncoderSize(ushort cols, ushort rows)
+    {
+        if (_mouseEncoder == IntPtr.Zero) return;
+
+        var size = new GhosttyNative.GhosttyMouseEncoderSize
+        {
+            Size = (ulong)sizeof(GhosttyNative.GhosttyMouseEncoderSize),
+            ScreenWidth = cols,
+            ScreenHeight = rows,
+            CellWidth = 1,
+            CellHeight = 1,
+        };
+        GhosttyNative.ghostty_mouse_encoder_set(
+            _mouseEncoder, GhosttyNative.MOUSE_ENCODER_OPT_SIZE, &size);
     }
 
     /// <summary>

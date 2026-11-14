@@ -212,6 +212,14 @@ internal static unsafe class GhosttyNative
     internal const int MOUSE_BUTTON_FOUR = 4;
     internal const int MOUSE_BUTTON_FIVE = 5;
 
+    // ---- GhosttyMouseEncoderOption ----
+    internal const int MOUSE_ENCODER_OPT_INVALID = 0;
+    internal const int MOUSE_ENCODER_OPT_EVENT = 1;
+    internal const int MOUSE_ENCODER_OPT_FORMAT = 2;
+    internal const int MOUSE_ENCODER_OPT_SIZE = 3;
+    internal const int MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED = 4;
+    internal const int MOUSE_ENCODER_OPT_TRACK_LAST_CELL = 5;
+
     // ---- search ----
     internal const int SEARCH_STATUS_RUNNING = 0;
     internal const int SEARCH_STATUS_FEED_REQUIRED = 1;
@@ -445,6 +453,25 @@ internal static unsafe class GhosttyNative
     {
         public float X;
         public float Y;
+    }
+
+    /// <summary>
+    /// Sized struct: Size must be set to sizeof(GhosttyMouseEncoderSize). The encoder
+    /// clamps the event position against the screen, so without it every position lands
+    /// outside the grid and the encoder writes nothing at all.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyMouseEncoderSize
+    {
+        public ulong Size;
+        public uint ScreenWidth;
+        public uint ScreenHeight;
+        public uint CellWidth;
+        public uint CellHeight;
+        public uint PaddingTop;
+        public uint PaddingBottom;
+        public uint PaddingRight;
+        public uint PaddingLeft;
     }
 
     /// <summary>Buffer of GhosttySelection entries, used by search results.</summary>
@@ -703,6 +730,9 @@ internal static unsafe class GhosttyNative
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_mouse_encoder_set_from_terminal(IntPtr encoder, IntPtr terminal);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    internal static extern int ghostty_mouse_encoder_set(IntPtr encoder, int option, void* value);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     internal static extern int ghostty_mouse_encoder_encode(

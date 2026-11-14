@@ -204,6 +204,16 @@ internal static class Program
             new FieldMap("X", "x"), new FieldMap("Y", "y")),
         new(typeof(GhosttyNative.GhosttyMousePosition), "GhosttyMousePosition",
             new FieldMap("X", "x"), new FieldMap("Y", "y")),
+        new(typeof(GhosttyNative.GhosttyMouseEncoderSize), "GhosttyMouseEncoderSize",
+            new FieldMap("Size", "size"),
+            new FieldMap("ScreenWidth", "screen_width"),
+            new FieldMap("ScreenHeight", "screen_height"),
+            new FieldMap("CellWidth", "cell_width"),
+            new FieldMap("CellHeight", "cell_height"),
+            new FieldMap("PaddingTop", "padding_top"),
+            new FieldMap("PaddingBottom", "padding_bottom"),
+            new FieldMap("PaddingRight", "padding_right"),
+            new FieldMap("PaddingLeft", "padding_left")),
         new(typeof(GhosttyNative.GhosttySelectionBuffer), "GhosttySelectionBuffer",
             new FieldMap("Ptr", "ptr"), new FieldMap("Cap", "cap"), new FieldMap("Len", "len")),
         new(typeof(GhosttyNative.GhosttyPointCoordinate), "GhosttyPointCoordinate",
@@ -543,6 +553,12 @@ internal static class Program
         new("MOUSE_BUTTON_MIDDLE", "GhosttyMouseButton", "MIDDLE"),
         new("MOUSE_BUTTON_FOUR", "GhosttyMouseButton", "FOUR"),
         new("MOUSE_BUTTON_FIVE", "GhosttyMouseButton", "FIVE"),
+        new("MOUSE_ENCODER_OPT_INVALID", "GhosttyMouseEncoderOption", "INVALID"),
+        new("MOUSE_ENCODER_OPT_EVENT", "GhosttyMouseEncoderOption", "EVENT"),
+        new("MOUSE_ENCODER_OPT_FORMAT", "GhosttyMouseEncoderOption", "FORMAT"),
+        new("MOUSE_ENCODER_OPT_SIZE", "GhosttyMouseEncoderOption", "SIZE"),
+        new("MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED", "GhosttyMouseEncoderOption", "ANY_BUTTON_PRESSED"),
+        new("MOUSE_ENCODER_OPT_TRACK_LAST_CELL", "GhosttyMouseEncoderOption", "TRACK_LAST_CELL"),
 
         new("KEY_ACTION_RELEASE", "GhosttyKeyAction", "RELEASE"),
         new("KEY_ACTION_PRESS", "GhosttyKeyAction", "PRESS"),
@@ -663,7 +679,10 @@ internal static class Program
 
     /// <summary>
     /// Drives the mouse encoder through the same P/Invoke surface the app uses. The terminal
-    /// is put into SGR mouse tracking mode, so a left press must encode to `ESC [ &lt; 0 ;`.
+    /// is put into SGR mouse tracking mode and the encoder is told the grid, exactly as
+    /// TerminalSession does before every event: without that size the encoder's screen is a
+    /// single cell, every real position falls outside it, and it silently writes nothing -
+    /// which is how mouse support could be dead while this smoke check still passed.
     /// </summary>
     private static unsafe void CheckMouseSmoke()
     {
@@ -694,30 +713,48 @@ internal static class Program
                 GhosttyNative.ghostty_mouse_encoder_set_from_terminal(encoder, terminal)
                 == GhosttyNative.SUCCESS);
 
-            GhosttyNative.ghostty_mouse_event_set_action(mouseEvent, GhosttyNative.MOUSE_ACTION_PRESS);
-            GhosttyNative.ghostty_mouse_event_set_button(mouseEvent, GhosttyNative.MOUSE_BUTTON_LEFT);
-            GhosttyNative.ghostty_mouse_event_set_mods(mouseEvent, 0);
-            // The encoder's default 1x1 cell grid makes the position cell coordinates.
-            GhosttyNative.ghostty_mouse_event_set_position(mouseEvent,
-                new GhosttyNative.GhosttyMousePosition { X = 1, Y = 0 });
-
-            var buffer = new byte[128];
-            fixed (byte* output = buffer)
+            var size = new GhosttyNative.GhosttyMouseEncoderSize
             {
-                int result = GhosttyNative.ghostty_mouse_encoder_encode(
-                    encoder, mouseEvent, output, (nuint)buffer.Length, out nuint written);
-                string text = result == GhosttyNative.SUCCESS && written > 0
-                    ? Encoding.ASCII.GetString(buffer, 0, (int)written)
-                    : string.Empty;
-                Check("left press encodes SGR", text.StartsWith("\u001b[<0;", StringComparison.Ordinal),
-                    text.Length == 0 ? "no output" : text.Replace("\u001b", "ESC"));
-            }
+                Size = (ulong)sizeof(GhosttyNative.GhosttyMouseEncoderSize),
+                ScreenWidth = 80,
+                ScreenHeight = 24,
+                CellWidth = 1,
+                CellHeight = 1,
+            };
+            Check("encoder takes the grid size",
+                GhosttyNative.ghostty_mouse_encoder_set(
+                    encoder, GhosttyNative.MOUSE_ENCODER_OPT_SIZE, &size) == GhosttyNative.SUCCESS);
+
+            Check("left press encodes SGR",
+                EncodeMouse(encoder, mouseEvent, GhosttyNative.MOUSE_BUTTON_LEFT, 5, 5) == "\u001b[<0;6;6M");
+            Check("wheel up encodes as button 4",
+                EncodeMouse(encoder, mouseEvent, GhosttyNative.MOUSE_BUTTON_FOUR, 5, 5) == "\u001b[<64;6;6M");
         }
         finally
         {
             if (mouseEvent != IntPtr.Zero) GhosttyNative.ghostty_mouse_event_free(mouseEvent);
             if (encoder != IntPtr.Zero) GhosttyNative.ghostty_mouse_encoder_free(encoder);
             GhosttyNative.ghostty_terminal_free(terminal);
+        }
+    }
+
+    /// <summary>Encodes one press and returns the bytes as text, or "" when nothing came out.</summary>
+    private static unsafe string EncodeMouse(IntPtr encoder, IntPtr mouseEvent, int button, float x, float y)
+    {
+        GhosttyNative.ghostty_mouse_event_set_action(mouseEvent, GhosttyNative.MOUSE_ACTION_PRESS);
+        GhosttyNative.ghostty_mouse_event_set_button(mouseEvent, button);
+        GhosttyNative.ghostty_mouse_event_set_mods(mouseEvent, 0);
+        GhosttyNative.ghostty_mouse_event_set_position(mouseEvent,
+            new GhosttyNative.GhosttyMousePosition { X = x, Y = y });
+
+        var buffer = new byte[128];
+        fixed (byte* output = buffer)
+        {
+            int result = GhosttyNative.ghostty_mouse_encoder_encode(
+                encoder, mouseEvent, output, (nuint)buffer.Length, out nuint written);
+            return result == GhosttyNative.SUCCESS && written > 0
+                ? Encoding.ASCII.GetString(buffer, 0, (int)written)
+                : string.Empty;
         }
     }
 
