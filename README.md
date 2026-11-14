@@ -54,6 +54,7 @@ Gui is not affiliated with or endorsed by the Ghostty project.
 | ConPTY (`native/*/conpty/`) | MIT, see `ConPTY-LICENSE.txt` |
 | JetBrains Mono Nerd Font | SIL OFL 1.1, see `Assets/Fonts/OFL.txt` |
 | Bundled themes | Ghostty's theme collection, MIT, see `Assets/Themes/CREDITS.md` |
+| Installer Chinese messages (`installer/languages/`) | MIT, see the licence file there |
 | Windows App SDK, Win2D, Silk.NET, Vortice | their own licences, see `Gui.csproj` |
 
 Gui is released under the MIT licence; see [LICENSE](LICENSE).

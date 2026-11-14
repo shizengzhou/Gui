@@ -53,6 +53,7 @@ Gui 与 Ghostty 项目没有隶属关系，也未获其背书。
 | ConPTY（`native/*/conpty/`） | MIT，见 `ConPTY-LICENSE.txt` |
 | JetBrains Mono Nerd Font | SIL OFL 1.1，见 `Assets/Fonts/OFL.txt` |
 | 内置主题 | Ghostty 主题集，MIT，见 `Assets/Themes/CREDITS.md` |
+| 安装程序简体中文消息（`installer/languages/`） | MIT，见目录中的许可文件 |
 | Windows App SDK、Win2D、Silk.NET、Vortice | 各自的许可，见 `Gui.csproj` |
 
 Gui 以 MIT 许可发布，见 [LICENSE](LICENSE)。

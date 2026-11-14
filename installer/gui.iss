@@ -80,12 +80,34 @@ RestartApplications=no
 ; shells pick the new PATH up without a sign-out.
 ChangesEnvironment=yes
 
+; Setup speaks the language of the Windows it runs on: English and 简体中文 are built in,
+; and with two languages listed Setup picks the one matching the user's UI language
+; instead of asking. Inno Setup itself ships no Chinese, so the translation is bundled
+; under installer\languages (MIT, see the licence file next to it).
+[Languages]
+Name: "en"; MessagesFile: "compiler:Default.isl"
+Name: "zh"; MessagesFile: "{#SourcePath}languages\ChineseSimplified.isl"
+
+[CustomMessages]
+; Setup's own pages, buttons and error dialogs come from the files above; everything this
+; script says itself needs a line per language.
+en.DesktopIcon=Create a desktop shortcut
+zh.DesktopIcon=创建桌面快捷方式
+en.AddToPath=Add gui to the PATH
+zh.AddToPath=将 gui 添加到 PATH
+en.LaunchGui=Launch Gui
+zh.LaunchGui=启动 Gui
+en.NeedsDotNet8=Gui needs the .NET 8 runtime, which this package does not carry.
+zh.NeedsDotNet8=Gui 需要 .NET 8 运行时，而这个安装包不带它。
+en.OpenDotNetDownload=Open the download page now?
+zh.OpenDotNetDownload=现在打开下载页面吗？
+
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked
 ; Only the payload's bin folder goes on PATH: it holds the CLI (gui.exe) alone. The root is
 ; full of WinUI DLLs (DWriteCore, hostfxr, Microsoft.ui.xaml), and a PATH entry pointing
 ; there made unrelated programs load our private copies.
-Name: "addpath"; Description: "Add gui to the PATH"; Flags: unchecked
+Name: "addpath"; Description: "{cm:AddToPath}"; Flags: unchecked
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
@@ -108,7 +130,7 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchGui}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // Read one ";"-separated list entry by entry instead of searching for ";dir;": the entry may
@@ -240,9 +262,8 @@ begin
   // non-zero exit code instead, which is what an unattended deployment can react to.
   Result := False;
   if not WizardSilent then
-    if MsgBox('Gui needs the .NET 8 runtime, which this package does not carry.' + #13#10 +
-              'It is a free download from dotnet.microsoft.com.' + #13#10 + #13#10 +
-              'Open the download page now?', mbConfirmation, MB_YESNO) = IDYES then
+    if MsgBox(CustomMessage('NeedsDotNet8') + #13#10 + #13#10 +
+              CustomMessage('OpenDotNetDownload'), mbConfirmation, MB_YESNO) = IDYES then
       ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/8.0', '', '',
                 SW_SHOWNORMAL, ewNoWait, ErrorCode);
 end;
