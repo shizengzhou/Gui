@@ -136,13 +136,114 @@ public sealed partial class Workspace
     private void SetSidebarCollapsed(bool collapsed)
     {
         if (_placement == TabPlacement.Top) return;
+
+        bool changed = _sidebarCollapsed != collapsed;
         _sidebarCollapsed = collapsed;
-        if (_sidebar is not null) _sidebar.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
-        // A hidden rail has no border to drag: the pane runs to the window edge.
+
+        // A chrome rebuild calls this with the state the rail is already in: apply it in one
+        // step instead of animating from a width the new elements never had.
+        if (_sidebar is null || (!changed && !_sidebarAnimating) || _dispatcher is null)
+        {
+            StopSidebarAnimation();
+            ApplySidebarChrome();
+            return;
+        }
+
+        _sidebarAnimFrom = Math.Max(0.0, _sidebar.Width);
+        _sidebarAnimTo = collapsed ? 0.0 : _sidebarWidth;
+        _sidebarAnimStart = Environment.TickCount64;
+
+        if (!_sidebarAnimating)
+        {
+            _sidebarAnimating = true;
+            // The rail slides out of the window instead of disappearing: the clip follows the
+            // moving edge so the tabs are cut off rather than spilling over the pane.
+            _sidebar.Visibility = Visibility.Visible;
+            _sidebar.Clip = SidebarClip(_sidebarAnimFrom);
+            if (_sidebarSplitter is not null) _sidebarSplitter.Visibility = Visibility.Collapsed;
+            // The header's expand button fades with the slide instead of popping in after the
+            // rail lands, so the icon row never jumps when the animation ends.
+            if (_headerSideTools is not null)
+            {
+                _headerSideTools.Visibility = Visibility.Visible;
+                _headerSideTools.Opacity = _sidebarCollapseFraction;
+            }
+            if (_sidebarTimer is null)
+            {
+                _sidebarTimer = _dispatcher.CreateTimer();
+                _sidebarTimer.Interval = TimeSpan.FromMilliseconds(16);
+                _sidebarTimer.Tick += (_, _) => StepSidebarAnimation();
+            }
+        }
+        _sidebarTimer?.Start();
+    }
+
+    private void StepSidebarAnimation()
+    {
+        if (!_sidebarAnimating || _sidebar is null)
+        {
+            _sidebarTimer?.Stop();
+            return;
+        }
+
+        double progress = Math.Clamp(
+            (Environment.TickCount64 - _sidebarAnimStart) / SidebarAnimMs, 0.0, 1.0);
+        // Ease-out cubic: quick off the edge, settling into the final width.
+        double eased = 1.0 - Math.Pow(1.0 - progress, 3.0);
+        double width = _sidebarAnimFrom + (_sidebarAnimTo - _sidebarAnimFrom) * eased;
+
+        _sidebar.Width = Math.Max(0.0, width);
+        _sidebar.Clip = SidebarClip(width);
+
+        // The pane header's icons keep clear of the floating chrome; feeding them the same
+        // fraction makes them travel with the rail instead of jumping when it lands.
+        _sidebarCollapseFraction = _sidebarWidth > 0.0
+            ? 1.0 - Math.Clamp(width / _sidebarWidth, 0.0, 1.0)
+            : 1.0;
+        if (_headerSideTools is not null) _headerSideTools.Opacity = _sidebarCollapseFraction;
+        foreach (Tab tab in _tabs) ApplyPaneInsets(tab);
+
+        if (progress < 1.0) return;
+
+        _sidebarTimer?.Stop();
+        _sidebarAnimating = false;
+        _sidebar.Clip = null;
+        ApplySidebarChrome();
+    }
+
+    private static RectangleGeometry SidebarClip(double width) => new()
+    {
+        Rect = new Rect(0, 0, Math.Max(0.0, width), 4096),
+    };
+
+    private void StopSidebarAnimation()
+    {
+        _sidebarTimer?.Stop();
+        _sidebarAnimating = false;
+        _sidebarCollapseFraction = _sidebarCollapsed ? 1.0 : 0.0;
+        if (_headerSideTools is not null) _headerSideTools.Opacity = 1.0;
+        if (_sidebar is not null) _sidebar.Clip = null;
+    }
+
+    /// <summary>
+    /// The resting state of the rail: its width, the splitter, the header's expand button and
+    /// the pane insets that make room for it.
+    /// </summary>
+    private void ApplySidebarChrome()
+    {
+        _sidebarCollapseFraction = _sidebarCollapsed ? 1.0 : 0.0;
+        if (_sidebar is not null)
+        {
+            _sidebar.Width = _sidebarCollapsed ? 0.0 : _sidebarWidth;
+            _sidebar.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        }
         if (_sidebarSplitter is not null)
-            _sidebarSplitter.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            _sidebarSplitter.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
         if (_headerSideTools is not null)
-            _headerSideTools.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+        {
+            _headerSideTools.Visibility = _sidebarCollapsed ? Visibility.Visible : Visibility.Collapsed;
+            _headerSideTools.Opacity = 1.0;
+        }
 
         if (_contentCard is not null) _contentCard.Margin = ContentCardMargin();
 

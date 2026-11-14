@@ -681,18 +681,20 @@ public sealed partial class Workspace
         // floating chrome covers, whatever the split tree says.
         TerminalPane? left = tab.Zoomed ? tab.Focused : TopLeftPane(tab.Root);
         TerminalPane? right = tab.Zoomed ? tab.Focused : TopRightPane(tab.Root);
-        bool collapsed = _sidebarCollapsed;
+
+        // The inset follows the slide instead of switching when it lands, so the shell icon
+        // and the action buttons travel with the rail rather than jumping at the end.
+        double collapse = _sidebarCollapseFraction;
 
         // The caption buttons only hover over the pane while the island runs to the window's
         // right edge: always with a left rail, and with a right rail only once it is collapsed
         // (an open right rail takes that corner for itself).
-        bool islandUnderCaptions = _placement == TabPlacement.Left
-            || (_placement == TabPlacement.Right && collapsed);
+        bool islandUnderCaptions = _placement != TabPlacement.Top;
 
         // The rail toggle floats over the pane's corner when the rail is collapsed. Its
         // button is 30 DIP wide; only that width plus a small gap is needed, since the pane
         // header adds its own 10 DIP of padding on top of this inset.
-        double railButtons = collapsed ? (_placement == TabPlacement.Right ? 38.0 : 32.0) : 0.0;
+        double railButtons = (_placement == TabPlacement.Right ? 38.0 : 32.0) * collapse;
 
         ForEachPane(tab, pane =>
         {
@@ -701,8 +703,9 @@ public sealed partial class Workspace
             // 138 = the three 46px caption buttons plus the 6px gap the header keeps to the
             // pane's right edge; the pane header's own 6px trailing margin then leaves the
             // same 6px between the action buttons and the first caption button.
-            double actions = isRight && islandUnderCaptions ? 138.0 : 0.0;
-            if (isRight && collapsed && _placement == TabPlacement.Right) actions += railButtons;
+            double captions = _placement == TabPlacement.Right ? 138.0 * collapse : 138.0;
+            double actions = isRight && islandUnderCaptions ? captions : 0.0;
+            if (isRight && _placement == TabPlacement.Right) actions += railButtons;
             pane.SetActionsInset(actions);
             pane.SetInfoInset(isLeft && _placement == TabPlacement.Left ? railButtons : 0.0);
         });

@@ -205,6 +205,17 @@ public sealed partial class Workspace
     private bool _resizingSidebar;
     private double _resizeStartWidth;
     private double _resizeCursorX;
+
+    /// <summary>Collapse/expand animation: a short width slide, eased out.</summary>
+    private const double SidebarAnimMs = 180;
+    private DispatcherQueueTimer? _sidebarTimer;
+    private long _sidebarAnimStart;
+    private double _sidebarAnimFrom;
+    private double _sidebarAnimTo;
+    private bool _sidebarAnimating;
+
+    /// <summary>0 = rail fully open, 1 = fully collapsed; the animation feeds in between.</summary>
+    private double _sidebarCollapseFraction;
     private Border _contentCard = null!;
     private Grid _contentStack = null!;
     private FontIcon? _maximizeIcon;
@@ -669,6 +680,8 @@ public sealed partial class Workspace
         if (_sidebar is not null) _sidebar.Padding = SidebarPadding();
         if (_header is not null)
             _header.Margin = HeaderMargin(_placement != TabPlacement.Top);
+        if (_headerSideTools is not null)
+            _headerSideTools.Margin = HeaderSideToolsMargin();
 
         // The close button's corner tracks the island, which compact mode squares off.
         UpdateCloseCorner();
@@ -1598,10 +1611,9 @@ public sealed partial class Workspace
                 Orientation = Orientation.Horizontal,
                 Spacing = 2,
                 Height = 32,
-                // 12 = 6 inside the island's edge (so the button is not flush with the
-                // pane's border) plus the pane header's own inset; the strip itself already
-                // starts at the pane header's band, so no vertical inset is needed.
-                Margin = railRight ? new Thickness(0, 0, 12, 0) : new Thickness(12, 0, 0, 0),
+                // Lines up with the rail's own collapse button: 6 DIP from the window edge,
+                // which is the rail's padding.
+                Margin = HeaderSideToolsMargin(),
                 HorizontalAlignment = railRight ? HorizontalAlignment.Right : HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Visibility = Visibility.Collapsed,
@@ -1685,6 +1697,8 @@ public sealed partial class Workspace
 
     private void BuildSidebar()
     {
+        // A rebuild replaces the rail, so a slide targeting the old one has to stop first.
+        StopSidebarAnimation();
         bool leftSide = _placement == TabPlacement.Left;
 
         // Flat tab rail: with no title bar in the side layouts it starts at the window's
@@ -1932,7 +1946,10 @@ public sealed partial class Workspace
     private void SetSidebarWidth(double width)
     {
         _sidebarWidth = Math.Max(MinSidebarWidth(), width);
-        if (_sidebar is not null) _sidebar.Width = _sidebarWidth;
+        if (_sidebarAnimating) StopSidebarAnimation();
+        // A collapsed rail keeps a zero width so the next open slides in from the edge.
+        if (_sidebar is not null)
+            _sidebar.Width = _sidebarCollapsed ? 0.0 : _sidebarWidth;
     }
 
     /// <summary>
@@ -1951,6 +1968,17 @@ public sealed partial class Workspace
     private Thickness HeaderMargin(bool sideRail) => sideRail
         ? new Thickness(0, CompactDensity ? 0 : SideHeaderInset, CompactDensity ? 0 : 6, 0)
         : new Thickness(0);
+
+    /// <summary>
+    /// Keeps the collapsed rail's expand button the same distance from the window edge as the
+    /// rail's own collapse button (6 DIP, the rail's padding). The header already contributes
+    /// a right inset, so only the remainder is set here; on the left it contributes nothing.
+    /// </summary>
+    private Thickness HeaderSideToolsMargin()
+    {
+        if (_placement != TabPlacement.Right) return new Thickness(6, 0, 0, 0);
+        return new Thickness(0, 0, CompactDensity ? 6 : 0, 0);
+    }
 
     /// <summary>
     /// Compact chrome: the panes stop being islands and fill the content area, separated
