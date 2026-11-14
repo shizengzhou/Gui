@@ -5,9 +5,12 @@ using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.Graphics.Canvas.Text;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Windows.Foundation;
 using Windows.Graphics.DirectX;
@@ -120,6 +123,13 @@ public sealed unsafe class TerminalRenderer
     private readonly List<ShaderStage> _shaderEffects = new();
     private readonly List<string> _shaderPaths = new();
     private long _shaderStamp;
+
+    /// <summary>Identifies the newest background build; older results are discarded.</summary>
+    private int _shaderBuildVersion;
+    private bool _shaderBuildPending;
+
+    /// <summary>Raised on the UI thread when a background build replaced the effect chain.</summary>
+    public event Action? ShadersChanged;
 
     private sealed class ShaderStage
     {
@@ -1668,7 +1678,9 @@ public sealed unsafe class TerminalRenderer
 
     /// <summary>
     /// Recompiles "custom-shader" only when the path list or a file timestamp changed.
-    /// Shader failures are logged and skipped; the terminal keeps rendering without them.
+    /// Compilation runs on a worker thread and the current effect chain keeps drawing until
+    /// the replacement is ready, so a reload never stalls the UI thread. Shader failures are
+    /// logged and skipped; the terminal keeps rendering without them.
     /// </summary>
     private void RebuildShaders(List<string> paths)
     {
@@ -1691,30 +1703,86 @@ public sealed unsafe class TerminalRenderer
         bool same = paths.Count == _shaderPaths.Count;
         for (int i = 0; same && i < paths.Count; i++)
             same = string.Equals(paths[i], _shaderPaths[i], StringComparison.OrdinalIgnoreCase);
-        if (same && _shaderEffects.Count == paths.Count && stamp == _shaderStamp) return;
+        if (same && stamp == _shaderStamp &&
+            (_shaderBuildPending || _shaderEffects.Count == paths.Count))
+        {
+            return;
+        }
 
         _shaderStamp = stamp;
-        DisposeShaders();
+        _shaderBuildPending = true;
+        int version = ++_shaderBuildVersion;
+        _shaderPaths.Clear();
         _shaderPaths.AddRange(paths);
-        foreach (string path in paths)
+
+        // The bytecode compiles on a worker thread; the Win2D effects are created on the
+        // dispatcher thread that owns them once the whole chain is ready.
+        DispatcherQueue? queue = DispatcherQueue.GetForCurrentThread();
+        string[] snapshot = paths.ToArray();
+        _ = CustomShader.CompileAllAsync(snapshot).ContinueWith(
+            build => FinishShaderBuild(build, snapshot, version, queue),
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+    }
+
+    private void FinishShaderBuild(Task<CustomShader.Compiled?[]> build, string[] paths,
+        int version, DispatcherQueue? queue)
+    {
+        CustomShader.Compiled?[] compiled;
+        try
         {
-            CustomShader.Compiled? compiled = CustomShader.Compile(path);
-            Diag.Log("shader", compiled is null
-                ? $"compile failed: {path}"
-                : $"compiled {path} ({compiled.Bytecode.Length} bytes)");
-            if (compiled is null) continue;
+            compiled = build.Result;
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("shader", error);
+            compiled = new CustomShader.Compiled?[paths.Length];
+        }
+
+        void Apply() => Diag.Guard("shader.apply", () => ApplyShaderBuild(paths, compiled, version));
+        if (queue is null)
+        {
+            Apply();
+            return;
+        }
+
+        if (!queue.TryEnqueue(DispatcherQueuePriority.Low, Apply))
+            Diag.Warn("shader", "dispatcher unavailable; shader build dropped");
+    }
+
+    /// <summary>
+    /// Swaps in a finished background build on the UI thread. A build that was superseded by
+    /// a newer reload or by <see cref="DisposeShaders"/> is dropped unused.
+    /// </summary>
+    private void ApplyShaderBuild(string[] paths, CustomShader.Compiled?[] compiled, int version)
+    {
+        if (version != _shaderBuildVersion) return;
+
+        _shaderBuildPending = false;
+
+        // Build the replacement first so the visible chain is swapped in one step and a
+        // failure part-way cannot leave the pane without the shaders it already had.
+        var stages = new List<ShaderStage>(paths.Length);
+        for (int i = 0; i < paths.Length; i++)
+        {
+            CustomShader.Compiled? shader = compiled[i];
+            Diag.Log("shader", shader is null
+                ? $"compile failed: {paths[i]}"
+                : $"compiled {paths[i]} ({shader.Bytecode.Length} bytes)");
+            if (shader is null) continue;
 
             try
             {
-                var effect = new PixelShaderEffect(compiled.Bytecode)
+                var effect = new PixelShaderEffect(shader.Bytecode)
                 {
                     // Shadertoy shaders may sample iChannel0 away from the current pixel.
                     Source1Mapping = SamplerCoordinateMapping.Unknown,
                 };
-                _shaderEffects.Add(new ShaderStage
+                stages.Add(new ShaderStage
                 {
                     Effect = effect,
-                    UsesChannel0 = compiled.UsesChannel0,
+                    UsesChannel0 = shader.UsesChannel0,
                 });
             }
             catch (Exception error)
@@ -1723,11 +1791,31 @@ public sealed unsafe class TerminalRenderer
             }
         }
 
-        Diag.Log("shader", $"{_shaderEffects.Count} effect(s) from {paths.Count} path(s)");
+        ReleaseShaderEffects();
+        _shaderEffects.AddRange(stages);
+
+        // Nothing left to composite through: release the offscreen surfaces as well.
+        if (_shaderEffects.Count == 0)
+        {
+            _shaderTarget?.Dispose();
+            _shaderTarget = null;
+            DisposePingPong();
+        }
+
+        Diag.Log("shader", $"{_shaderEffects.Count} effect(s) from {paths.Length} path(s)");
         _shaderStartTicks = Environment.TickCount64;
         _shaderLastTime = 0f;
         _shaderFrame = 0;
         _shaderPreviousCursorVisible = -1;
+        ShadersChanged?.Invoke();
+    }
+
+    /// <summary>Releases the compiled effects but keeps the offscreen targets and palette.</summary>
+    private void ReleaseShaderEffects()
+    {
+        foreach (ShaderStage stage in _shaderEffects) stage.Effect.Dispose();
+        _shaderEffects.Clear();
+        _shaderUnsupported.Clear();
     }
 
     /// <summary>Tells the shaders when this pane gained focus (for iFocus/iTimeFocus).</summary>
@@ -1973,13 +2061,14 @@ public sealed unsafe class TerminalRenderer
     /// <summary>Releases every compiled shader and the offscreen scene texture.</summary>
     public void DisposeShaders()
     {
-        foreach (ShaderStage stage in _shaderEffects) stage.Effect.Dispose();
-        _shaderEffects.Clear();
+        // Any build still in flight belongs to the chain being released.
+        _shaderBuildVersion++;
+        _shaderBuildPending = false;
+        ReleaseShaderEffects();
         _shaderPaths.Clear();
         _shaderTarget?.Dispose();
         _shaderTarget = null;
         DisposePingPong();
-        _shaderUnsupported.Clear();
         _shaderPalette = null;
         _shaderPaletteTheme = null;
     }

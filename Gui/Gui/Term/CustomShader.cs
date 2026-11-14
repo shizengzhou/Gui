@@ -4,6 +4,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 
@@ -20,6 +22,12 @@ internal static unsafe class CustomShader
 
     private static readonly object Gate = new();
     private static readonly Dictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Serializes compilations. Several panes reload the same config in one pass, so the
+    /// second pane should find the finished blob in the cache instead of compiling it again.
+    /// </summary>
+    private static readonly SemaphoreSlim CompileLock = new(1, 1);
 
     /// <summary>A compiled pixel shader and whether it samples the terminal texture.</summary>
     public sealed record Compiled(byte[] Bytecode, bool UsesChannel0);
@@ -101,30 +109,69 @@ void main() { mainImage (_fragColor, gl_FragCoord.xy); }
 
         lock (Gate)
         {
-            if (Cache.TryGetValue(path, out CacheEntry? cached) &&
-                cached.Length == info.Length && cached.Written == info.LastWriteTimeUtc)
-            {
+            if (Cache.TryGetValue(path, out CacheEntry? cached) && Matches(cached, info))
                 return cached.Shader;
-            }
         }
 
-        long length = info.Length;
-        DateTime written = info.LastWriteTimeUtc;
-        Compiled? shader;
+        CompileLock.Wait();
         try
         {
-            shader = CompileCore(path, out string? error);
-            if (error is not null) Diag.Warn("shader", $"{path}: {error}");
-        }
-        catch (Exception error)
-        {
-            Diag.LogException("shader", error);
-            shader = null;
-        }
+            // The file may have changed, or another pane may have compiled it, while this
+            // call waited for its turn.
+            try
+            {
+                info = new FileInfo(path);
+                if (!info.Exists) return null;
+            }
+            catch (Exception error)
+            {
+                Diag.Warn("shader", $"{path}: {error.Message}");
+                return null;
+            }
 
-        lock (Gate) Cache[path] = new CacheEntry(length, written, shader);
-        return shader;
+            lock (Gate)
+            {
+                if (Cache.TryGetValue(path, out CacheEntry? cached) && Matches(cached, info))
+                    return cached.Shader;
+            }
+
+            long length = info.Length;
+            DateTime written = info.LastWriteTimeUtc;
+            Compiled? shader;
+            try
+            {
+                shader = CompileCore(path, out string? error);
+                if (error is not null) Diag.Warn("shader", $"{path}: {error}");
+            }
+            catch (Exception error)
+            {
+                Diag.LogException("shader", error);
+                shader = null;
+            }
+
+            lock (Gate) Cache[path] = new CacheEntry(length, written, shader);
+            return shader;
+        }
+        finally
+        {
+            CompileLock.Release();
+        }
     }
+
+    /// <summary>
+    /// Compiles a whole "custom-shader" chain on a worker thread, in order, so a config
+    /// reload never blocks the UI thread. The caller builds its GPU objects from the
+    /// returned bytecode on the thread that owns them.
+    /// </summary>
+    public static Task<Compiled?[]> CompileAllAsync(IReadOnlyList<string> paths) => Task.Run(() =>
+    {
+        var compiled = new Compiled?[paths.Count];
+        for (int i = 0; i < compiled.Length; i++) compiled[i] = Compile(paths[i]);
+        return compiled;
+    });
+
+    private static bool Matches(CacheEntry cached, FileInfo info) =>
+        cached.Length == info.Length && cached.Written == info.LastWriteTimeUtc;
 
     private static Compiled? CompileCore(string path, out string? error)
     {

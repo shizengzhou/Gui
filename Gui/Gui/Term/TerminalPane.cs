@@ -809,6 +809,8 @@ public sealed class TerminalPane
         _renderer.ApplyConfig(config);
         // A background image decodes asynchronously; repaint once it is ready.
         _renderer.NeedsRedraw += Redraw;
+        // Shaders compile in the background, so the chain may arrive after ApplyConfig.
+        _renderer.ShadersChanged += OnShadersChanged;
 
         _canvas.PointerWheelChanged += OnPointerWheel;
         _canvas.PointerPressed += OnPointerPressed;
@@ -1709,6 +1711,7 @@ public sealed class TerminalPane
         _canvas.PointerReleased -= OnPointerReleased;
         UnhookDraw();
         _renderer.NeedsRedraw -= Redraw;
+        _renderer.ShadersChanged -= OnShadersChanged;
 
         if (_hookedRoot is not null)
         {
@@ -2237,6 +2240,16 @@ public sealed class TerminalPane
         _cursorOn = true;
         if (_focused && _config.CursorBlink != false) _blinkTimer.Start();
         else _blinkTimer.Stop();
+    }
+
+    /// <summary>
+    /// A background shader build finished: the animation cadence depends on whether any
+    /// effect compiled, and the new chain needs one repaint.
+    /// </summary>
+    private void OnShadersChanged()
+    {
+        UpdateShaderAnimation();
+        Redraw();
     }
 
     /// <summary>
