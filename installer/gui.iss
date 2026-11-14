@@ -44,6 +44,10 @@
 AppId={{5F0C7B2E-3A61-4C9D-8E24-9B7D1A6F0C58}
 AppName={#AppName}
 AppVersion={#AppVersion}
+; Without this, Inno builds the uninstall entry's DisplayName from the localized
+; "NameAndVersion" message, which reads "Gui version 0.1.0" (or "Gui 版本 0.1.0") in
+; Settings > Apps. Show the product name only; the version has its own column there.
+AppVerName={#AppName}
 AppPublisher={#AppName}
 AppCopyright={#AppName}
 ; Without these the setup program's file properties are empty and Explorer's tooltip reports
