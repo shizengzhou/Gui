@@ -158,28 +158,26 @@ public class QuickTerminalTests : IDisposable
     }
 
     [Fact]
-    public void TheDefaultToggleIsAGlobalChord()
+    public void TheQuickTerminalHasNoDefaultChord()
     {
         Keybinds binds = new(Load("font-size = 12"));
 
-        var globals = binds.Global().ToList();
-        Assert.Contains(("ctrl+backquote", "toggle_quick_terminal"), globals);
-        Assert.Equal("Ctrl+`", binds.Label("toggle_quick_terminal", string.Empty));
+        // The drop-down is opt-in: the command palette row is how it is reached until the
+        // user binds a chord of their own.
+        Assert.Empty(binds.Chords("toggle_quick_terminal"));
+        Assert.Empty(binds.Global());
+        Assert.Empty(binds.Label("toggle_quick_terminal", string.Empty));
     }
 
     [Fact]
-    public void AGlobalLineOverridesTheDefaultAndUnbindingRemovesIt()
+    public void AGlobalLineRegistersTheToggleAndUnbindingRemovesIt()
     {
-        Keybinds rebound = new(Load("keybind = global:ctrl+alt+grave_accent=toggle_quick_terminal"));
-        // Ghostty's defaults are ordinary bindings: a line for the same action adds a
-        // chord, it does not replace the default one.
-        var globals = rebound.Global().ToList();
-        Assert.Contains(("ctrl+backquote", "toggle_quick_terminal"), globals);
-        Assert.Contains(("ctrl+alt+backquote", "toggle_quick_terminal"), globals);
+        Keybinds bound = new(Load("keybind = global:ctrl+alt+grave_accent=toggle_quick_terminal"));
+        Assert.Equal(new[] { ("ctrl+alt+backquote", "toggle_quick_terminal") }, bound.Global().ToList());
+        Assert.Equal("Ctrl+Alt+`", bound.Label("toggle_quick_terminal", string.Empty));
 
-        Keybinds unbound = new(Load("keybind = global:ctrl+backquote="));
-        Assert.DoesNotContain(("ctrl+backquote", "toggle_quick_terminal"),
-            unbound.Global().Select(entry => entry));
+        Keybinds unbound = new(Load("keybind = global:ctrl+alt+grave_accent="));
+        Assert.Empty(unbound.Global());
     }
 
     [Fact]

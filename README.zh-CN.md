@@ -12,8 +12,8 @@ https://github.com/user-attachments/assets/b5013ff2-d1bd-45a0-a6ec-2fb226c59656
 
 ### 快速终端
 
-``Ctrl+` ``（`toggle_quick_terminal`）会让一个终端从屏幕边缘滑出来，盖在你当前的工作之
-上，别的程序在前台时也能唤出；再按一次、或它失去焦点，就自动收起。它是一块独立的窗口：
+命令面板里的 **快速终端**（或自己绑一个 `global:` 快捷键，见下）会让一个终端从屏幕边缘滑出来，
+盖在你当前的工作之上，别的程序在前台时也能唤出；再按一次、或它失去焦点，就自动收起。它是一块独立的窗口：
 收起后 shell 和回滚缓冲都还在，也不会写进保存的窗口会话。
 
 | 选项 | 取值 | 默认 |
@@ -24,8 +24,12 @@ https://github.com/user-attachments/assets/b5013ff2-d1bd-45a0-a6ec-2fb226c59656
 | `quick-terminal-autohide` | `true`、`false` | `true` |
 | `quick-terminal-animation-duration` | 秒；`0` 表示不做滑入滑出动画 | `0.2` |
 
-这个组合键是全局的：默认就是
-`keybind = global:ctrl+grave_accent=toggle_quick_terminal`，改它等于改系统级热键。
+默认没有绑定快捷键，所以只绑之前只能从命令面板打开。写成 `global:` 的组合键会注册给
+Windows，别的程序在前台时也能唤出：
+
+```
+keybind = global:ctrl+grave_accent=toggle_quick_terminal
+```
 
 ## 运行要求
 

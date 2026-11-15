@@ -762,15 +762,6 @@ public sealed partial class Workspace
         bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
         bool super = (mods & GhosttyNative.MODS_SUPER) != 0;
 
-        // The quick terminal's chord is registered system-wide, so Windows normally consumes
-        // it before XAML sees the key. This copy only runs when another application already
-        // owns the chord and the registration was refused.
-        if (ctrl && !shift && !alt && !super && (int)args.Key == 0xC0)
-        {
-            QuickTerminal.Toggle();
-            return true;
-        }
-
         // Ghostty's Alt+1..8 jump straight to the tab in that slot; Alt+9 returns to the
         // previous tab. An out-of-range slot is still consumed (Ghostty binds the chord
         // regardless of how many tabs exist).

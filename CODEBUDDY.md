@@ -243,15 +243,17 @@ drag runs, and a zoomed tab (which paints only one pane) refuses the drag.
 
 ## Quick terminal
 
-``Ctrl+` `` toggles Ghostty's quick terminal: a second, frameless window anchored to a screen
-edge that is hidden rather than closed, so its shell and scrollback survive between toggles.
+The quick terminal (the palette's Quick terminal row, or a `global:` keybind the user adds)
+is a second, frameless window anchored to a screen edge that is hidden rather than closed, so
+its shell and scrollback survive between toggles.
 `Term/QuickTerminal.cs` owns it, `Term/QuickTerminalGeometry.cs` (no WinRT types, covered by
 `tests/Gui.LogicTests`) decides where it lands.
 
 - The chord is a global keybind: `Keybinds.Global()` reports the `global:` lines still in
   effect and `Term/GlobalHotkey.cs` registers them with `RegisterHotKey` on a hidden message
-  window owned by the UI thread (``Ctrl+` `` by default). A chord another application already
-  owns logs a warning and leaves the palette row working.
+  window owned by the UI thread. There is no default chord: until the user binds one, the
+  command palette row is the only way in. A chord another application already owns logs a
+  warning and leaves the palette row working.
 - The window is built lazily on the first toggle, with a `Workspace` in quick mode: the
   header is collapsed (no caption buttons, no tab strip, no tools, no drag band), density is
   forced compact so the surface is flush with the window, and Alt+F4 hides it instead of
@@ -264,6 +266,8 @@ edge that is hidden rather than closed, so its shell and scrollback survive betw
   hides the window on deactivation.
 - It is not a `MainWindow`: `App` keeps no reference to it, `window-save-state` never sees
   it, and "quit" closes it explicitly after the normal windows (`App.CloseAllWindows`).
+  Closing the last real window closes the drop-down too, so the process never lingers with
+  no main window; Alt+F4 on the drop-down only hides it.
 
 Split boundaries are resize handles too: every non-leaf split is a three-track `Grid` (first
 half, the 6 DIP gap or compact's 1 DIP divider, second half) so the boundary is a real track

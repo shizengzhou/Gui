@@ -44,9 +44,6 @@ internal sealed class Keybinds
     {
         ["new_tab"] = new[] { "ctrl+shift+t" },
         ["new_window"] = new[] { "ctrl+shift+n" },
-        // Ghostty's quick terminal toggle is a global binding: it works while another
-        // application has the focus. Windows gets the same behaviour from RegisterHotKey.
-        ["toggle_quick_terminal"] = new[] { "global:ctrl+backquote" },
         ["next_tab"] = new[] { "ctrl+tab", "ctrl+page_down", "ctrl+shift+right" },
         ["previous_tab"] = new[] { "ctrl+shift+tab", "ctrl+page_up", "ctrl+shift+left" },
         ["move_tab:-1"] = new[] { "ctrl+shift+page_up" },

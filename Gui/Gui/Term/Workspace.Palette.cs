@@ -680,7 +680,7 @@ public sealed partial class Workspace
 
         // ---- window & tabs ----
         MakeRow(Strings.NewWindow, "Ctrl+Shift+N", _paletteItems, OpenNewWindow);
-        MakeRow(Strings.ToggleQuickTerminal, _keybinds.Label("toggle_quick_terminal", "Ctrl+`"),
+        MakeRow(Strings.ToggleQuickTerminal, _keybinds.Label("toggle_quick_terminal", string.Empty),
             _paletteItems, QuickTerminal.Toggle);
         MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems, () => Activate(IndexOf(NewTab())));
         MakeRow(Strings.Settings, "Ctrl+,", _paletteItems, ShowSettings);

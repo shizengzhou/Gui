@@ -255,6 +255,12 @@ public partial class App : Application
         var closed = window as MainWindow;
         _windows.Remove(window);
 
+        // The drop-down is not a workspace: when the last real window goes, it goes too.
+        // Leaving it alive would keep the process running with no main window at all, and
+        // once it hides itself there would be nothing on screen and no way back except the
+        // global hotkey.
+        if (_windows.Count == 0) Term.QuickTerminal.CloseIfOpen();
+
         // Re-read the config: "window-save-state" may have been changed and reloaded while
         // the app was running (Ctrl+Shift+,), and the startup snapshot would be stale.
         if (Term.Config.Load().WindowSaveState == "never")
