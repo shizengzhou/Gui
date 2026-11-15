@@ -2317,11 +2317,16 @@ public sealed partial class Workspace
 
         tab.Renaming = true;
         _renamingTab = tab;
-        // Hiding the label collapses its column, so the editor takes over the label's width
-        // (plus its own horizontal padding) and the chip keeps the size it had instead of
-        // snapping to the editor's minimum.
-        double labelWidth = tab.ChipText.ActualWidth;
-        tab.ChipEditor.Width = Math.Clamp(labelWidth > 0 ? labelWidth + 20.0 : 140.0, 60.0, 200.0);
+        // Hiding the label collapses its column, so the editor takes over the column the label
+        // sat in and the chip keeps the size it had instead of snapping to the editor's
+        // minimum. The column, not the label's own width: a chip whose text is shorter than
+        // the space it was given (the star column stretches) would otherwise leave the editor
+        // much narrower than the tab it is renaming.
+        double columnWidth = tab.Chip.Child is Grid chipGrid &&
+            chipGrid.ColumnDefinitions.Count > 1
+                ? chipGrid.ColumnDefinitions[1].ActualWidth
+                : 0;
+        tab.ChipEditor.Width = Math.Clamp(columnWidth > 0 ? columnWidth : 140.0, 60.0, 400.0);
         tab.ChipText.Visibility = Visibility.Collapsed;
         tab.ChipEditor.Text = tab.Title;
         tab.ChipEditor.Foreground = ReferenceEquals(tab, _tabs[_active])
