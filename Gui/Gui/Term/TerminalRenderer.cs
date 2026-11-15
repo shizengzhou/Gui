@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Effects;
+using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
@@ -1129,11 +1130,15 @@ public sealed unsafe class TerminalRenderer
         public bool Wide;
     }
 
+    /// <summary>A cell whose Powerline rune is drawn as a shape instead of a font glyph.</summary>
+    private readonly record struct ShapeCell(int Col, char Rune, Color Fg);
+
     /// <summary>One viewport row's resolved runs, kept for the background and text passes.</summary>
     private sealed class RowRuns
     {
         public int ViewportY;
         public required List<Run> Runs;
+        public required List<ShapeCell> Shapes;
         public bool HasSelection;
         public GhosttyNative.GhosttyRenderStateRowSelection Selection;
     }
@@ -1289,6 +1294,7 @@ public sealed unsafe class TerminalRenderer
                 drawnRows++;
 
                 var runs = new List<Run>(16);
+                var shapes = new List<ShapeCell>(0);
                 int col = 0;
                 bool spacer = false;
 
@@ -1362,6 +1368,15 @@ public sealed unsafe class TerminalRenderer
                         textFg = SearchForegroundColor(searchSelected, fg, cellBg);
                     }
 
+                    // Powerline separators and caps are drawn as shapes (see DrawShapeCells):
+                    // the font's glyph has a coarse edge at cell height. The space keeps the
+                    // cell's width on the grid.
+                    if (text.Length == 1 && text[0] is >= '\uE0B0' and <= '\uE0B7' && !style.Invisible)
+                    {
+                        shapes.Add(new ShapeCell(col, text[0], textFg));
+                        text = " ";
+                    }
+
                     var run = new Run
                     {
                         Col = col,
@@ -1421,6 +1436,7 @@ public sealed unsafe class TerminalRenderer
                 {
                     ViewportY = viewportY,
                     Runs = runs,
+                    Shapes = shapes,
                     HasSelection = hasSelection,
                     Selection = selection,
                 });
@@ -1503,6 +1519,11 @@ public sealed unsafe class TerminalRenderer
 
         foreach (RowRuns row in rowRuns)
             DrawRowText(ds, row, cellW, cellH, haveCursor, cursor, ref signature);
+
+        // The drawn Powerline cells go over the text, so a separator's edge covers the
+        // neighbouring cell the way the prompt's blocks are built.
+        foreach (RowRuns row in rowRuns)
+            DrawShapeCells(ds, row, cellW, cellH, _rasterizationScale);
 
         DrawImageLayer(ds, resources, graphics, GhosttyNative.IMAGE_LAYER_ABOVE_TEXT, cellW, cellH);
         PruneImages();
@@ -1637,6 +1658,76 @@ public sealed unsafe class TerminalRenderer
     /// Draws one row's glyphs and decorations. Backgrounds and images were already painted,
     /// so this pass only adds text.
     /// </summary>
+    /// <summary>
+    /// Draws the cells that hold a Powerline rune (U+E0B0..U+E0B7) as shapes. Those blocks and
+    /// caps have to sit exactly on the cell edges, which a font's outline rarely does, and Kero
+    /// and Ghostty draw them for the same reason: a filled triangle for U+E0B0/U+E0B2 and half
+    /// an ellipse for U+E0B4..U+E0B7, stroked instead of filled for the odd rune of each pair.
+    /// </summary>
+    private static void DrawShapeCells(CanvasDrawingSession ds, RowRuns row, float cellW, float cellH,
+        float scale)
+    {
+        if (row.Shapes.Count == 0) return;
+
+        float s = scale <= 0f ? 1f : scale;
+        float Snap(float dip) => MathF.Round(dip * s) / s;
+        float stroke = MathF.Max(1f, MathF.Round(s)) / s;
+
+        float rowTop = Snap(row.ViewportY * cellH);
+        float rowBottom = Snap((row.ViewportY + 1) * cellH);
+        float midY = (rowTop + rowBottom) / 2f;
+
+        foreach (ShapeCell cell in row.Shapes)
+        {
+            float left = Snap(cell.Col * cellW);
+            float right = Snap((cell.Col + 1) * cellW);
+            bool filled = cell.Rune is '\uE0B0' or '\uE0B2' or '\uE0B4' or '\uE0B6';
+
+            using var path = new CanvasPathBuilder(ds);
+            switch (cell.Rune)
+            {
+                case '\uE0B0':
+                case '\uE0B1':
+                    path.BeginFigure(left, rowTop);
+                    path.AddLine(right, midY);
+                    path.AddLine(left, rowBottom);
+                    break;
+
+                case '\uE0B2':
+                case '\uE0B3':
+                    path.BeginFigure(right, rowTop);
+                    path.AddLine(left, midY);
+                    path.AddLine(right, rowBottom);
+                    break;
+
+                default:
+                {
+                    // The half ellipse is emitted as a finely divided polyline: D2D flattens a
+                    // curve with a tolerance of a quarter DIP, which at 2x leaves only a handful
+                    // of facets on a cell-high cap - each facet has one flat coverage value, and
+                    // the arc reads as a staircase instead of a curve.
+                    float tip = cell.Rune is '\uE0B6' or '\uE0B7' ? left : right;
+                    float flat = cell.Rune is '\uE0B6' or '\uE0B7' ? right : left;
+                    float ry = (rowBottom - rowTop) / 2f;
+                    const int segments = 48;
+                    path.BeginFigure(flat, rowTop);
+                    for (int i = 1; i <= segments; i++)
+                    {
+                        float phi = MathF.PI * i / segments;
+                        path.AddLine(flat + (tip - flat) * MathF.Sin(phi), midY - ry * MathF.Cos(phi));
+                    }
+                    break;
+                }
+            }
+
+            path.EndFigure(filled ? CanvasFigureLoop.Closed : CanvasFigureLoop.Open);
+
+            using CanvasGeometry geometry = CanvasGeometry.CreatePath(path);
+            if (filled) ds.FillGeometry(geometry, cell.Fg);
+            else ds.DrawGeometry(geometry, cell.Fg, stroke);
+        }
+    }
+
     private void DrawRowText(CanvasDrawingSession ds, RowRuns row, float cellW, float cellH,
         bool haveCursor, in GhosttyNative.GhosttyRenderStateCursor cursor, ref uint signature)
     {
