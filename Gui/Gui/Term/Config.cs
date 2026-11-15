@@ -167,6 +167,11 @@ public sealed class Config
     public int WindowPositionX;
     public int WindowPositionY;
     public string WindowSaveState = "always";      // "always" or "never"
+    public string QuickTerminalPosition = "top";   // "top" (default), "bottom", "left", "right", "center"
+    public string QuickTerminalSize = string.Empty; // "50%" or "300px", optionally "primary,secondary"
+    public string QuickTerminalScreen = "mouse";   // "mouse" (default) or "main"
+    public bool QuickTerminalAutohide = true;      // hide the quick terminal when it loses focus
+    public double QuickTerminalAnimationDuration = 0.2; // seconds; 0 shows and hides it instantly
     public bool PaddingBalance;                    // window-padding-balance
     public string ConfirmCloseSurface = "true";    // "true", "false", "always"
     public int ClickRepeatInterval;                // milliseconds; 0 = Ghostty's 500ms default
@@ -467,6 +472,11 @@ public sealed class Config
         WindowPositionX = other.WindowPositionX;
         WindowPositionY = other.WindowPositionY;
         WindowSaveState = other.WindowSaveState;
+        QuickTerminalPosition = other.QuickTerminalPosition;
+        QuickTerminalSize = other.QuickTerminalSize;
+        QuickTerminalScreen = other.QuickTerminalScreen;
+        QuickTerminalAutohide = other.QuickTerminalAutohide;
+        QuickTerminalAnimationDuration = other.QuickTerminalAnimationDuration;
         PaddingBalance = other.PaddingBalance;
         ConfirmCloseSurface = other.ConfirmCloseSurface;
         ClickRepeatInterval = other.ClickRepeatInterval;
@@ -1025,6 +1035,18 @@ public sealed class Config
             (Last("window-save-state") ?? string.Empty).Trim().ToLowerInvariant() == "never"
                 ? "never"
                 : "always";
+
+        // The quick terminal is a drop-down window toggled by a global hotkey. Its edge and
+        // size follow Ghostty's keys; the size string is parsed where the geometry is worked
+        // out, so an unusable value quietly keeps the default instead of failing the load.
+        QuickTerminalPosition = QuickTerminalGeometry.NormalizePosition(Last("quick-terminal-position"));
+        QuickTerminalSize = (Last("quick-terminal-size") ?? string.Empty).Trim();
+        QuickTerminalScreen =
+            (Last("quick-terminal-screen") ?? string.Empty).Trim().ToLowerInvariant() == "main"
+                ? "main"
+                : "mouse";
+        QuickTerminalAutohide = GetBool("quick-terminal-autohide", true);
+        QuickTerminalAnimationDuration = ParseSeconds(Last("quick-terminal-animation-duration"), 0.2);
 
         ApplyBellFeatures(Last("bell-features"));
         BellAudioPath = ResolveImagePath(Last("bell-audio-path") ?? string.Empty);
@@ -2465,6 +2487,16 @@ public sealed class Config
         if (scale <= 0.0) scale = 1.0;
         double dpi = 96.0 * scale;
         return Math.Floor(points * dpi / 72.0) / scale;
+    }
+
+    /// <summary>A duration in seconds, clamped to something a slide animation can use.</summary>
+    private static double ParseSeconds(string? value, double fallback)
+    {
+        if (!double.TryParse((value ?? string.Empty).Trim(), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out double seconds))
+            return fallback;
+        if (double.IsNaN(seconds) || seconds < 0) return fallback;
+        return Math.Min(seconds, 5.0);
     }
 
     /// <summary>Sidebar widths keep a usable range; out-of-range values keep the default.</summary>

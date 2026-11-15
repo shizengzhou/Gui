@@ -115,6 +115,11 @@ public partial class App : Application
     {
         try
         {
+            // The quick terminal's global hotkey belongs to the process, not to a window:
+            // it has to work while another application has the focus, so it is registered
+            // here rather than when the drop-down is first shown.
+            Term.QuickTerminal.Install(_config);
+
             // Read the shell's icon while the first window is still being built: the chip of a
             // restored background tab is drawn long before its shell starts, and a cold icon
             // extraction would land after it. Warming the cache here lets the chip take the
@@ -201,6 +206,9 @@ public partial class App : Application
             else
                 window.Close();
         }
+
+        // The drop-down is not in the window list, so it needs its own teardown.
+        Term.QuickTerminal.CloseIfOpen();
     }
 
     /// <summary>
@@ -342,6 +350,8 @@ public partial class App : Application
             if (window is MainWindow main && !ReferenceEquals(main.Workspace, source))
                 main.Workspace?.ApplyThemeFrom(config);
         }
+
+        Term.QuickTerminal.ApplyThemeFrom(config);
     }
 
     /// <summary>
@@ -356,5 +366,7 @@ public partial class App : Application
             if (window is MainWindow main && !ReferenceEquals(main.Workspace, source))
                 main.Workspace?.ReloadFromPeer();
         }
+
+        Term.QuickTerminal.ReloadFromPeer();
     }
 }

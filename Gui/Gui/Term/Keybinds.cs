@@ -30,6 +30,9 @@ internal sealed class Keybinds
 {
     private readonly Dictionary<string, string> _bindings = new(StringComparer.Ordinal);
     private readonly HashSet<string> _unbound = new(StringComparer.Ordinal);
+
+    /// <summary>Chords the user marked with the "global:" prefix, in canonical form.</summary>
+    private readonly HashSet<string> _global = new(StringComparer.Ordinal);
     private readonly List<(string Chord, string Action)> _ordered = new();
     private bool _cleared;
 
@@ -41,6 +44,9 @@ internal sealed class Keybinds
     {
         ["new_tab"] = new[] { "ctrl+shift+t" },
         ["new_window"] = new[] { "ctrl+shift+n" },
+        // Ghostty's quick terminal toggle is a global binding: it works while another
+        // application has the focus. Windows gets the same behaviour from RegisterHotKey.
+        ["toggle_quick_terminal"] = new[] { "global:ctrl+backquote" },
         ["next_tab"] = new[] { "ctrl+tab", "ctrl+page_down", "ctrl+shift+right" },
         ["previous_tab"] = new[] { "ctrl+shift+tab", "ctrl+page_up", "ctrl+shift+left" },
         ["move_tab:-1"] = new[] { "ctrl+shift+page_up" },
@@ -138,7 +144,7 @@ internal sealed class Keybinds
             return;
         }
 
-        string trigger = text[..equals].Trim();
+        string trigger = StripPrefixes(text[..equals].Trim(), out bool global);
         string action = text[(equals + 1)..].Trim();
         string? chord = NormalizeTrigger(trigger);
         if (chord is null)
@@ -149,6 +155,7 @@ internal sealed class Keybinds
 
         _unbound.Remove(chord);
         _bindings.Remove(chord);
+        _global.Remove(chord);
         _ordered.RemoveAll(entry => entry.Chord == chord);
 
         // An empty action removes the binding so the shell sees the key again.
@@ -160,14 +167,43 @@ internal sealed class Keybinds
 
         _bindings[chord] = action;
         _ordered.Add((chord, action));
+        if (global) _global.Add(chord);
     }
 
     private void ResetOverrides()
     {
         _bindings.Clear();
         _unbound.Clear();
+        _global.Clear();
         _ordered.Clear();
         _cleared = false;
+    }
+
+    /// <summary>
+    /// Every chord that should be registered with the operating system, so it fires while
+    /// another application has the focus: the "global:" defaults still in effect, then the
+    /// user's own global lines.
+    /// </summary>
+    public IEnumerable<(string Chord, string Action)> Global()
+    {
+        if (!_cleared)
+        {
+            foreach (KeyValuePair<string, string[]> entry in Defaults)
+            {
+                foreach (string trigger in entry.Value)
+                {
+                    if (!trigger.StartsWith("global:", StringComparison.OrdinalIgnoreCase)) continue;
+                    string? chord = NormalizeTrigger(trigger);
+                    if (chord is null || _unbound.Contains(chord)) continue;
+                    // An explicit line for this chord wins; it is listed from _ordered below.
+                    if (_bindings.ContainsKey(chord)) continue;
+                    yield return (chord, entry.Key);
+                }
+            }
+        }
+
+        foreach ((string chord, string action) in _ordered)
+            if (_global.Contains(chord)) yield return (chord, action);
     }
 
     /// <summary>Looks up the chord the event describes, including the "ctrl+plus" spelling.</summary>
@@ -264,18 +300,46 @@ internal sealed class Keybinds
         "backquote", "bracket_left", "bracket_right", "semicolon", "apostrophe",
     };
 
-    /// <summary>Parses "ctrl+shift+t", "alt+shift+plus" or "physical:ctrl+comma".</summary>
+    /// <summary>
+    /// Removes the prefixes Ghostty puts in front of a trigger. "global:" is the one that
+    /// changes behaviour here (the chord is registered system-wide); the others are accepted
+    /// so a real Ghostty config keeps loading.
+    /// </summary>
+    private static string StripPrefixes(string trigger, out bool global)
+    {
+        global = false;
+        while (true)
+        {
+            int colon = trigger.IndexOf(':');
+            if (colon <= 0) return trigger;
+
+            switch (trigger[..colon].Trim().ToLowerInvariant())
+            {
+                case "global":
+                    global = true;
+                    break;
+                case "all":
+                case "unconsumed":
+                case "physical":
+                    break;
+                default:
+                    return trigger;
+            }
+            trigger = trigger[(colon + 1)..].TrimStart();
+        }
+    }
+
+    /// <summary>
+    /// Parses "ctrl+shift+t", "alt+shift+plus", "global:ctrl+backquote" or
+    /// "physical:ctrl+comma" into the canonical chord.
+    /// </summary>
     private static string? NormalizeTrigger(string trigger)
     {
-        trigger = trigger.Trim();
+        trigger = StripPrefixes(trigger.Trim(), out _);
         if (trigger.Length == 0) return null;
 
         // This build has no key tables or chorded triggers.
         if (trigger.Contains('/') || trigger.Contains('>')) return null;
-
-        const string physical = "physical:";
-        if (trigger.StartsWith(physical, StringComparison.OrdinalIgnoreCase))
-            trigger = trigger[physical.Length..];
 
         string keyPart;
         string modPart;
@@ -330,6 +394,9 @@ internal sealed class Keybinds
         switch (name)
         {
             case "esc": return "escape";
+            // Ghostty spells the key above Tab this way; the chord names here use backquote.
+            case "grave_accent":
+            case "grave": return "backquote";
             case "return": return "enter";
             case "pgup": case "pageup": return "page_up";
             case "pgdn": case "pagedown": return "page_down";

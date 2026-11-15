@@ -10,6 +10,23 @@ https://github.com/user-attachments/assets/b5013ff2-d1bd-45a0-a6ec-2fb226c59656
 
 配置就是 Ghostty 的格式，位于 `%APPDATA%\gui\config`
 
+### 快速终端
+
+``Ctrl+` ``（`toggle_quick_terminal`）会让一个终端从屏幕边缘滑出来，盖在你当前的工作之
+上，别的程序在前台时也能唤出；再按一次、或它失去焦点，就自动收起。它是一块独立的窗口：
+收起后 shell 和回滚缓冲都还在，也不会写进保存的窗口会话。
+
+| 选项 | 取值 | 默认 |
+| --- | --- | --- |
+| `quick-terminal-position` | `top`、`bottom`、`left`、`right`、`center` | `top` |
+| `quick-terminal-size` | `50%`、`300px`、`40%,500px`（主轴,副轴） | 主轴 400px，另一轴铺满 |
+| `quick-terminal-screen` | `mouse`（鼠标所在显示器）、`main` | `mouse` |
+| `quick-terminal-autohide` | `true`、`false` | `true` |
+| `quick-terminal-animation-duration` | 秒；`0` 表示不做滑入滑出动画 | `0.2` |
+
+这个组合键是全局的：默认就是
+`keybind = global:ctrl+grave_accent=toggle_quick_terminal`，改它等于改系统级热键。
+
 ## 运行要求
 
 - Windows 10 1809（17763）及以上，x64

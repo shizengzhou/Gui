@@ -329,6 +329,12 @@ public sealed partial class Workspace
     /// </summary>
     private Language _appliedLanguage;
 
+    /// <summary>
+    /// True for the drop-down window: no caption buttons, no window drag, and Alt+F4 hides
+    /// it instead of closing the shell inside.
+    /// </summary>
+    private readonly bool _quickTerminal;
+
     private bool _dragging;
     private PointInt32 _dragCursor;
     private PointInt32 _dragOrigin;
@@ -354,9 +360,11 @@ public sealed partial class Workspace
     private bool _inputHandlersInstalled;
     private TerminalPane? _imeCompositionPane;
 
-    internal Workspace(Config config, MovedTab? initialTab = null, WindowState? restore = null)
+    internal Workspace(Config config, MovedTab? initialTab = null, WindowState? restore = null,
+        bool quickTerminal = false)
     {
         _config = config;
+        _quickTerminal = quickTerminal;
         _initialTab = initialTab;
         _restore = restore;
         _placement = PlacementFrom(config.TabPosition);
@@ -390,8 +398,10 @@ public sealed partial class Workspace
         {
             if (window.AppWindow.Presenter is OverlappedPresenter presenter)
             {
-                presenter.SetBorderAndTitleBar(true, false);
-                presenter.IsResizable = true;
+                // The quick terminal has no frame at all: it is anchored to a screen edge and
+                // must not show a resize border or a system menu of its own.
+                presenter.SetBorderAndTitleBar(!_quickTerminal, false);
+                presenter.IsResizable = !_quickTerminal;
             }
         }
         catch (Exception error)
@@ -566,6 +576,15 @@ public sealed partial class Workspace
     {
         Config fresh = Config.Load();
         _config.CopyFrom(fresh);
+
+        if (_quickTerminal)
+        {
+            // The drop-down is not a workspace: the file's tab placement, tab bar and pane
+            // density do not apply to it, and a reload must not bring them back.
+            _config.TabPosition = "top";
+            _config.ShowTabBar = false;
+            _config.Compact = true;
+        }
         RefreshKeybinds();
 
         // Split panes keep their own copy of the config (their session command and working
@@ -604,6 +623,11 @@ public sealed partial class Workspace
         // The chrome is rebuilt here, so a failure must not take the app down with it.
         SetSidebarWidth(SidebarWidthFromConfig());
         Diag.Guard("ws.placement", () => ApplyTabPlacement(PlacementFrom(fresh.TabPosition)));
+
+        // The quick terminal's hotkeys and its edge come from the same file, so a reload has
+        // to re-register them here. Every window does this; registering again replaces the
+        // previous chords.
+        Diag.Guard("ws.quick", () => QuickTerminal.Install(_config));
 
         // The density is a live setting like the others: an edit to `compact` has to reach the
         // island margin, the split gaps, the pane frames and the tab chips without a restart.
@@ -1631,6 +1655,17 @@ public sealed partial class Workspace
 
             Grid.SetColumn(_headerSideTools, 0);
             _headerInner.Children.Add(_headerSideTools);
+        }
+
+        // A drop-down has no window controls and no title band: Ghostty's quick terminal is
+        // the surface and nothing else. The header is kept for the tab machinery that still
+        // runs behind it, but it takes no room. Minimize/maximize/close would either be
+        // meaningless or destroy the shell the user expects to find on the next toggle.
+        if (_quickTerminal)
+        {
+            _header.Height = 0;
+            _header.Visibility = Visibility.Collapsed;
+            return;
         }
 
         // The caption buttons fill the header edge to edge, like real window controls; their

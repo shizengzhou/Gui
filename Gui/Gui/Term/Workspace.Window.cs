@@ -37,6 +37,8 @@ public sealed partial class Workspace
     private void OnHeaderPointerPressed(object sender, PointerRoutedEventArgs args)
     {
         args.Handled = true;
+        // The drop-down stays where its edge put it; dragging it would leave a gap behind.
+        if (_quickTerminal) return;
         ulong now = GetTickCount64();
         if (now - _lastHeaderPress < GetDoubleClickTime())
         {
@@ -331,6 +333,14 @@ public sealed partial class Workspace
     /// </summary>
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
+        // Alt+F4 on the drop-down hides it: the shell inside is meant to survive a toggle.
+        if (_quickTerminal && !_allowClose)
+        {
+            args.Cancel = true;
+            QuickTerminal.Hide();
+            return;
+        }
+
         if (_allowClose) return;
         if (!NeedsCloseConfirm(AnyCommandRunning())) return;
 
@@ -547,6 +557,12 @@ public sealed partial class Workspace
         _imeSink.Focus(FocusState.Programmatic);
     }
 
+    /// <summary>Puts the keyboard into the terminal; the quick terminal does this on show.</summary>
+    internal void FocusTerminal()
+    {
+        if (_tabs.Count > 0) FocusKeyboardAnchor();
+    }
+
     /// <summary>True when the terminal, not a real text control, owns the keyboard.</summary>
     private bool IsTerminalKeyboardFocus()
     {
@@ -745,6 +761,15 @@ public sealed partial class Workspace
         bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
         bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
         bool super = (mods & GhosttyNative.MODS_SUPER) != 0;
+
+        // The quick terminal's chord is registered system-wide, so Windows normally consumes
+        // it before XAML sees the key. This copy only runs when another application already
+        // owns the chord and the registration was refused.
+        if (ctrl && !shift && !alt && !super && (int)args.Key == 0xC0)
+        {
+            QuickTerminal.Toggle();
+            return true;
+        }
 
         // Ghostty's Alt+1..8 jump straight to the tab in that slot; Alt+9 returns to the
         // previous tab. An out-of-range slot is still consumed (Ghostty binds the chord

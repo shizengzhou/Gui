@@ -74,6 +74,7 @@ public sealed partial class Workspace
         if (label == Strings.WriteScreenFile("open", string.Empty)) return "write_screen_file:open";
 
         if (label == Strings.NewWindow) return "new_window";
+        if (label == Strings.ToggleQuickTerminal) return "toggle_quick_terminal";
         if (label == Strings.NewTab) return "new_tab";
         if (label == Strings.Settings) return "open_config";
         if (label == Strings.MoveTabLeft) return "move_tab:-1";
@@ -136,6 +137,8 @@ public sealed partial class Workspace
     private void RegisterBuiltInKeybindActions()
     {
         _keybindActions.Clear();
+
+        _keybindActions["toggle_quick_terminal"] = QuickTerminal.Toggle;
 
         _keybindActions["jump_to_prompt:-1"] = () => ActivePane()?.JumpToPrompt(-1);
         _keybindActions["jump_to_prompt:1"] = () => ActivePane()?.JumpToPrompt(1);

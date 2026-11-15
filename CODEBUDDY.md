@@ -241,6 +241,30 @@ beside the target, so the pane keeps its live session and the shell, scrollback 
 directory travel with it. Esc or a lost capture cancels, hover focus is suppressed while the
 drag runs, and a zoomed tab (which paints only one pane) refuses the drag.
 
+## Quick terminal
+
+``Ctrl+` `` toggles Ghostty's quick terminal: a second, frameless window anchored to a screen
+edge that is hidden rather than closed, so its shell and scrollback survive between toggles.
+`Term/QuickTerminal.cs` owns it, `Term/QuickTerminalGeometry.cs` (no WinRT types, covered by
+`tests/Gui.LogicTests`) decides where it lands.
+
+- The chord is a global keybind: `Keybinds.Global()` reports the `global:` lines still in
+  effect and `Term/GlobalHotkey.cs` registers them with `RegisterHotKey` on a hidden message
+  window owned by the UI thread (``Ctrl+` `` by default). A chord another application already
+  owns logs a warning and leaves the palette row working.
+- The window is built lazily on the first toggle, with a `Workspace` in quick mode: the
+  header is collapsed (no caption buttons, no tab strip, no tools, no drag band), density is
+  forced compact so the surface is flush with the window, and Alt+F4 hides it instead of
+  closing the shell. `TabPosition` and `window-show-tab-bar` from the file are ignored.
+- `quick-terminal-position` picks the edge, `quick-terminal-size` the extent (`50%`,
+  `300px`, or `primary,secondary`; pixel values are DIPs scaled by the monitor DPI), and the
+  defaults are Ghostty's 400-pixel primary axis. `quick-terminal-screen` chooses the monitor
+  under the pointer (`mouse`, default) or the primary one. The slide honours
+  `quick-terminal-animation-duration` (0 disables it), and `quick-terminal-autohide`
+  hides the window on deactivation.
+- It is not a `MainWindow`: `App` keeps no reference to it, `window-save-state` never sees
+  it, and "quit" closes it explicitly after the normal windows (`App.CloseAllWindows`).
+
 Split boundaries are resize handles too: every non-leaf split is a three-track `Grid` (first
 half, the 6 DIP gap or compact's 1 DIP divider, second half) so the boundary is a real track
 instead of a spacing, and an invisible 10 DIP `ResizeGrip` fills that track with negative
@@ -383,6 +407,9 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   `scrollback-compression`, `clipboard-write-limit-bytes`,
   and the new `gtk-*` keys are parsed without warnings, but this build has
   no behavior behind them yet.
+- The quick terminal reads `quick-terminal-position` (top/bottom/left/right/center),
+  `quick-terminal-size`, `quick-terminal-screen` (`mouse`/main), `quick-terminal-autohide` and
+  `quick-terminal-animation-duration`; see "Quick terminal" above.
 - `compact` is `true` (default: panes run edge to edge in a square content area, split only
   by 1 DIP dividers; the tab chips square off at the bottom and the rail's tool row lifts to
   the window edge) or `false` (panes float as rounded islands with a 6 DIP gap). The command

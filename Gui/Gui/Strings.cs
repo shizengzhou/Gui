@@ -62,6 +62,7 @@ public static class Strings
 
     public static string NewTab => Pick("New tab", "新建标签页");
     public static string NewWindow => Pick("New window", "新建窗口");
+    public static string ToggleQuickTerminal => Pick("Quick terminal", "快速终端");
     public static string CloseFocusedPane => Pick("Close focused pane", "关闭当前窗格");
     public static string CloseTerminal => Pick("Close Terminal", "关闭终端");
     public static string NextTab => Pick("Next tab", "下一个标签页");
