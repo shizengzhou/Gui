@@ -13,6 +13,12 @@
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
+    <!-- Same rule as the app: a build without -p:Version reports itself as a development
+         build in `gui +version`, not as the SDK's 1.0.0 default. The commit hash stays out
+         of the product version, as in the app. -->
+    <InformationalVersion Condition="'$(Version)' == ''">dev</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
     <!-- Config.cs uses the Windows registry under Resolve(), which the CLI never calls.
          Under a plain net8.0 TFM the platform analyzer still flags those call sites. -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
@@ -45,6 +51,7 @@
     <Compile Include="../Gui/Term/ColorReport.cs" Link="ColorReport.cs" />
     <Compile Include="../Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../Gui/Term/Keybinds.cs" Link="Keybinds.cs" />
+    <Compile Include="../Gui/Term/QuickTerminalGeometry.cs" Link="QuickTerminalGeometry.cs" />
     <Compile Include="../Gui/Term/IpcProtocol.cs" Link="IpcProtocol.cs" />
     <Compile Include="../Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />
   </ItemGroup>

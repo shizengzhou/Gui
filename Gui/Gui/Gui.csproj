@@ -12,6 +12,10 @@
          exe's Product version in Explorer. The build number belongs in the build log, not in
          a property sheet. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- A build nobody stamped with -p:Version is a development build: About, `gui +version`
+         and Explorer's Product version say "dev" instead of the SDK's 1.0.0 default. Release
+         builds get their version from build-installer.ps1 and the release workflow. -->
+    <InformationalVersion Condition="'$(Version)' == ''">dev</InformationalVersion>
     <Platforms>x86;x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
