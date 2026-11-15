@@ -2989,6 +2989,9 @@ public sealed class TerminalPane
         return string.Join("\n", lines);
     }
 
+    /// <summary>An empty bracketed paste: a program that reads the clipboard takes it as one.</summary>
+    private static readonly byte[] EmptyBracketedPaste = "\u001b[200~\u001b[201~"u8.ToArray();
+
     public void PasteFromClipboard()
     {
         if (ReadOnly) return;
@@ -3000,10 +3003,17 @@ public sealed class TerminalPane
         try
         {
             var view = Clipboard.GetContent();
-            if (!view.Contains(StandardDataFormats.Text)) return;
-
-            string text = await view.GetTextAsync();
-            if (text.Length == 0) return;
+            string text = view.Contains(StandardDataFormats.Text) ? await view.GetTextAsync() : string.Empty;
+            if (text.Length == 0)
+            {
+                // Nothing to type, but the clipboard may hold an image or a file. Programs that
+                // read the clipboard themselves (Claude Code, codebuddy) take an empty bracketed
+                // paste as "paste what you have" and read it on their own; VS Code's terminal
+                // sends it for the same reason. Without bracketed paste the program never asked.
+                if (view.AvailableFormats.Count > 0 && _session.BracketedPaste())
+                    _session.WriteInput(EmptyBracketedPaste);
+                return;
+            }
 
             if (!await ConfirmPasteAsync(text, _session.BracketedPaste())) return;
 
