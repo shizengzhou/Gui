@@ -27,6 +27,7 @@ internal static class FontPreview
         if (lines.Count == 0 || cellWidth <= 0 || cellHeight <= 0) return null;
 
         const int pad = 2;
+        const int scale = 2;   // supersampling factor
         IntPtr screen = GetDC(IntPtr.Zero);
         if (screen == IntPtr.Zero) return null;
         IntPtr dc = CreateCompatibleDC(screen);
@@ -38,18 +39,19 @@ internal static class FontPreview
         {
             // MM_TEXT maps one logical unit to one device pixel, so the cell size can be used
             // for the font height directly.
-            int heightLogical = -(int)Math.Round(cellHeight * 0.8);
+            int heightLogical = -(int)Math.Round(cellHeight * scale * 0.8);
             font = CreateFontW(heightLogical, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
             if (font == IntPtr.Zero) return null;
             previous = SelectObject(dc, font);
 
             if (!GetTextExtentPoint32W(dc, "M", 1, out SIZE cell)) return null;
-            if (cell.cx > 0 && cell.cx != cellWidth)
+            if (cell.cx > 0 && cell.cx != cellWidth * scale)
             {
                 // Scale the height so one glyph advances exactly one cell.
                 SelectObject(dc, previous);
                 DeleteObject(font);
-                heightLogical = Math.Min(-6, (int)Math.Round(heightLogical * (double)cellWidth / cell.cx));
+                heightLogical = Math.Min(-6,
+                    (int)Math.Round(heightLogical * (double)(cellWidth * scale) / cell.cx));
                 font = CreateFontW(heightLogical, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
                 if (font == IntPtr.Zero) return null;
                 SelectObject(dc, font);
@@ -59,7 +61,7 @@ internal static class FontPreview
             // Vertically centre the glyphs in their cell, the way a terminal does, and use the
             // measured height so the offset follows the font rather than the nominal size.
             if (!GetTextExtentPoint32W(dc, "Mg", 2, out SIZE glyph)) return null;
-            int offsetY = Math.Max(0, (cellHeight - glyph.cy) / 2);
+            int offsetY = Math.Max(0, (cellHeight * scale - glyph.cy) / 2);
 
             int longest = 0;
             foreach (string line in lines) longest = Math.Max(longest, line.Length);
@@ -67,6 +69,8 @@ internal static class FontPreview
 
             width = longest * cellWidth + pad * 2;
             height = lines.Count * cellHeight + pad * 2;
+            int bigWidth = width * scale;
+            int bigHeight = height * scale;
             if (width < 8 || height < 8) return null;
 
             var info = new BITMAPINFO
@@ -74,8 +78,8 @@ internal static class FontPreview
                 bmiHeader = new BITMAPINFOHEADER
                 {
                     biSize = Marshal.SizeOf<BITMAPINFOHEADER>(),
-                    biWidth = width,
-                    biHeight = -height,      // top-down rows
+                    biWidth = bigWidth,
+                    biHeight = -bigHeight,      // top-down rows
                     biPlanes = 1,
                     biBitCount = 32,
                     biCompression = 0,
@@ -89,7 +93,7 @@ internal static class FontPreview
             SelectObject(dc, dib);
             SelectObject(dc, font);
 
-            var pixels = new byte[width * height * 4];
+            var pixels = new byte[bigWidth * bigHeight * 4];
             for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
             Marshal.Copy(pixels, 0, bits, pixels.Length);
 
@@ -101,14 +105,15 @@ internal static class FontPreview
                 for (int col = 0; col < line.Length; col++)
                 {
                     if (line[col] == ' ') continue;
-                    TextOutW(dc, pad + col * cellWidth, pad + row * cellHeight + offsetY,
+                    TextOutW(dc, (pad + col * cellWidth) * scale, (pad + row * cellHeight) * scale + offsetY,
                         line.Substring(col, 1), 1);
                 }
             }
             GdiFlush();
 
             Marshal.Copy(bits, pixels, 0, pixels.Length);
-            return EncodePng(ToCoverage(pixels, foreground), width, height);
+            return EncodePng(ToCoverage(Downsample(pixels, bigWidth, bigHeight, scale), foreground),
+                width, height);
         }
         finally
         {
@@ -138,7 +143,42 @@ internal static class FontPreview
     /// Turns "white glyphs on black" into the foreground colour with coverage as alpha, so the
     /// terminal composites the sample over whatever background the theme paints.
     /// </summary>
-    private static byte[] ToCoverage(byte[] bgra, (byte r, byte g, byte b) foreground)
+
+    /// <summary>Averages the supersampled pixels down to the image's real size.</summary>
+    private static byte[] Downsample(byte[] source, int width, int height, int scale)
+    {
+        int outWidth = width / scale;
+        int outHeight = height / scale;
+        var result = new byte[outWidth * outHeight * 4];
+        int samples = scale * scale;
+
+        for (int y = 0; y < outHeight; y++)
+        {
+            for (int x = 0; x < outWidth; x++)
+            {
+                int r = 0, g = 0, b = 0;
+                for (int dy = 0; dy < scale; dy++)
+                {
+                    for (int dx = 0; dx < scale; dx++)
+                    {
+                        int at = ((y * scale + dy) * width + (x * scale + dx)) * 4;
+                        b += source[at];
+                        g += source[at + 1];
+                        r += source[at + 2];
+                    }
+                }
+
+                int to = (y * outWidth + x) * 4;
+                result[to] = (byte)(b / samples);
+                result[to + 1] = (byte)(g / samples);
+                result[to + 2] = (byte)(r / samples);
+                result[to + 3] = 255;
+            }
+        }
+        return result;
+    }
+
+    internal static byte[] ToCoverage(byte[] bgra, (byte r, byte g, byte b) foreground)
     {
         for (int i = 0; i < bgra.Length; i += 4)
         {
@@ -159,7 +199,7 @@ internal static class FontPreview
     }
 
     /// <summary>A minimal RGBA PNG: the pixels already are the rows the terminal decodes.</summary>
-    private static byte[] EncodePng(byte[] rgba, int width, int height)
+    internal static byte[] EncodePng(byte[] rgba, int width, int height)
     {
         using var output = new MemoryStream();
         output.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
