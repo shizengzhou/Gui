@@ -308,6 +308,16 @@ public sealed unsafe class TerminalSession : IDisposable
         try
         {
             Diag.Debug("pty.start", $"cols={cols} rows={rows} exec={executable}");
+            // A program that draws the font itself (the font browser's preview) needs the cell
+            // size in physical pixels to render at exactly the size a pane draws with.
+            var cellVariables = new List<(string Name, string Value)>
+            {
+                ("GUI_CELL_WIDTH", metrics.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                ("GUI_CELL_HEIGHT", metrics.Height.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            };
+            var merged = new List<(string Name, string Value)>(environment ?? Array.Empty<(string Name, string Value)>());
+            merged.AddRange(cellVariables);
+            environment = merged;
             // A restored terminal already holds the saved output and the divider, so the
             // console takes the terminal's cursor as its own and the prompt lands below.
             _pty = ConPty.Start(command, (short)cols, (short)rows, workingDirectory, environment, term,

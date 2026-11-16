@@ -15,17 +15,18 @@ namespace Gui.Cli;
 internal static class FontPreview
 {
     /// <summary>
-    /// Renders the sample lines in <paramref name="family"/> at the given pixel height, in the
-    /// terminal's foreground colour with alpha coverage around the glyphs.
+    /// Renders the sample the way a pane draws it: one glyph per cell, advanced by the pane's
+    /// cell width, one line per cell height. The font is sized until its advance matches the
+    /// cell, so the image shows the text at the size and spacing the terminal itself uses.
     /// </summary>
-    public static byte[]? Render(string family, IReadOnlyList<string> lines, int pixelHeight,
-        int maxWidth, (byte r, byte g, byte b) foreground, out int width, out int height)
+    public static byte[]? Render(string family, IReadOnlyList<string> lines, int cellWidth,
+        int cellHeight, (byte r, byte g, byte b) foreground, out int width, out int height)
     {
         width = 0;
         height = 0;
-        if (lines.Count == 0) return null;
+        if (lines.Count == 0 || cellWidth <= 0 || cellHeight <= 0) return null;
 
-        const int pad = 6;
+        const int pad = 2;
         IntPtr screen = GetDC(IntPtr.Zero);
         if (screen == IntPtr.Zero) return null;
         IntPtr dc = CreateCompatibleDC(screen);
@@ -35,32 +36,37 @@ internal static class FontPreview
 
         try
         {
-            // A font height is in logical units, so a high-density screen would scale the
-            // sample. Ask for device pixels, then shrink until the widest line fits.
-            int dpi = GetDeviceCaps(dc, 90); // LOGPIXELSY
-            if (dpi <= 0) dpi = 96;
-            int heightLogical = -(int)Math.Round(pixelHeight * 96.0 / dpi);
-
+            // MM_TEXT maps one logical unit to one device pixel, so the cell size can be used
+            // for the font height directly.
+            int heightLogical = -(int)Math.Round(cellHeight * 0.8);
             font = CreateFontW(heightLogical, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
             if (font == IntPtr.Zero) return null;
             previous = SelectObject(dc, font);
 
-            if (!MeasureLines(dc, lines, out int widest, out int lineHeight)) return null;
-
-            if (widest + pad * 2 > maxWidth && widest > 0)
+            if (!GetTextExtentPoint32W(dc, "M", 1, out SIZE cell)) return null;
+            if (cell.cx > 0 && cell.cx != cellWidth)
             {
+                // Scale the height so one glyph advances exactly one cell.
                 SelectObject(dc, previous);
                 DeleteObject(font);
-                font = IntPtr.Zero;
-                heightLogical = Math.Max(-8, (int)(heightLogical * (double)maxWidth / (widest + pad * 2)));
+                heightLogical = Math.Min(-6, (int)Math.Round(heightLogical * (double)cellWidth / cell.cx));
                 font = CreateFontW(heightLogical, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
                 if (font == IntPtr.Zero) return null;
                 SelectObject(dc, font);
-                if (!MeasureLines(dc, lines, out widest, out lineHeight)) return null;
+                if (!GetTextExtentPoint32W(dc, "M", 1, out cell)) return null;
             }
 
-            width = widest + pad * 2;
-            height = lineHeight * lines.Count + pad * 2;
+            // Vertically centre the glyphs in their cell, the way a terminal does, and use the
+            // measured height so the offset follows the font rather than the nominal size.
+            if (!GetTextExtentPoint32W(dc, "Mg", 2, out SIZE glyph)) return null;
+            int offsetY = Math.Max(0, (cellHeight - glyph.cy) / 2);
+
+            int longest = 0;
+            foreach (string line in lines) longest = Math.Max(longest, line.Length);
+            if (longest == 0) return null;
+
+            width = longest * cellWidth + pad * 2;
+            height = lines.Count * cellHeight + pad * 2;
             if (width < 8 || height < 8) return null;
 
             var info = new BITMAPINFO
@@ -78,17 +84,27 @@ internal static class FontPreview
 
             dib = CreateDIBSection(dc, ref info, 0, out IntPtr bits, IntPtr.Zero, 0);
             if (dib == IntPtr.Zero || bits == IntPtr.Zero) return null;
+            // Selecting the bitmap replaces whatever was selected, so the font goes back on
+            // after it or the sample would be drawn in the DC's default font.
             SelectObject(dc, dib);
+            SelectObject(dc, font);
 
-            // Black everywhere; the glyph coverage becomes the alpha channel below.
             var pixels = new byte[width * height * 4];
             for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
             Marshal.Copy(pixels, 0, bits, pixels.Length);
 
             SetBkMode(dc, 1); // TRANSPARENT
             SetTextColor(dc, 0x00FFFFFF);
-            for (int i = 0; i < lines.Count; i++)
-                TextOutW(dc, pad, pad + i * lineHeight, lines[i], lines[i].Length);
+            for (int row = 0; row < lines.Count; row++)
+            {
+                string line = lines[row];
+                for (int col = 0; col < line.Length; col++)
+                {
+                    if (line[col] == ' ') continue;
+                    TextOutW(dc, pad + col * cellWidth, pad + row * cellHeight + offsetY,
+                        line.Substring(col, 1), 1);
+                }
+            }
             GdiFlush();
 
             Marshal.Copy(bits, pixels, 0, pixels.Length);
@@ -130,6 +146,9 @@ internal static class FontPreview
             byte g = bgra[i + 1];
             byte r = bgra[i + 2];
             byte alpha = Math.Max(r, Math.Max(g, b));
+            // GDI's coverage is lighter than the terminal's own rasterization; a mild gamma
+            // keeps the sample from looking washed out next to the pane's text.
+            if (alpha > 0) alpha = (byte)Math.Min(255, 255.0 * Math.Pow(alpha / 255.0, 0.75));
 
             bgra[i] = foreground.b;
             bgra[i + 1] = foreground.g;

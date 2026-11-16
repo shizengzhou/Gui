@@ -411,21 +411,39 @@ internal static class FontBrowser
     }
 
     /// <summary>
+    /// The pane's cell size in physical pixels, exported by Gui. The fallback only matters when
+    /// the browser is forced somewhere Gui is not the terminal.
+    /// </summary>
+    private static (int Width, int Height) CellSize()
+    {
+        int width = ReadEnv("GUI_CELL_WIDTH", 9);
+        int height = ReadEnv("GUI_CELL_HEIGHT", 20);
+        return (Math.Max(4, width), Math.Max(8, height));
+    }
+
+    private static int ReadEnv(string name, int fallback) =>
+        int.TryParse(Environment.GetEnvironmentVariable(name), out int value) && value > 0
+            ? value
+            : fallback;
+
+    /// <summary>
     /// Renders the sample in the family's own outlines and places it with the kitty graphics
     /// protocol, which is what makes the preview the real font rather than the terminal's.
     /// </summary>
     private static void DrawImage(string family, int column, int row, int widthCells,
         (byte r, byte g, byte b) foreground)
     {
-        // Gui draws the image at its own pixel size (it does not scale it into c/r), and a
-        // console app cannot ask how wide a cell is, so the sample is kept to a width that fits
-        // a modest pane on either a 100% or a 200% display.
-        int budget = Math.Min(520, Math.Max(200, widthCells * 12));
-        byte[]? png = FontPreview.Render(family, Sample, 20, budget, foreground,
+        // Gui exports its cell size, so the sample is drawn on the same grid the pane uses:
+        // one glyph per cell at the cell's advance and height. That is what makes the preview
+        // look like the terminal's own text rather than a caption at some other size.
+        (int cellWidth, int cellHeight) = CellSize();
+        byte[]? png = FontPreview.Render(family, Sample, cellWidth, cellHeight, foreground,
             out int pixelWidth, out int pixelHeight);
         if (png is null) return;
 
-        const int rows = 5;
+        // The image spans exactly its cells; Gui draws it at its natural size.
+        int columns = Math.Max(1, Math.Min(widthCells, (pixelWidth + cellWidth - 1) / cellWidth));
+        int rows = Sample.Length;
         string payload = Convert.ToBase64String(png);
 
         var escape = new StringBuilder();
@@ -436,7 +454,7 @@ internal static class FontBrowser
             string chunk = payload.Substring(i, Math.Min(4096, payload.Length - i));
             // f=100 is PNG: the terminal decodes it itself, and Gui installs that decoder.
             escape.Append(i == 0
-                ? $"\x1b_Gf=100,a=T,q=2,c={widthCells},r={rows},m={(more ? 1 : 0)};{chunk}\x1b\\"
+                ? $"\x1b_Gf=100,a=T,q=2,c={columns},r={rows},m={(more ? 1 : 0)};{chunk}\x1b\\"
                 : $"\x1b_Gm={(more ? 1 : 0)};{chunk}\x1b\\");
         }
         Console.Out.Write(escape.ToString());
