@@ -272,8 +272,16 @@ public partial class App : Application
         {
             if (string.IsNullOrEmpty(request.Family) || string.IsNullOrEmpty(request.Output))
                 return "render-sample needs family and output";
-            return Term.SampleImage.Render(request.Family, request.CellWidth, request.CellHeight,
-                request.Foreground, request.Output);
+
+            // The pane knows the cell size the terminal is drawing with right now, so a zoom
+            // or a font reload is reflected without asking the CLI to track it.
+            MainWindow? window = _active ?? _windows.OfType<MainWindow>().LastOrDefault();
+            Term.TerminalPane? pane = window?.Workspace?.FocusedPane;
+            if (pane is null) return "no focused pane";
+
+            Term.CellMetrics cell = pane.CellMetricsPhysical;
+            return Term.SampleImage.Render(request.Family, request.Columns, (int)cell.Width,
+                (int)cell.Height, request.Foreground, request.Output);
         }
 
         if (!string.Equals(request.Action, "new-tab", StringComparison.Ordinal))

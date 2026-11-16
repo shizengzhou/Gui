@@ -98,6 +98,8 @@ public static class IpcProtocol
         /// <summary>Cell size in physical pixels for "render-sample".</summary>
         public int CellWidth { get; set; }
         public int CellHeight { get; set; }
+        /// <summary>How many cells wide the preview pane is, for "render-sample".</summary>
+        public int Columns { get; set; }
         /// <summary>Foreground colour as #RRGGBB for "render-sample".</summary>
         public string? Foreground { get; set; }
         /// <summary>Where "render-sample" writes its PNG.</summary>

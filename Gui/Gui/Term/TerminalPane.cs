@@ -1887,6 +1887,9 @@ public sealed class TerminalPane
     private double PadRight => Config.PaddingDips(_config.PaddingRight, RasterizationScale);
     private double PadBottom => Config.PaddingDips(_config.PaddingBottom, RasterizationScale);
 
+    /// <summary>The cell size in physical pixels, the grid the terminal lays its rows on.</summary>
+    public CellMetrics CellMetricsPhysical => PhysicalCellMetrics();
+
     private CellMetrics PhysicalCellMetrics()
     {
         CellMetrics metrics = _renderer.CellMetrics;

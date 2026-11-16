@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
@@ -29,10 +30,10 @@ internal static class SampleImage
     /// Writes the sample for one family, sized so a glyph advances exactly one cell, to
     /// <paramref name="output"/>. Returns an error message, or null when the PNG is written.
     /// </summary>
-    public static string? Render(string family, int cellWidth, int cellHeight, string? foreground,
-        string output)
+    public static string? Render(string family, int columns, int cellWidth, int cellHeight,
+        string? foreground, string output)
     {
-        if (cellWidth <= 0 || cellHeight <= 0) return "render-sample needs a cell size";
+        if (columns <= 0 || cellWidth <= 0 || cellHeight <= 0) return "render-sample needs a cell grid";
 
         Color color = ParseColor(foreground) ?? Color.FromArgb(255, 245, 245, 247);
 
@@ -61,12 +62,13 @@ internal static class SampleImage
         using (var measured = new CanvasTextLayout(device, "Mg", format, 0, 0))
             lineHeight = (float)measured.LayoutBounds.Height;
 
-        int longest = 0;
-        foreach (string line in Lines) longest = Math.Max(longest, line.Length);
+        // Wrap each sample line to the columns the preview has, the way kitty's chooser wraps
+        // its text to the canvas width.
+        List<string> lines = Wrap(Lines, columns);
 
         const int pad = 2;
-        int width = longest * cellWidth + pad * 2;
-        int height = Lines.Length * cellHeight + pad * 2;
+        int width = columns * cellWidth + pad * 2;
+        int height = lines.Count * cellHeight + pad * 2;
         float top = Math.Max(0f, (cellHeight - lineHeight) / 2);
 
         using var target = new CanvasRenderTarget(device, width, height, 96);
@@ -74,9 +76,9 @@ internal static class SampleImage
         {
             ds.Units = CanvasUnits.Pixels;
             ds.Clear(Colors.Transparent);
-            for (int row = 0; row < Lines.Length; row++)
+            for (int row = 0; row < lines.Count; row++)
             {
-                string line = Lines[row];
+                string line = lines[row];
                 for (int col = 0; col < line.Length; col++)
                 {
                     if (line[col] == ' ') continue;
@@ -106,6 +108,23 @@ internal static class SampleImage
         {
             return $"render-sample failed: {error.Message}";
         }
+    }
+
+    /// <summary>Splits the sample into rows of at most <paramref name="columns"/> cells.</summary>
+    private static List<string> Wrap(IReadOnlyList<string> source, int columns)
+    {
+        var lines = new List<string>();
+        foreach (string line in source)
+        {
+            if (line.Length == 0)
+            {
+                lines.Add(string.Empty);
+                continue;
+            }
+            for (int i = 0; i < line.Length; i += columns)
+                lines.Add(line.Substring(i, Math.Min(columns, line.Length - i)));
+        }
+        return lines;
     }
 
     private static Color? ParseColor(string? text)

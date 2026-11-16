@@ -539,6 +539,10 @@ public sealed partial class Workspace
     /// Settings that need a new shell (command, working-directory) are picked up by new
     /// panes and tabs; existing shells keep running.
     /// </summary>
+    /// <summary>The pane with keyboard focus, or null when the window shows no terminal.</summary>
+    internal TerminalPane? FocusedPane =>
+        _tabs.Count > 0 && _active >= 0 && _active < _tabs.Count ? _tabs[_active].Focused : null;
+
     public void ReloadConfig()
     {
         if (_applyingConfig) return;

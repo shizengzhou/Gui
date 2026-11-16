@@ -366,8 +366,9 @@ internal static class FontBrowser
 
         if (images)
         {
-            // The sample is an image; these rows are reserved for it.
-            for (int i = 0; i < 5; i++) lines.Add(string.Empty);
+            // The sample is an image wrapped to this width; reserve the rows it will take.
+            int rows = SampleImages.Rows(width - 2, Sample);
+            for (int i = 0; i < rows; i++) lines.Add(string.Empty);
         }
         else
         {
@@ -445,24 +446,26 @@ internal static class FontBrowser
         // look like the terminal's own text rather than a caption at some other size.
         (int cellWidth, int cellHeight) = CellSize();
 
-        // Gui renders it with Win2D (the pane's own pipeline); the local rasterizer is only the
-        // fallback for a pane whose window did not answer.
-        byte[]? png = SampleImages.Render(family, cellWidth, cellHeight, foreground);
-        int pixelWidth;
-        if (png is not null)
+        // Gui renders it with Win2D (the pane's own pipeline, at the cell size it is drawing with
+        // right now); the local rasterizer is only the fallback for a pane that did not answer.
+        byte[]? png;
+        int columns;
+        int rows;
+
+        SampleImages.Sample? sample = SampleImages.Render(family, Math.Max(4, widthCells), foreground, Sample);
+        if (sample is { } rendered)
         {
-            pixelWidth = LongestSample() * cellWidth + 4;
+            png = rendered.Png;
+            columns = Math.Min(widthCells, rendered.Columns);
+            rows = rendered.Rows;
         }
         else
         {
-            png = FontPreview.Render(family, Sample, cellWidth, cellHeight, foreground,
-                out pixelWidth, out _);
+            png = FontPreview.Render(family, Sample, cellWidth, cellHeight, foreground, out _, out _);
+            columns = Math.Min(widthCells, LongestSample() + 1);
+            rows = Sample.Length;
         }
         if (png is null) return;
-
-        // The image spans exactly its cells; Gui draws it at its natural size.
-        int columns = Math.Max(1, Math.Min(widthCells, (pixelWidth + cellWidth - 1) / cellWidth));
-        int rows = Sample.Length;
         string payload = Convert.ToBase64String(png);
 
         var escape = new StringBuilder();
