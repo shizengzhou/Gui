@@ -62,6 +62,9 @@ public sealed unsafe class TerminalRenderer
     private CanvasFontSet? _systemFontSet;
     private readonly Dictionary<(string Family, ushort Weight, bool Italic), bool> _realFaces = new();
 
+    /// <summary>Whether the system knows a family at all, used to drop a style's dead names.</summary>
+    private readonly Dictionary<string, bool> _familyExists = new();
+
     /// <summary>Resolved faces per family/weight/slant, used to test glyph coverage.</summary>
     private readonly Dictionary<(string Family, ushort Weight, bool Italic), CanvasFontFace?> _faces = new();
 
@@ -323,6 +326,8 @@ public sealed unsafe class TerminalRenderer
     {
         _config = config;
 
+        // A font installed since the last reload has to be seen by the style chains below.
+        _familyExists.Clear();
         // font-style names become a DirectWrite weight/slant per face; "false" disables the
         // style, in which case the regular face is used.
         _faceStyles = new[]
@@ -337,9 +342,11 @@ public sealed unsafe class TerminalRenderer
         // fallbacks for glyphs the earlier entries do not cover. The style-specific lists
         // inherit the regular list when unset.
         string[] regular = Chain(config.FontFamilies);
-        string[] bold = Chain(config.FontFamiliesBold, regular);
-        string[] italic = Chain(config.FontFamiliesItalic, regular);
-        string[] boldItalic = Chain(config.FontFamiliesBoldItalic, bold);
+        // A style-specific family the system cannot resolve draws in the regular chain, the
+        // way Ghostty does, instead of letting DirectWrite substitute its own default font.
+        string[] bold = StyleChain(config.FontFamiliesBold, regular);
+        string[] italic = StyleChain(config.FontFamiliesItalic, regular);
+        string[] boldItalic = StyleChain(config.FontFamiliesBoldItalic, bold);
         _familyChains = new[] { regular, bold, italic, boldItalic };
 
         _fontFamily = regular[0];
@@ -367,6 +374,25 @@ public sealed unsafe class TerminalRenderer
         var chain = new string[families.Count];
         for (int i = 0; i < families.Count; i++) chain[i] = families[i];
         return chain;
+    }
+
+    /// <summary>
+    /// The chain a style face draws with. Names the system does not know are dropped, and a
+    /// chain with nothing left inherits the one it would have used when the style was unset:
+    /// "font-family-bold = FooBar" with no FooBar draws in font-family, not in whatever
+    /// DirectWrite falls back to.
+    /// </summary>
+    private string[] StyleChain(List<string> families, string[] inherit)
+    {
+        if (families.Count == 0) return inherit;
+
+        var chain = new List<string>(families.Count);
+        foreach (string family in families)
+        {
+            if (FamilyExists(family)) chain.Add(family);
+        }
+
+        return chain.Count > 0 ? chain.ToArray() : inherit;
     }
 
     /// <summary>
@@ -630,6 +656,39 @@ public sealed unsafe class TerminalRenderer
         if (percent <= 137f) return Windows.UI.Text.FontStretch.Expanded;
         if (percent <= 175f) return Windows.UI.Text.FontStretch.ExtraExpanded;
         return Windows.UI.Text.FontStretch.UltraExpanded;
+    }
+
+    /// <summary>
+    /// Whether the system knows the family at all, whatever the weight or slant. A style
+    /// option that names an unknown family has nothing to draw with, so the regular chain
+    /// takes over instead of DirectWrite's own substitution.
+    /// </summary>
+    private bool FamilyExists(string family)
+    {
+        string name = family.Trim();
+        if (name.Length == 0) return false;
+        if (_familyExists.TryGetValue(name, out bool cached)) return cached;
+
+        bool exists;
+        try
+        {
+            _systemFontSet ??= CanvasFontSet.GetSystemFontSet();
+            exists = false;
+            foreach (CanvasFontFace face in _systemFontSet.Fonts)
+            {
+                if (!HasFamilyName(face, name)) continue;
+                exists = true;
+                break;
+            }
+        }
+        catch
+        {
+            // Without a probe, keep the name so DirectWrite resolves it as before.
+            exists = true;
+        }
+
+        _familyExists[name] = exists;
+        return exists;
     }
 
     /// <summary>
