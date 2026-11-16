@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -37,11 +38,7 @@ internal static class FontBrowser
     {
         // A terminal grid multiplies a cell advance by its columns, so only monospaced
         // families are offered, the way tsp and the settings page do.
-        var monospaced = new List<FontFamilyInfo>(families.Count);
-        foreach (FontFamilyInfo family in families)
-        {
-            if (FontPreview.IsMonospaced(family.Name)) monospaced.Add(family);
-        }
+        var monospaced = families.Where(f => f.Monospaced == true).ToList();
         if (monospaced.Count == 0) monospaced = families;
 
         int cursor = Math.Max(0, monospaced.FindIndex(f =>

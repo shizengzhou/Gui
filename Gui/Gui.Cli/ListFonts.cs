@@ -77,7 +77,7 @@ public static class ListFonts
             return 1;
         }
 
-        List<FontFamilyInfo> families = FontCatalog.Filter(FontCatalog.FromRegistry(), query);
+        List<FontFamilyInfo> families = FontCatalog.Filter(InstalledFonts.All(), query);
         if (families.Count == 0)
         {
             Console.Error.WriteLine(query.Length == 0
