@@ -23,8 +23,8 @@ public static class ListFonts
         "\n" +
         "Options:\n" +
         "  --family=<text>      only families whose name contains text\n" +
-        "  --styles             add each family's styles (plain listing only)\n" +
-        "  --plain              print the list even on a terminal\n" +
+        "  --styles             add each family's styles (listing only)\n" +
+        "  --no-browser         print the list even on a terminal\n" +
         "  --images=auto|always|never\n" +
         "                       draw the preview image; auto asks TERM_PROGRAM (default)\n" +
         "  -h, --help           show this help\n" +
@@ -51,7 +51,7 @@ public static class ListFonts
                 styles = true;
                 continue;
             }
-            if (arg == "--plain")
+            if (arg == "--no-browser")
             {
                 plain = true;
                 continue;
