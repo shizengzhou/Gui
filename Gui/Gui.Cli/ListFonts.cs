@@ -23,8 +23,7 @@ public static class ListFonts
         "\n" +
         "Options:\n" +
         "  --family=<text>      only families whose name contains text\n" +
-        "  --styles             add each family's styles (listing only)\n" +
-        "  --no-browser         print the list even on a terminal\n" +
+        "  --styles             add each family's styles to the listing\n" +
         "  --images=auto|always|never\n" +
         "                       draw the preview image; auto asks TERM_PROGRAM (default)\n" +
         "  -h, --help           show this help\n" +
@@ -37,7 +36,6 @@ public static class ListFonts
         string query = string.Empty;
         string images = "auto";
         bool styles = false;
-        bool plain = false;
 
         foreach (string arg in args)
         {
@@ -49,11 +47,6 @@ public static class ListFonts
             if (arg == "--styles")
             {
                 styles = true;
-                continue;
-            }
-            if (arg == "--no-browser")
-            {
-                plain = true;
                 continue;
             }
             if (arg.StartsWith("--family=", StringComparison.Ordinal))
@@ -86,7 +79,9 @@ public static class ListFonts
             return 1;
         }
 
-        bool browse = !plain && !Console.IsOutputRedirected && !Console.IsInputRedirected;
+        // The browser needs a terminal; a pipe means the caller wants the list (the same way
+        // "gui +list-fonts | cat" reads).
+        bool browse = !Console.IsOutputRedirected && !Console.IsInputRedirected;
         if (browse) return FontBrowser.Run(families, CurrentFamily(), UseImages(images), Foreground());
 
         var text = new StringBuilder();
