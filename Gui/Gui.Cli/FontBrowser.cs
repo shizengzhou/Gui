@@ -53,7 +53,7 @@ internal static class FontBrowser
 
         // A console starts in line mode: keys sit in the buffer until Enter and would be
         // echoed into the frame. Raw mode is what makes a browser usable at all.
-        uint? previousMode = EnterRawMode();
+        ConsoleModes? previousMode = EnterRawMode();
 
         // Keys are read on their own thread: a blocked ReadKey would also block the resize
         // check, and polling KeyAvailable depends on the console reporting it correctly.
@@ -211,19 +211,36 @@ internal static class FontBrowser
     // ---- console mode -----------------------------------------------------
 
     private const int StdInput = -10;
+    private const int StdOutput = -11;
+    private const uint EnableProcessedOutput = 0x0001;
     private const uint EnableLineInput = 0x0002;
     private const uint EnableEchoInput = 0x0004;
+    private const uint EnableVirtualTerminalProcessing = 0x0004;
+
+    private readonly record struct ConsoleModes(uint Input, uint Output);
 
     /// <summary>
-    /// Switches the console's input to raw: every key is delivered as it is pressed, nothing is
-    /// echoed, and Ctrl+C comes back as a key instead of killing the process before the screen
-    /// is restored. Returns the previous mode so it can be put back.
+    /// Prepares the console for a full-screen browser: raw input, so every key arrives as it is
+    /// pressed (nothing is echoed, Ctrl+C comes back as a key instead of killing the process
+    /// before the screen is restored), and virtual terminal processing on output, without which
+    /// a classic conhost window prints the escape sequences as text.
     /// </summary>
-    private static uint? EnterRawMode()
+    private static ConsoleModes? EnterRawMode()
     {
         IntPtr input = GetStdHandle(StdInput);
-        if (!GetConsoleMode(input, out uint mode)) return null;
-        if (!SetConsoleMode(input, mode & ~(EnableLineInput | EnableEchoInput))) return null;
+        IntPtr output = GetStdHandle(StdOutput);
+        bool haveInput = GetConsoleMode(input, out uint inputMode);
+        bool haveOutput = GetConsoleMode(output, out uint outputMode);
+        if (!haveInput && !haveOutput) return null;
+
+        if (haveInput)
+            SetConsoleMode(input, inputMode & ~(EnableLineInput | EnableEchoInput));
+        if (haveOutput)
+        {
+            SetConsoleMode(output,
+                outputMode | EnableProcessedOutput | EnableVirtualTerminalProcessing);
+        }
+
         try
         {
             Console.TreatControlCAsInput = true;
@@ -232,10 +249,11 @@ internal static class FontBrowser
         {
             // Without a console the setting is meaningless; the keys still arrive.
         }
-        return mode;
+
+        return new ConsoleModes(haveInput ? inputMode : 0, haveOutput ? outputMode : 0);
     }
 
-    private static void RestoreConsoleMode(uint mode)
+    private static void RestoreConsoleMode(ConsoleModes modes)
     {
         try
         {
@@ -245,8 +263,9 @@ internal static class FontBrowser
         {
             // Nothing to restore.
         }
-        IntPtr input = GetStdHandle(StdInput);
-        SetConsoleMode(input, mode);
+
+        SetConsoleMode(GetStdHandle(StdInput), modes.Input);
+        SetConsoleMode(GetStdHandle(StdOutput), modes.Output);
     }
 
     [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int which);
@@ -259,7 +278,9 @@ internal static class FontBrowser
     private static void Draw(List<FontFamilyInfo> shown, int total, int cursor, ref int offset,
         string query, bool filtering, bool images, (byte r, byte g, byte b) foreground)
     {
-        int width = Math.Max(40, Console.WindowWidth);
+        // The window can be wider than the buffer in a classic conhost window; anything past
+        // the buffer width would wrap and shift every row below it.
+        int width = Math.Max(40, Math.Min(Console.WindowWidth, Console.BufferWidth));
         int height = Math.Max(10, Console.WindowHeight);
         int rows = ListRows();
 
@@ -280,21 +301,21 @@ internal static class FontBrowser
         FontFamilyInfo? selected = cursor >= 0 && cursor < shown.Count ? shown[cursor] : null;
         List<string> right = PreviewLines(selected, previewWidth, images);
 
-        var frame = new StringBuilder();
-        frame.Append("\x1b[H");
-        frame.Append("\x1b_Ga=d,d=A\x1b\\");
+        // Every row is padded to the window width: a shorter row must erase what the previous
+        // frame left there, or two frames bleed into each other. The frame carries no trailing
+        // newline, so writing it never scrolls the last row out of view.
+        var lines = new List<string>(rows + 2);
 
-        // Chip row, as in tsp: the chip stays "All N" while the filter state sits at the far
-        // right of the same row ("filter <query>▌  n/N").
-        frame.Append(AccentFill).Append(PadPlain("All " + total, listWidth)).Append(Reset);
+        var head = new StringBuilder();
+        head.Append(AccentFill).Append(PadPlain("All " + total, listWidth)).Append(Reset);
         if (filtering && width >= 54)
         {
+            // tsp puts the filter state at the far right of the chip row.
             string status = $"filter {query}\u258C  {shown.Count}/{total}";
-            int gap = width - listWidth - status.Length - 1;
-            if (gap > 0)
-                frame.Append(new string(' ', gap)).Append(Faint).Append(status).Append(Reset);
+            int gap = width - listWidth - status.Length;
+            if (gap > 0) head.Append(new string(' ', gap)).Append(Faint).Append(status).Append(Reset);
         }
-        frame.AppendLine();
+        lines.Add(Pad(head.ToString(), width));
 
         for (int i = 0; i < rows; i++)
         {
@@ -310,12 +331,14 @@ internal static class FontBrowser
             }
 
             string text = i < right.Count ? right[i] : string.Empty;
-            frame.Append(Pad(left, listWidth)).Append(' ').Append(text).Append(Reset).AppendLine();
+            lines.Add(Pad(Pad(left, listWidth) + " " + text, width));
         }
 
-        frame.Append(Faint).Append("\u2191\u2193 move   / filter   \u23CE choose   q quit").Append(Reset);
+        lines.Add(Pad(Faint + "\u2191\u2193 move   / filter   \u23CE choose   q quit" + Reset, width));
 
-        Console.Out.Write(frame.ToString());
+        Console.Out.Write("\x1b[H");
+        Console.Out.Write("\x1b_Ga=d,d=A\x1b\\");
+        Console.Out.Write(string.Join("\r\n", lines));
 
         // The image covers the five blank rows reserved under the "preview" rule.
         if (images && selected is not null && height > 12)
@@ -415,6 +438,7 @@ internal static class FontBrowser
         }
         Console.Out.Write(escape.ToString());
     }
+
 
     private static string Pad(string text, int width)
     {
