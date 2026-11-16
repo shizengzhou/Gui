@@ -22,7 +22,7 @@ internal static class InstalledFonts
     {
         if (_all is not null) return _all;
 
-        RegisterBundled();
+        List<(string Family, string Style, string File)> bundled = RegisterBundled();
         var families = new Dictionary<string, FontFamilyInfo>(StringComparer.OrdinalIgnoreCase);
         var pitch = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
@@ -73,6 +73,24 @@ internal static class InstalledFonts
             ReleaseDC(IntPtr.Zero, screen);
         }
 
+        // GDI cannot enumerate private fonts, so the bundled ones are added by the name their
+        // own file declares.
+        foreach ((string familyName, string style, string file) in bundled)
+        {
+            if (!families.TryGetValue(familyName, out FontFamilyInfo? bundledFamily))
+            {
+                bundledFamily = new FontFamilyInfo { Name = familyName };
+                families[familyName] = bundledFamily;
+                pitch[familyName] = FixedPitch(familyName);
+            }
+
+            if (!bundledFamily.Faces.Any(f => string.Equals(f.Style, style, StringComparison.OrdinalIgnoreCase)))
+            {
+                bundledFamily.Faces.Add(new FontFace(style, FontCatalog.WeightOf(style),
+                    FontCatalog.IsItalic(style), file));
+            }
+        }
+
         // The registry carries a file per face, which the preview shows; a privately registered
         // font has none.
         var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -99,11 +117,16 @@ internal static class InstalledFonts
     }
 
     /// <summary>
-    /// Loads the fonts Gui ships next to the exe, the way the app does with FR_PRIVATE, so the
-    /// bundled Nerd Font appears in the list even though it is not installed system-wide.
+    /// Loads the fonts Gui ships next to the exe, the way the app does with FR_PRIVATE. GDI does
+    /// not enumerate private fonts, so the family and style come out of the font file's name
+    /// table instead; without this the bundled Nerd Font, which is the default font-family,
+    /// would be missing from its own picker.
     /// </summary>
-    private static void RegisterBundled()
+    private static List<(string Family, string Style, string File)> RegisterBundled()
     {
+        var bundled = new List<(string, string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (string root in new[]
                  {
                      Path.Combine(AppContext.BaseDirectory, "..", "Assets", "Fonts"),
@@ -112,7 +135,95 @@ internal static class InstalledFonts
         {
             if (!Directory.Exists(root)) continue;
             foreach (string file in Directory.EnumerateFiles(root, "*.ttf"))
+            {
+                if (!seen.Add(file)) continue;
                 AddFontResourceExW(file, 0x10 /* FR_PRIVATE */, IntPtr.Zero);
+                if (FontNames(file) is { } names) bundled.Add((names.Family, names.Style, file));
+            }
+        }
+        return bundled;
+    }
+
+    /// <summary>
+    /// The family and style a TrueType file declares: the "name" table's family name (1) and
+    /// subfamily (2) in the Windows Unicode encoding, which is what DirectWrite matches on.
+    /// </summary>
+    private static (string Family, string Style)? FontNames(string file)
+    {
+        byte[] data;
+        try
+        {
+            data = File.ReadAllBytes(file);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        if (data.Length < 12) return null;
+        int tables = ReadUInt16(data, 4);
+        for (int i = 0; i < tables; i++)
+        {
+            int record = 12 + i * 16;
+            if (record + 16 > data.Length) return null;
+            if (data[record] != 'n' || data[record + 1] != 'a' || data[record + 2] != 'm' ||
+                data[record + 3] != 'e') continue;
+
+            int offset = (int)ReadUInt32(data, record + 8);
+            int count = ReadUInt16(data, offset + 2);
+            int strings = offset + ReadUInt16(data, offset + 4);
+
+            string family = string.Empty;
+            string style = string.Empty;
+            for (int n = 0; n < count; n++)
+            {
+                int entry = offset + 6 + n * 12;
+                if (entry + 12 > data.Length) break;
+                int platform = ReadUInt16(data, entry);
+                int nameId = ReadUInt16(data, entry + 6);
+                int length = ReadUInt16(data, entry + 8);
+                int start = strings + ReadUInt16(data, entry + 10);
+                if (platform != 3 || (nameId != 1 && nameId != 2)) continue;
+                if (start + length > data.Length) continue;
+
+                string value = System.Text.Encoding.BigEndianUnicode.GetString(data, start, length);
+                if (nameId == 1) family = value; else style = value;
+            }
+
+            if (family.Length == 0) return null;
+            return (family, style);
+        }
+        return null;
+    }
+
+    private static int ReadUInt16(byte[] data, int offset) =>
+        (data[offset] << 8) | data[offset + 1];
+
+    private static uint ReadUInt32(byte[] data, int offset) =>
+        ((uint)data[offset] << 24) | ((uint)data[offset + 1] << 16) |
+        ((uint)data[offset + 2] << 8) | data[offset + 3];
+
+    /// <summary>Whether a family advances every glyph by the same amount, asked of GDI.</summary>
+    private static bool FixedPitch(string family)
+    {
+        IntPtr screen = GetDC(IntPtr.Zero);
+        if (screen == IntPtr.Zero) return false;
+        IntPtr dc = CreateCompatibleDC(screen);
+        IntPtr font = IntPtr.Zero;
+        try
+        {
+            font = CreateFontW(-40, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
+            if (font == IntPtr.Zero) return false;
+            IntPtr previous = SelectObject(dc, font);
+            bool ok = GetTextMetricsW(dc, out TEXTMETRICW metrics);
+            SelectObject(dc, previous);
+            return ok && (metrics.tmPitchAndFamily & 1) == 0;
+        }
+        finally
+        {
+            if (font != IntPtr.Zero) DeleteObject(font);
+            DeleteDC(dc);
+            ReleaseDC(IntPtr.Zero, screen);
         }
     }
 
@@ -174,4 +285,12 @@ internal static class InstalledFonts
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
     [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")] private static extern bool GetTextMetricsW(IntPtr hdc, out TEXTMETRICW metrics);
+
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateFontW(int height, int width, int escapement, int orientation,
+        int weight, uint italic, uint underline, uint strikeOut, uint charSet, uint outPrecision,
+        uint clipPrecision, uint quality, uint pitchAndFamily, string face);
 }
