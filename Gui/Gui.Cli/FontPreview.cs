@@ -17,39 +17,55 @@ internal static class FontPreview
     private static readonly Dictionary<string, bool> _monospace = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Whether every glyph the family draws advances the same amount. Measured rather than read
-    /// from the font tables: the picker offers monospaced families only, and nothing in the
-    /// registry says which ones are.
+    /// Whether the family exists and draws every glyph at the same advance. The picker offers
+    /// monospaced families only, and the registry does not say which ones are, so GDI is asked:
+    /// enumerating the family proves the name resolves (a made-up name silently falls back to
+    /// another font), and its text metrics carry the fixed-pitch flag.
     /// </summary>
     public static bool IsMonospaced(string family)
     {
         if (_monospace.TryGetValue(family, out bool known)) return known;
-        bool answer = MeasureAdvance(family, "iiiiiiii") == MeasureAdvance(family, "WWWWWWWW");
+
+        bool found = false;
+        bool fixedPitch = false;
+        IntPtr screen = GetDC(IntPtr.Zero);
+        if (screen != IntPtr.Zero)
+        {
+            IntPtr dc = CreateCompatibleDC(screen);
+            try
+            {
+                var logfont = new LOGFONTW
+                {
+                    lfCharSet = 1,           // DEFAULT_CHARSET: match the name in any charset
+                    lfPitchAndFamily = 0,
+                    lfFaceName = family,
+                };
+
+                FontEnumProc callback = (_, metrics, _, _) =>
+                {
+                    found = true;
+                    if (metrics != IntPtr.Zero)
+                    {
+                        var textMetric = Marshal.PtrToStructure<TEXTMETRICW>(metrics);
+                        // Bit 0 of tmPitchAndFamily set means variable pitch.
+                        fixedPitch = (textMetric.tmPitchAndFamily & 1) == 0;
+                    }
+                    return 0; // one face is enough
+                };
+
+                EnumFontFamiliesExW(dc, ref logfont, callback, IntPtr.Zero, 0);
+                GC.KeepAlive(callback);
+            }
+            finally
+            {
+                DeleteDC(dc);
+                ReleaseDC(IntPtr.Zero, screen);
+            }
+        }
+
+        bool answer = found && fixedPitch;
         _monospace[family] = answer;
         return answer;
-    }
-
-    private static int MeasureAdvance(string family, string text)
-    {
-        IntPtr screen = GetDC(IntPtr.Zero);
-        if (screen == IntPtr.Zero) return 0;
-        IntPtr dc = CreateCompatibleDC(screen);
-        IntPtr font = IntPtr.Zero;
-        try
-        {
-            font = CreateFontW(-40, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
-            if (font == IntPtr.Zero) return 0;
-            IntPtr previous = SelectObject(dc, font);
-            bool measured = GetTextExtentPoint32W(dc, text, text.Length, out SIZE size);
-            SelectObject(dc, previous);
-            return measured ? size.cx : 0;
-        }
-        finally
-        {
-            if (font != IntPtr.Zero) DeleteObject(font);
-            DeleteDC(dc);
-            ReleaseDC(IntPtr.Zero, screen);
-        }
     }
 
     /// <summary>
@@ -245,6 +261,58 @@ internal static class FontPreview
         for (int i = 0; i < count; i++) crc = _crcTable[(crc ^ data[offset + i]) & 0xFF] ^ (crc >> 8);
         return crc ^ 0xFFFFFFFFu;
     }
+
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct LOGFONTW
+    {
+        public int lfHeight;
+        public int lfWidth;
+        public int lfEscapement;
+        public int lfOrientation;
+        public int lfWeight;
+        public byte lfItalic;
+        public byte lfUnderline;
+        public byte lfStrikeOut;
+        public byte lfCharSet;
+        public byte lfOutPrecision;
+        public byte lfClipPrecision;
+        public byte lfQuality;
+        public byte lfPitchAndFamily;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string lfFaceName;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 4)]
+    private struct TEXTMETRICW
+    {
+        public int tmHeight;
+        public int tmAscent;
+        public int tmDescent;
+        public int tmInternalLeading;
+        public int tmExternalLeading;
+        public int tmAveCharWidth;
+        public int tmMaxCharWidth;
+        public int tmWeight;
+        public int tmOverhang;
+        public int tmDigitizedAspectX;
+        public int tmDigitizedAspectY;
+        public char tmFirstChar;
+        public char tmLastChar;
+        public char tmDefaultChar;
+        public char tmBreakChar;
+        public byte tmItalic;
+        public byte tmUnderlined;
+        public byte tmStruckOut;
+        public byte tmPitchAndFamily;
+        public byte tmCharSet;
+    }
+
+    private delegate int FontEnumProc(IntPtr logfont, IntPtr textmetric, uint fontType, IntPtr lParam);
+
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+    private static extern int EnumFontFamiliesExW(IntPtr hdc, ref LOGFONTW logfont, FontEnumProc proc,
+        IntPtr lParam, uint flags);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SIZE

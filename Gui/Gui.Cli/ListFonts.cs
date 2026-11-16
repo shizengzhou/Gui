@@ -29,8 +29,8 @@ public static class ListFonts
         "                       draw the preview image; auto asks TERM_PROGRAM (default)\n" +
         "  -h, --help           show this help\n" +
         "\n" +
-        "Keys: up/down move, typing filters, Enter applies, Esc clears the filter and quits\n" +
-        "once it is empty.\n";
+        "Keys: up/down move, / starts the filter (typing filters too), Enter applies, Esc\n" +
+        "clears the filter, q quits.\n";
 
     public static int Run(string[] args)
     {

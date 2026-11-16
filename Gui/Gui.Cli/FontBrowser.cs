@@ -107,16 +107,14 @@ internal static class FontBrowser
                 if (!haveKey) continue;
                 dirty = true;
 
+                // Esc only leaves the filter: quitting is "q" (or Ctrl+C), so an Esc pressed
+                // to cancel a search can never close the browser.
                 if (key.Key == ConsoleKey.Escape)
                 {
-                    if (query.Length > 0)
-                    {
-                        query = string.Empty;
-                        filtering = false;
-                        cursor = 0;
-                        continue;
-                    }
-                    break;
+                    query = string.Empty;
+                    filtering = false;
+                    cursor = 0;
+                    continue;
                 }
 
                 if (key.Key == ConsoleKey.Enter)
@@ -281,7 +279,7 @@ internal static class FontBrowser
         // The window can be wider than the buffer in a classic conhost window; anything past
         // the buffer width would wrap and shift every row below it.
         int width = Math.Max(40, Math.Min(Console.WindowWidth, Console.BufferWidth));
-        int height = Math.Max(10, Console.WindowHeight);
+        int height = Math.Max(10, Math.Min(Console.WindowHeight, Console.BufferHeight));
         int rows = ListRows();
 
         // The list column follows tsp: as wide as the longest name, but never more than a third
