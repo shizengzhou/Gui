@@ -21,7 +21,7 @@ internal static class Program
         "Actions (prefixed with '+', like ghostty):\n" +
         "  +show-config    print the effective configuration in Ghostty format\n" +
         "  +list-keybinds  print the key bindings this build honors, as Ghostty keybind lines\n" +
-        "  +list-fonts     print the installed font families, one per line\n" +
+        "  +list-fonts     browse the installed fonts; Enter writes font-family to the config\n" +
         "  +new-tab        open a new tab, starting the app when none is running\n" +
         "  +help           list the available actions\n" +
         "  +version        print the version\n" +

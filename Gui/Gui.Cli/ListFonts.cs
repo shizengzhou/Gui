@@ -8,35 +8,27 @@ namespace Gui.Cli;
 /// <summary>
 /// The "+list-fonts" action. On a terminal it opens the font browser (tsp's layout: a list on
 /// the left, a preview rendered from the family's own outlines on the right, Enter writing
-/// "font-family" into the config). Redirected, it prints the families one per line so a script
-/// can read them, the way "+list-keybinds" turns into config lines when piped.
+/// "font-family" into the config). When the output is redirected it prints the families one per
+/// line, so the same command can be read by a script. There are no options: the terminal decides
+/// which of the two shapes to use.
 /// </summary>
 public static class ListFonts
 {
     public const string Help =
-        "Usage: gui +list-fonts [options]\n" +
+        "Usage: gui +list-fonts\n" +
         "\n" +
         "Browse the installed font families. On a terminal this opens the font browser: the\n" +
         "list on the left, a preview of the highlighted family on the right, rendered from\n" +
         "that font's real outlines when the terminal accepts images (kitty graphics, which\n" +
         "Gui itself does). Enter writes \"font-family\" into the config.\n" +
         "\n" +
-        "Options:\n" +
-        "  --family=<text>      only families whose name contains text\n" +
-        "  --styles             add each family's styles to the listing\n" +
-        "  --images=auto|always|never\n" +
-        "                       draw the preview image; auto asks TERM_PROGRAM (default)\n" +
-        "  -h, --help           show this help\n" +
+        "When the output is redirected, the families are printed one per line instead.\n" +
         "\n" +
         "Keys: up/down move, / starts the filter (typing filters too), Enter applies, Esc\n" +
         "clears the filter, q quits.\n";
 
     public static int Run(string[] args)
     {
-        string query = string.Empty;
-        string images = "auto";
-        bool styles = false;
-
         foreach (string arg in args)
         {
             if (arg is "-h" or "--help")
@@ -44,51 +36,29 @@ public static class ListFonts
                 Console.Out.Write(Help);
                 return 0;
             }
-            if (arg == "--styles")
-            {
-                styles = true;
-                continue;
-            }
-            if (arg.StartsWith("--family=", StringComparison.Ordinal))
-            {
-                query = arg["--family=".Length..];
-                continue;
-            }
-            if (arg.StartsWith("--images=", StringComparison.Ordinal))
-            {
-                images = arg["--images=".Length..].ToLowerInvariant();
-                if (images is not ("auto" or "always" or "never"))
-                {
-                    Console.Error.WriteLine($"gui: --images expects auto, always or never, got '{images}'");
-                    return 1;
-                }
-                continue;
-            }
 
-            Console.Error.WriteLine($"gui: unknown option '{arg}'");
+            Console.Error.WriteLine($"gui: unexpected argument '{arg}'");
             Console.Error.WriteLine("Run 'gui +list-fonts --help' for usage.");
             return 1;
         }
 
-        List<FontFamilyInfo> families = FontCatalog.Filter(InstalledFonts.All(), query);
+        List<FontFamilyInfo> families = InstalledFonts.All();
         if (families.Count == 0)
         {
-            Console.Error.WriteLine(query.Length == 0
-                ? "gui: no installed fonts found"
-                : $"gui: no font family matches '{query}'");
+            Console.Error.WriteLine("gui: no installed fonts found");
             return 1;
         }
 
-        // The browser needs a terminal; a pipe means the caller wants the list (the same way
-        // "gui +list-fonts | cat" reads).
+        // The browser needs a terminal; a pipe means the caller wants the list, the same way
+        // "gui +list-fonts | cat" reads.
         bool browse = !Console.IsOutputRedirected && !Console.IsInputRedirected;
-        if (browse) return FontBrowser.Run(families, CurrentFamily(), UseImages(images), Foreground());
+        if (browse) return FontBrowser.Run(families, CurrentFamily(), SupportsImages(), Foreground());
 
         var text = new StringBuilder();
         foreach (FontFamilyInfo family in families)
         {
             text.Append(family.Name);
-            if (styles) text.Append("  (").Append(string.Join(", ", family.Styles())).Append(')');
+            text.Append("  (").Append(string.Join(", ", family.Styles())).Append(')');
             text.Append('\n');
         }
         Console.Out.Write(text.ToString());
@@ -139,13 +109,6 @@ public static class ListFonts
     /// the terminals known to speak it answer yes; anyone else gets the text preview instead of
     /// a screen full of escape codes.
     /// </summary>
-    private static bool UseImages(string mode) => mode switch
-    {
-        "always" => true,
-        "never" => false,
-        _ => SupportsImages(),
-    };
-
     private static bool SupportsImages()
     {
         string program = Environment.GetEnvironmentVariable("TERM_PROGRAM") ?? string.Empty;
