@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using Gui.Term;
@@ -49,18 +50,24 @@ internal static class FontBrowser
         bool filtering = false;
         string? chosen = null;
 
+        // A console starts in line mode: keys sit in the buffer until Enter and would be
+        // echoed into the frame. Raw mode is what makes a browser usable at all.
+        uint? previousMode = EnterRawMode();
+
         Console.Out.Write("\x1b[?1049h\x1b[?25l");
         try
         {
             int drawnWidth = 0;
             int drawnHeight = 0;
+            bool dirty = true;
             while (true)
             {
                 List<FontFamilyInfo> shown = FontCatalog.Filter(monospaced, query);
                 if (cursor >= shown.Count) cursor = Math.Max(0, shown.Count - 1);
 
-                if (Console.WindowWidth != drawnWidth || Console.WindowHeight != drawnHeight)
+                if (dirty || Console.WindowWidth != drawnWidth || Console.WindowHeight != drawnHeight)
                 {
+                    dirty = false;
                     drawnWidth = Console.WindowWidth;
                     drawnHeight = Console.WindowHeight;
                     Draw(shown, monospaced.Count, cursor, ref offset, query, filtering, images, foreground);
@@ -77,6 +84,7 @@ internal static class FontBrowser
                 if (!Console.KeyAvailable) continue;
 
                 ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+                dirty = true;
 
                 if (key.Key == ConsoleKey.Escape)
                 {
@@ -146,6 +154,9 @@ internal static class FontBrowser
                     continue;
                 }
 
+                // Ctrl+C arrives as a key while it is treated as input; leave the screen tidy.
+                if (key.KeyChar == '') break;
+
                 if (key.KeyChar is 'q' or 'Q' && !filtering)
                 {
                     break;
@@ -165,6 +176,7 @@ internal static class FontBrowser
             Console.Out.Write("\x1b_Ga=d,d=A\x1b\\");
             Console.Out.Write("\x1b[?25h\x1b[?1049l");
             Console.Out.Flush();
+            if (previousMode is { } mode) RestoreConsoleMode(mode);
         }
 
         if (chosen is null) return 0;
@@ -173,6 +185,52 @@ internal static class FontBrowser
         Console.Out.WriteLine($"font-family = {chosen}");
         return 0;
     }
+
+
+    // ---- console mode -----------------------------------------------------
+
+    private const int StdInput = -10;
+    private const uint EnableLineInput = 0x0002;
+    private const uint EnableEchoInput = 0x0004;
+
+    /// <summary>
+    /// Switches the console's input to raw: every key is delivered as it is pressed, nothing is
+    /// echoed, and Ctrl+C comes back as a key instead of killing the process before the screen
+    /// is restored. Returns the previous mode so it can be put back.
+    /// </summary>
+    private static uint? EnterRawMode()
+    {
+        IntPtr input = GetStdHandle(StdInput);
+        if (!GetConsoleMode(input, out uint mode)) return null;
+        if (!SetConsoleMode(input, mode & ~(EnableLineInput | EnableEchoInput))) return null;
+        try
+        {
+            Console.TreatControlCAsInput = true;
+        }
+        catch (Exception)
+        {
+            // Without a console the setting is meaningless; the keys still arrive.
+        }
+        return mode;
+    }
+
+    private static void RestoreConsoleMode(uint mode)
+    {
+        try
+        {
+            Console.TreatControlCAsInput = false;
+        }
+        catch (Exception)
+        {
+            // Nothing to restore.
+        }
+        IntPtr input = GetStdHandle(StdInput);
+        SetConsoleMode(input, mode);
+    }
+
+    [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int which);
+    [DllImport("kernel32.dll")] private static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+    [DllImport("kernel32.dll")] private static extern bool SetConsoleMode(IntPtr handle, uint mode);
 
     /// <summary>Rows the list covers: everything between the chip and the footer.</summary>
     private static int ListRows() => Math.Max(3, Console.WindowHeight - 3);
