@@ -284,10 +284,16 @@ internal static class FontBrowser
         frame.Append("\x1b[H");
         frame.Append("\x1b_Ga=d,d=A\x1b\\");
 
-        // Chip row: the count, padded across the list column like tsp's "All 39".
-        string chip = filtering ? "filter " + query + "\u258C" : "All " + total;
-        frame.Append(AccentFill).Append(PadPlain(chip, listWidth)).Append(Reset).Append(' ');
-        if (filtering) frame.Append(Faint).Append($"{shown.Count}/{total}  esc clear").Append(Reset);
+        // Chip row, as in tsp: the chip stays "All N" while the filter state sits at the far
+        // right of the same row ("filter <query>▌  n/N").
+        frame.Append(AccentFill).Append(PadPlain("All " + total, listWidth)).Append(Reset);
+        if (filtering && width >= 54)
+        {
+            string status = $"filter {query}\u258C  {shown.Count}/{total}";
+            int gap = width - listWidth - status.Length - 1;
+            if (gap > 0)
+                frame.Append(new string(' ', gap)).Append(Faint).Append(status).Append(Reset);
+        }
         frame.AppendLine();
 
         for (int i = 0; i < rows; i++)
