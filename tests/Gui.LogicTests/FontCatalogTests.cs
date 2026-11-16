@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using Gui.Term;
 using Xunit;
 
@@ -23,6 +24,23 @@ public class FontCatalogTests
         (string actualFamily, string actualStyle) = FontCatalog.SplitInstalledName(value);
         Assert.Equal(family, actualFamily);
         Assert.Equal(style, actualStyle);
+    }
+
+    [Fact]
+    public void OneRegistryValueCanNameSeveralFamilies()
+    {
+        Assert.Equal(
+            new[] { ("SimSun", ""), ("NSimSun", "") },
+            FontCatalog.SplitInstalledNames("SimSun & NSimSun (TrueType)").ToArray());
+
+        Assert.Equal(
+            new[] { ("MS Gothic", ""), ("MS UI Gothic", ""), ("MS PGothic", "") },
+            FontCatalog.SplitInstalledNames("MS Gothic & MS UI Gothic & MS PGothic (TrueType)").ToArray());
+
+        // The style words belong to the family that precedes them, not to the whole value.
+        Assert.Equal(
+            new[] { ("Microsoft YaHei", "Bold"), ("Microsoft YaHei UI", "") },
+            FontCatalog.SplitInstalledNames("Microsoft YaHei Bold & Microsoft YaHei UI (TrueType)").ToArray());
     }
 
     [Fact]

@@ -61,15 +61,7 @@ public static class FontCatalog
     /// </summary>
     public static (string Family, string Style) SplitInstalledName(string valueName)
     {
-        string name = valueName.Trim();
-        foreach (string suffix in new[] { " (TrueType)", " (OpenType)", " (All res)" })
-        {
-            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                name = name[..^suffix.Length].Trim();
-                break;
-            }
-        }
+        string name = CleanName(valueName);
 
         string[] words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         int first = words.Length;
@@ -82,6 +74,37 @@ public static class FontCatalog
         string family = string.Join(' ', words.Take(first));
         string style = string.Join(' ', words.Skip(first));
         return (family, style);
+    }
+
+    /// <summary>
+    /// Every family a registry value registers. One value can name several families ("SimSun &
+    /// NSimSun", "MS Gothic & MS UI Gothic & MS PGothic"): they share the face files, and only
+    /// the split-out names are usable as a font family.
+    /// </summary>
+    public static List<(string Family, string Style)> SplitInstalledNames(string valueName)
+    {
+        var names = new List<(string, string)>(1);
+        foreach (string part in CleanName(valueName).Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            (string family, string style) = SplitInstalledName(part.Trim());
+            if (family.Length > 0) names.Add((family, style));
+        }
+        return names;
+    }
+
+    /// <summary>A registry name without its trailing "(TrueType)" and surrounding space.</summary>
+    private static string CleanName(string valueName)
+    {
+        string name = valueName.Trim();
+        foreach (string suffix in new[] { " (TrueType)", " (OpenType)", " (All res)" })
+        {
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                name = name[..^suffix.Length].Trim();
+                break;
+            }
+        }
+        return name;
     }
 
     /// <summary>The style name for a weight and slant, the way font menus spell it.</summary>
@@ -139,21 +162,21 @@ public static class FontCatalog
                 // "Modern (All res)" and friends resolve to .fon/.fnt system bitmaps.
                 if (extension is ".fon" or ".fnt" or "") continue;
 
-                (string familyName, string style) = SplitInstalledName(valueName);
-                if (familyName.Length == 0) continue;
-
-                if (!into.TryGetValue(familyName, out FontFamilyInfo? family))
+                foreach ((string familyName, string style) in SplitInstalledNames(valueName))
                 {
-                    family = new FontFamilyInfo { Name = familyName };
-                    into[familyName] = family;
+                    if (!into.TryGetValue(familyName, out FontFamilyInfo? family))
+                    {
+                        family = new FontFamilyInfo { Name = familyName };
+                        into[familyName] = family;
+                    }
+
+                    // "Arial Bold" and "Arial Bold (TrueType)" can both be listed; the face only
+                    // has to exist once.
+                    if (family.Faces.Any(f => string.Equals(f.Style, style, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    family.Faces.Add(new FontFace(style, WeightOf(style), IsItalic(style), ResolveFile(file)));
                 }
-
-                // "Arial Bold" and "Arial Bold (TrueType)" can both be listed; the face only
-                // has to exist once.
-                if (family.Faces.Any(f => string.Equals(f.Style, style, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-
-                family.Faces.Add(new FontFace(style, WeightOf(style), IsItalic(style), ResolveFile(file)));
             }
         }
         catch (Exception error)
