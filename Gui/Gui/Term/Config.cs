@@ -239,6 +239,7 @@ public sealed class Config
     public bool HasBoldColor;
     public Rgb BoldColor;
     public float FaintOpacity = 0.5f;             // Ghostty's default
+    public float MinimumContrast = 1f;            // 1 = off; Ghostty's range is 1..21
     public bool HasSelectionBackground;
     public Rgb SelectionBackground;
     public bool HasSelectionForeground;
@@ -534,6 +535,7 @@ public sealed class Config
         HasBoldColor = other.HasBoldColor;
         BoldColor = other.BoldColor;
         FaintOpacity = other.FaintOpacity;
+        MinimumContrast = other.MinimumContrast;
         HasSelectionBackground = other.HasSelectionBackground;
         SelectionBackground = other.SelectionBackground;
         HasSelectionForeground = other.HasSelectionForeground;
@@ -1067,6 +1069,7 @@ public sealed class Config
             BoldColor = bold;
         }
         FaintOpacity = Math.Clamp(GetFloat("faint-opacity", FaintOpacity), 0.0f, 1.0f);
+        MinimumContrast = Math.Clamp(GetFloat("minimum-contrast", MinimumContrast), 1.0f, 21.0f);
         if (TryGetColor("selection-background", out Rgb selectionBackground))
         {
             HasSelectionBackground = true;

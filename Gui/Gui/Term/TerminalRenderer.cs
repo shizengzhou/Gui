@@ -68,6 +68,9 @@ public sealed unsafe class TerminalRenderer
     /// <summary>Resolved faces per family/weight/slant, used to test glyph coverage.</summary>
     private readonly Dictionary<(string Family, ushort Weight, bool Italic), CanvasFontFace?> _faces = new();
 
+    /// <summary>Adjusted text colours per foreground/background pair, for "minimum-contrast".</summary>
+    private readonly Dictionary<(Rgb Fg, Rgb Bg), Rgb> _contrast = new();
+
     /// <summary>Per-codepoint coverage answers for the configured families.</summary>
     private readonly Dictionary<(string Family, ushort Weight, bool Italic, int Codepoint), bool> _coverage = new();
 
@@ -331,6 +334,9 @@ public sealed unsafe class TerminalRenderer
 
         // A font installed since the last reload has to be seen by the style chains below.
         _familyExists.Clear();
+        // The adjusted colours depend on the configured minimum.
+        _contrast.Clear();
+
         // font-style names become a DirectWrite weight/slant per face; "false" disables the
         // style, in which case the regular face is used.
         _faceStyles = new[]
@@ -1437,6 +1443,11 @@ public sealed unsafe class TerminalRenderer
                         textFg = SearchForegroundColor(searchSelected, fg, cellBg);
                     }
 
+                    // "minimum-contrast" lifts text that would otherwise sit too close to its
+                    // background. Colour emoji keep their own palette, so they are left alone.
+                    if (_config is { MinimumContrast: > 1f } && !style.Invisible && !IsEmojiText(text))
+                        textFg = ContrastColor(textFg, bg);
+
                     // Powerline separators and caps are drawn as shapes (see DrawShapeCells):
                     // the font's glyph has a coarse edge at cell height. The space keeps the
                     // cell's width on the grid.
@@ -2014,6 +2025,43 @@ public sealed unsafe class TerminalRenderer
             : center + shift;
 
         return join + (armPointsPositive ? -thickness / 2f : thickness / 2f);
+    }
+
+    /// <summary>
+    /// The text colour a cell should use so that it meets "minimum-contrast" against that
+    /// cell's own background. The same few colour pairs repeat across a screen, so the answer
+    /// is cached per pair.
+    /// </summary>
+    private Color ContrastColor(Color foreground, Color background)
+    {
+        float minimum = _config?.MinimumContrast ?? 1f;
+        if (minimum <= 1f) return foreground;
+
+        var key = (new Rgb(foreground.R, foreground.G, foreground.B),
+            new Rgb(background.R, background.G, background.B));
+        if (_contrast.TryGetValue(key, out Rgb cached))
+            return Color.FromArgb(foreground.A, cached.R, cached.G, cached.B);
+
+        if (_contrast.Count >= LayoutCacheCapacity) _contrast.Clear();
+
+        Rgb raised = Contrast.Raise(key.Item1, key.Item2, minimum);
+        _contrast[key] = raised;
+        return Color.FromArgb(foreground.A, raised.R, raised.G, raised.B);
+    }
+
+    /// <summary>
+    /// Whether the cell holds emoji. They draw with their own colours, so Ghostty leaves them
+    /// out of "minimum-contrast"; the ranges below cover the emoji blocks DirectWrite can pick
+    /// for a cell.
+    /// </summary>
+    private static bool IsEmojiText(string text)
+    {
+        if (text.Length == 0 || !Rune.TryGetRuneAt(text, 0, out Rune rune)) return false;
+
+        int codepoint = rune.Value;
+        return codepoint is (>= 0x1F000 and <= 0x1FAFF)
+            or (>= 0x2600 and <= 0x27BF)
+            or (>= 0x2B00 and <= 0x2BFF);
     }
 
     private void DrawRowText(CanvasDrawingSession ds, RowRuns row, float cellW, float cellH,

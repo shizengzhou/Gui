@@ -734,6 +734,18 @@ public class ConfigSurfaceTests : IDisposable
     }
 
     [Fact]
+    public void MinimumContrastResolves()
+    {
+        Assert.Equal(1f, new Config().MinimumContrast);
+
+        Assert.Equal(4.5f, Config.Load(Write("minimum-contrast = 4.5\n")).MinimumContrast);
+
+        // Ghostty's range is 1..21; anything outside is clamped rather than rejected.
+        Assert.Equal(1f, Config.Load(Write("minimum-contrast = 0.5\n")).MinimumContrast);
+        Assert.Equal(21f, Config.Load(Write("minimum-contrast = 40\n")).MinimumContrast);
+    }
+
+    [Fact]
     public void BoxThicknessResolves()
     {
         Config pixels = Config.Load(Write("adjust-box-thickness = 2\n"));
