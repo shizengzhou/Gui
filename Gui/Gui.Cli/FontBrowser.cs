@@ -124,12 +124,16 @@ internal static class FontBrowser
                     continue;
                 }
 
-                if (key.Key == ConsoleKey.UpArrow)
+                // j/k move like the arrows while the filter is closed; with it open they are
+                // characters in the query, which is why filtering needs "/" to start.
+                bool up = key.Key == ConsoleKey.UpArrow || (!filtering && key.KeyChar == 'k');
+                bool down = key.Key == ConsoleKey.DownArrow || (!filtering && key.KeyChar == 'j');
+                if (up)
                 {
                     if (cursor > 0) cursor--;
                     continue;
                 }
-                if (key.Key == ConsoleKey.DownArrow)
+                if (down)
                 {
                     if (cursor < shown.Count - 1) cursor++;
                     continue;
@@ -170,20 +174,24 @@ internal static class FontBrowser
                     continue;
                 }
 
+                // With the filter open every printable key belongs to the query; navigation
+                // and the shortcuts only answer once it is closed again.
+                if (filtering)
+                {
+                    if (!char.IsControl(key.KeyChar))
+                    {
+                        query += key.KeyChar;
+                        cursor = 0;
+                    }
+                    continue;
+                }
+
                 // Ctrl+C arrives as a key while it is treated as input; leave the screen tidy.
                 if (key.KeyChar == '') break;
 
-                if (key.KeyChar is 'q' or 'Q' && !filtering)
+                if (key.KeyChar is 'q' or 'Q')
                 {
                     break;
-                }
-
-                if (!char.IsControl(key.KeyChar))
-                {
-                    // Typing filters too, so a letter starts a search without the slash.
-                    query += key.KeyChar;
-                    filtering = true;
-                    cursor = 0;
                 }
             }
         }

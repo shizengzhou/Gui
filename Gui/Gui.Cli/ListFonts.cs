@@ -17,15 +17,14 @@ public static class ListFonts
     public const string Help =
         "Usage: gui +list-fonts\n" +
         "\n" +
-        "Browse the installed font families. On a terminal this opens the font browser: the\n" +
-        "list on the left, a preview of the highlighted family on the right, rendered from\n" +
-        "that font's real outlines when the terminal accepts images (kitty graphics, which\n" +
-        "Gui itself does). Enter writes \"font-family\" into the config.\n" +
+        "Browse the installed font families. Inside Gui's own terminal this opens the font\n" +
+        "browser: the list on the left, a preview of the highlighted family on the right,\n" +
+        "drawn from that font's real outlines. Enter writes \"font-family\" into the config.\n" +
+        "Everywhere else, and whenever the output is redirected, the families are printed one\n" +
+        "per line instead.\n" +
         "\n" +
-        "When the output is redirected, the families are printed one per line instead.\n" +
-        "\n" +
-        "Keys: up/down move, / starts the filter (typing filters too), Enter applies, Esc\n" +
-        "clears the filter, q quits.\n";
+        "Keys: j/k or up/down move, / opens the filter, Enter applies, Esc clears the filter,\n" +
+        "q quits.\n";
 
     public static int Run(string[] args)
     {
@@ -49,9 +48,9 @@ public static class ListFonts
             return 1;
         }
 
-        // The browser needs a terminal; a pipe means the caller wants the list, the same way
-        // "gui +list-fonts | cat" reads.
-        bool browse = !Console.IsOutputRedirected && !Console.IsInputRedirected;
+        // The browser belongs to Gui's own terminal: it is the one that takes the preview image
+        // and whose Enter should write the config. Anywhere else the command prints the list.
+        bool browse = InGuiTerminal() && !Console.IsOutputRedirected && !Console.IsInputRedirected;
         if (browse) return FontBrowser.Run(families, CurrentFamily(), SupportsImages(), Foreground());
 
         var text = new StringBuilder();
@@ -104,10 +103,17 @@ public static class ListFonts
         return string.Empty;
     }
 
+    /// <summary>Whether this process runs in one of Gui's panes, which export TERM_PROGRAM.</summary>
+    private static bool InGuiTerminal()
+    {
+        string program = Environment.GetEnvironmentVariable("TERM_PROGRAM") ?? string.Empty;
+        return program.Contains("gui", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
-    /// Whether the preview may draw an image. Only the kitty graphics protocol is emitted, so
-    /// the terminals known to speak it answer yes; anyone else gets the text preview instead of
-    /// a screen full of escape codes.
+    /// Whether the preview may draw an image: only the kitty graphics protocol is emitted, and
+    /// Gui answers it. A pane without TERM_PROGRAM (started from something other than Gui) gets
+    /// the text preview instead of a screen full of escape codes.
     /// </summary>
     private static bool SupportsImages()
     {
