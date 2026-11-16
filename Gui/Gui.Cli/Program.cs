@@ -16,6 +16,7 @@ internal static class Program
         "\n" +
         "Usage:\n" +
         "  gui +<action> [options]\n" +
+        "  gui --<key>=<value> [more flags]   open a window with config overrides\n" +
         "\n" +
         "Actions (prefixed with '+', like ghostty):\n" +
         "  +show-config    print the effective configuration in Ghostty format\n" +
@@ -23,6 +24,10 @@ internal static class Program
         "  +new-tab        open a new tab, starting the app when none is running\n" +
         "  +help           list the available actions\n" +
         "  +version        print the version\n" +
+        "\n" +
+        "Launch flags (like ghostty's): every configuration key works as --key=value, e.g.\n" +
+        "  gui --background=282c34 --font-size=18\n" +
+        "opens a window with those values layered on top of the config file.\n" +
         "\n" +
         "Run 'gui +show-config --help' for that action's options.\n" +
         "This tool lives in the install's bin folder; add that folder to PATH to call it from any shell.\n";
@@ -41,6 +46,12 @@ internal static class Program
 
         string action = args[0];
         string[] rest = args[1..];
+
+        // Ghostty's launch flags ("gui --background=282c34") carry no +action, so they are
+        // routed before the action table.
+        if (action.StartsWith("--", StringComparison.Ordinal) &&
+            action is not "--help" and not "--version")
+            return Launch.Run(args);
 
         switch (action)
         {

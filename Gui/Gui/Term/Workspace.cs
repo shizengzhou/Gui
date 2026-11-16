@@ -189,6 +189,10 @@ public sealed partial class Workspace
     }
 
     private readonly Config _config;
+
+    /// <summary>Ghostty-style launch flags, re-applied after every reload of the file.</summary>
+    private readonly IReadOnlyList<string>? _launchOverrides;
+
     private TabPlacement _placement;
     private readonly DispatcherQueue? _dispatcher;
 
@@ -361,9 +365,10 @@ public sealed partial class Workspace
     private TerminalPane? _imeCompositionPane;
 
     internal Workspace(Config config, MovedTab? initialTab = null, WindowState? restore = null,
-        bool quickTerminal = false)
+        bool quickTerminal = false, IReadOnlyList<string>? launchOverrides = null)
     {
         _config = config;
+        _launchOverrides = launchOverrides;
         _quickTerminal = quickTerminal;
         _initialTab = initialTab;
         _restore = restore;
@@ -577,6 +582,9 @@ public sealed partial class Workspace
         Config fresh = Config.Load();
         _config.CopyFrom(fresh);
 
+        // Launch flags are an overlay on the file, like ghostty's own command-line options:
+        // a reload re-reads the file and puts them back on top instead of dropping them.
+        if (_launchOverrides is { Count: > 0 }) _config.ApplyOverrides(_launchOverrides);
         if (_quickTerminal)
         {
             // The drop-down is not a workspace: the file's tab placement, tab bar and pane

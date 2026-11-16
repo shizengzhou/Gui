@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -32,6 +33,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Command this window runs instead of the configured shell ("Open Config in New Terminal Window").</summary>
     private readonly string? _commandOverride;
 
+    /// <summary>Ghostty-style launch flags ("font-size=18"), applied on top of the config file.</summary>
+    private readonly IReadOnlyList<string>? _overrides;
+
     /// <summary>
     /// State captured while the window is closing, for "window-save-state": AppWindow's
     /// geometry cannot be read once the window is gone, and the app persists this snapshot
@@ -47,7 +51,8 @@ public sealed partial class MainWindow : Window
     private static int _windowCount;
 
     internal MainWindow(string? workingDirectory = null, Term.Workspace.MovedTab? movedTab = null,
-        Term.WindowState? restore = null, string? command = null)
+        Term.WindowState? restore = null, string? command = null,
+        IReadOnlyList<string>? overrides = null)
     {
         InitializeComponent();
 
@@ -55,6 +60,7 @@ public sealed partial class MainWindow : Window
         _movedTab = movedTab;
         _restore = restore;
         _commandOverride = command;
+        _overrides = overrides;
 
         // Size the window before it is shown. Doing this after Loaded (or on Activated)
         // means WinUI first displays the default-sized window and the resize lands a frame
@@ -83,9 +89,16 @@ public sealed partial class MainWindow : Window
         try
         {
             var config = Term.Config.Load();
+            // Launch flags are config lines for this window, in the same grammar and with the
+            // same validation: an unusable one is logged and the file's value stands.
+            if (_overrides is { Count: > 0 })
+            {
+                foreach (Term.ConfigDiagnostic problem in config.ApplyOverrides(_overrides))
+                    Diag.Warn("config", $"{problem.Key}: {problem.Message}");
+            }
             if (_inheritedDirectory is not null) config.WorkingDirectory = _inheritedDirectory;
             if (_commandOverride is not null) config.Command = _commandOverride;
-            _workspace = new Term.Workspace(config, _movedTab, _restore);
+            _workspace = new Term.Workspace(config, _movedTab, _restore, launchOverrides: _overrides);
             _workspace.Attach(RootGrid, this);
             ApplyStartupWindow(config, _workspace);
             Closed += (_, _) => _workspace?.Close();

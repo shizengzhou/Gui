@@ -30,6 +30,26 @@ public partial class App : Application
     /// <summary>The config read at startup; "window-save-state" and language live here.</summary>
     private readonly Term.Config _config;
 
+    /// <summary>"-e COMMAND" from the command line, when "gui +new-tab" started this process.</summary>
+    private readonly string? _launchCommand;
+
+    /// <summary>"--working-directory=DIR" from the command line.</summary>
+    private readonly string? _launchDirectory;
+
+    /// <summary>
+    /// Ghostty's launch flags ("--background=282c34") as "key=value" lines. They belong to the
+    /// process the way the config file does: the theme, the chrome and every window built here
+    /// see them, because this app resolves its palette once per process.
+    /// </summary>
+    private readonly List<string> _launchOverrides;
+
+    /// <summary>
+    /// Set for a second instance started by "gui --key=value" while another Gui is running:
+    /// its windows are a scratch view, so they must not overwrite the saved session of the
+    /// instance the user is actually working in.
+    /// </summary>
+    private readonly bool _noSessionSave;
+
     /// <summary>
     /// Windows are laid out (and so marked dirty) while a restored pane is still printing its
     /// saved output. Saving during that window would overwrite the session with a blank one,
@@ -44,7 +64,22 @@ public partial class App : Application
 
         Diag.InstallHandlers();
 
+        // Launch flags are read first: they are config lines for this process, so the theme
+        // and every window built later have to see them.
+        ParseLaunchArgs(Environment.GetCommandLineArgs(),
+            out string? launchCommand, out string? launchDirectory, out List<string> launchOverrides,
+            out bool noSessionSave);
+        _launchCommand = launchCommand;
+        _launchDirectory = launchDirectory;
+        _launchOverrides = launchOverrides;
+        _noSessionSave = noSessionSave;
+
         Term.Config config = Term.Config.Load();
+        if (_launchOverrides.Count > 0)
+        {
+            config.ApplyOverrides(_launchOverrides);
+            Diag.Log("launch", $"overrides={_launchOverrides.Count}");
+        }
         _config = config;
         LogConfigDiagnostics(config);
         Strings.Use(config.Language);
@@ -84,15 +119,20 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Reads "-e COMMAND" and "--working-directory=DIR" from the command line. "gui +new-tab"
-    /// passes them when nothing was running and it had to start the app itself, so the window
-    /// it opens carries the requested tab. Every other argument (WinUI passes its own) is
-    /// ignored.
+    /// Reads "-e COMMAND", "--working-directory=DIR" and Ghostty's launch flags
+    /// ("--background=282c34") from the command line. "gui +new-tab" passes the first two when
+    /// nothing was running and it had to start the app itself; "gui --key=value" passes the
+    /// flags. Every other argument (WinUI passes its own) is ignored, and so is anything
+    /// shaped like a flag whose key the config schema does not know.
     /// </summary>
-    private static void ParseLaunchArgs(string[] args, out string? command, out string? directory)
+    private static void ParseLaunchArgs(string[] args, out string? command, out string? directory,
+        out List<string> overrides, out bool noSessionSave)
     {
         command = null;
         directory = null;
+        overrides = new List<string>();
+        noSessionSave = false;
+
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
@@ -107,6 +147,17 @@ public partial class App : Application
             else if (arg.StartsWith("--working-directory=", StringComparison.Ordinal))
             {
                 directory = arg["--working-directory=".Length..];
+            }
+            else if (arg == "--no-session-save")
+            {
+                // Internal switch the CLI adds when it starts a second instance: that window
+                // set is scratch and must not replace the running instance's saved session.
+                noSessionSave = true;
+            }
+            else if (arg.StartsWith("--", StringComparison.Ordinal) && arg.IndexOf('=') > 2)
+            {
+                string key = arg[2..arg.IndexOf('=')];
+                if (Term.ConfigSchema.IsKnown(key)) overrides.Add(arg[2..]);
             }
         }
     }
@@ -128,13 +179,13 @@ public partial class App : Application
 
             // "gui +new-tab" starts this process with -e when no window was running, and the
             // window it opens runs that command instead of restoring the saved session (the
-            // same way "wt new-tab" opens a window rather than failing).
-            ParseLaunchArgs(Environment.GetCommandLineArgs(),
-                out string? launchCommand, out string? launchDirectory);
-            if (launchCommand is not null)
+            // same way "wt new-tab" opens a window rather than failing). A launch flag does the
+            // same: the process was started for that request, so the saved session is skipped.
+            if (_launchCommand is not null || _launchOverrides.Count > 0)
             {
-                Diag.Log("launch", $"command={launchCommand} cwd={launchDirectory ?? "-"}");
-                ShowWindow(launchDirectory, null, null, launchCommand);
+                Diag.Log("launch",
+                    $"command={_launchCommand ?? "-"} cwd={_launchDirectory ?? "-"} overrides={_launchOverrides.Count}");
+                ShowWindow(_launchDirectory, null, null, _launchCommand);
             }
             else
             {
@@ -233,7 +284,7 @@ public partial class App : Application
     private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null,
         Term.WindowState? restore = null, string? command = null)
     {
-        var window = new MainWindow(workingDirectory, movedTab, restore, command);
+        var window = new MainWindow(workingDirectory, movedTab, restore, command, _launchOverrides);
         _windows.Add(window);
         window.Closed += (_, _) => OnWindowClosed(window);
         window.Activated += (_, args) =>
@@ -260,6 +311,9 @@ public partial class App : Application
         // once it hides itself there would be nothing on screen and no way back except the
         // global hotkey.
         if (_windows.Count == 0) Term.QuickTerminal.CloseIfOpen();
+
+        // A scratch instance started with launch flags leaves the saved session alone.
+        if (_noSessionSave) return;
 
         // Re-read the config: "window-save-state" may have been changed and reloaded while
         // the app was running (Ctrl+Shift+,), and the startup snapshot would be stale.
@@ -305,7 +359,7 @@ public partial class App : Application
     /// </summary>
     internal static void MarkSessionDirty()
     {
-        if (Current is App app &&
+        if (Current is App app && !app._noSessionSave &&
             Environment.TickCount64 - app._launchTicks >= LaunchGraceMilliseconds)
             app.ScheduleSessionSave();
     }
@@ -331,7 +385,7 @@ public partial class App : Application
 
     private void SaveSessionNow()
     {
-        if (_windows.Count == 0) return;
+        if (_windows.Count == 0 || _noSessionSave) return;
         if (Term.Config.Load().WindowSaveState == "never") return;
 
         var states = new List<Term.WindowState>(_windows.Count);

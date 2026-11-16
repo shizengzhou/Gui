@@ -845,12 +845,142 @@ public sealed class Config
 
             case ConfigKind.Color:
                 if (TryParseColor(value, out _)) return true;
-                reason = "expected #RRGGBB, #RGB, #RRGGBBAA or a color name";
+                reason = "expected a color: #RRGGBB, RRGGBB, #RGB or a name";
                 return false;
 
             default:
                 return true;
         }
+    }
+
+    /// <summary>
+    /// Checks one command-line override ("font-size=18") the way a config line would be
+    /// checked, without changing anything. The CLI calls this before it talks to the app, so
+    /// a typo fails in the shell that typed it instead of in the app's log.
+    /// </summary>
+    public static bool ValidateOverride(string entry, out string error)
+    {
+        error = string.Empty;
+
+        int separator = entry.IndexOf('=');
+        if (separator <= 0)
+        {
+            error = "expected --key=value";
+            return false;
+        }
+
+        string key = entry[..separator].Trim();
+        string value = Unquote(entry[(separator + 1)..].Trim());
+        if (key.Length == 0)
+        {
+            error = "expected --key=value";
+            return false;
+        }
+
+        if (!ConfigSchema.TryGet(key, out ConfigOption option))
+        {
+            error = $"unknown config key '{key}'";
+            return false;
+        }
+
+        if (option.Name == "config-file")
+        {
+            error = "config-file cannot be set on the command line";
+            return false;
+        }
+
+        // An empty value resets the key, which is always valid.
+        if (value.Length == 0) return true;
+
+        if (!Validate(option, value, 0, out string reason))
+        {
+            error = $"'{option.Name}': {reason}";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Applies Ghostty-style launch flags ("background=282c34") on top of the values the files
+    /// produced and resolves them again, so "gui --background=282c34" behaves exactly like that
+    /// line in the config. Same grammar and validation as the file: a repeatable key appends
+    /// (an empty value clears it), anything else replaces, and a key that cannot be used is
+    /// reported instead of aborting the launch.
+    /// </summary>
+    public IReadOnlyList<ConfigDiagnostic> ApplyOverrides(IEnumerable<string> overrides)
+    {
+        var problems = new List<ConfigDiagnostic>();
+
+        foreach (string entry in overrides)
+        {
+            int separator = entry.IndexOf('=');
+            if (separator <= 0)
+            {
+                problems.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, entry, "expected key=value"));
+                continue;
+            }
+
+            string key = entry[..separator].Trim().ToLowerInvariant();
+            string value = Unquote(entry[(separator + 1)..].Trim());
+            if (key.Length == 0) continue;
+
+            if (!ConfigSchema.TryGet(key, out ConfigOption option))
+            {
+                problems.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, key, "unknown option"));
+                continue;
+            }
+
+            // Aliases ("shell", "cwd") resolve to the canonical name, like a config line.
+            key = option.Name;
+
+            // The includes were read while the files were parsed; a later "config-file"
+            // cannot pull anything in, so it is reported rather than silently ignored.
+            if (key == "config-file")
+            {
+                problems.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, key,
+                    "cannot be set on the command line"));
+                continue;
+            }
+
+            // Ghostty: an empty value resets the key, and for a repeatable key clears the list.
+            if (value.Length == 0)
+            {
+                _values.Remove(key);
+                continue;
+            }
+
+            if (!Validate(option, value, 0, out string reason))
+            {
+                problems.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, key, reason));
+                if (key == "language") _languageRejected = true;
+                continue;
+            }
+
+            if (option.Kind == ConfigKind.List)
+            {
+                if (!_values.TryGetValue(key, out List<string>? list))
+                {
+                    list = new List<string>();
+                    _values[key] = list;
+                }
+                list.Add(value);
+            }
+            else
+            {
+                _values[key] = new List<string> { value };
+            }
+
+            if (ConfigSchema.IsForeign(option))
+            {
+                problems.Add(new ConfigDiagnostic(0, ConfigSeverity.Notice, key,
+                    $"{option.Platform} only; ignored on Windows"));
+            }
+        }
+
+        Resolve();
+        _diagnostics.AddRange(problems);
+        return problems;
     }
 
     // ---------------- resolution ----------------
@@ -1607,12 +1737,26 @@ public sealed class Config
         ["transparent"] = new(0, 0, 0),
     };
 
-    /// <summary>Parses the #RGB / #RRGGBB / #RRGGBBAA forms used by Ghostty plus X11 names.</summary>
+    /// <summary>
+    /// Parses the #RGB / #RRGGBB / #RRGGBBAA forms used by Ghostty plus X11 names. Ghostty's
+    /// theme files drop the '#', so a bare "282c34" means the same as "#282c34" there.
+    /// </summary>
     public static bool TryParseColor(string value, out Rgb color)
     {
         string text = value.Trim();
         if (text.Length > 0 && text[0] == '#') return TerminalThemes.ParseColor(text, out color);
+
+        if (text.Length is 3 or 6 or 8 && IsHex(text))
+            return TerminalThemes.ParseColor("#" + text, out color);
+
         return NamedColors.TryGetValue(text, out color);
+    }
+
+    private static bool IsHex(string text)
+    {
+        foreach (char c in text)
+            if (!Uri.IsHexDigit(c)) return false;
+        return true;
     }
 
     private static float ParseScrollMultiplier(string? value)

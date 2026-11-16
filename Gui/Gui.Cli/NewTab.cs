@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Pipes;
 using System.Text;
 using Gui.Term;
 
@@ -239,7 +238,7 @@ public static class NewTab
         };
 
         string pipeName = IpcProtocol.PipeName(options.Class);
-        IpcProtocol.Response? response = Send(pipeName, request);
+        IpcProtocol.Response? response = AppChannel.Send(pipeName, request);
         if (response is null)
         {
             // Nothing is listening: open a window instead, the way "wt new-tab" does. The
@@ -266,13 +265,6 @@ public static class NewTab
     /// </summary>
     private static bool Launch(Options options)
     {
-        // The CLI sits in bin; the app is one level up.
-        string exe = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "Gui.exe"));
-        if (!File.Exists(exe)) return false;
-
-        // ShellExecute on purpose: started through CreateProcess the app would inherit this
-        // console's handles, and a pane that falls back to them writes its output here instead
-        // of into the terminal.
         var arguments = new StringBuilder();
         if (!string.IsNullOrEmpty(options.Command))
         {
@@ -284,44 +276,6 @@ public static class NewTab
             arguments.Append("--working-directory=\"").Append(options.WorkingDirectory).Append('"');
         }
 
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe)
-            {
-                UseShellExecute = true,
-                Arguments = arguments.ToString(),
-            });
-            return true;
-        }
-        catch (Exception error)
-        {
-            Console.Error.WriteLine($"gui: could not start {exe}: {error.Message}");
-            return false;
-        }
-    }
-
-    private static IpcProtocol.Response? Send(string pipeName, IpcProtocol.Request request)
-    {
-        try
-        {
-            using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
-            pipe.Connect(2000);
-
-            byte[] payload = Encoding.UTF8.GetBytes(IpcProtocol.Serialize(request) + "\n");
-            pipe.Write(payload, 0, payload.Length);
-            pipe.Flush();
-
-            using var reader = new StreamReader(pipe, Encoding.UTF8);
-            string? line = reader.ReadLine();
-            return line is null ? null : IpcProtocol.ParseResponse(line);
-        }
-        catch (TimeoutException)
-        {
-            return null;
-        }
-        catch (IOException)
-        {
-            return null;
-        }
+        return AppChannel.Start(arguments.ToString());
     }
 }
