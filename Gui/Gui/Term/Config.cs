@@ -203,6 +203,7 @@ public sealed class Config
     public bool SyntheticItalic = true;           // font-synthetic-style: italic
     public bool SyntheticBoldItalic = true;       // font-synthetic-style: bold-italic
     public MetricAdjust IconHeightAdjust;
+    public MetricAdjust BoxThicknessAdjust;
     public bool FontShapingBreak = true;          // false when configured "no-cursor"
     public MetricAdjust CellWidthAdjust;
     public MetricAdjust CellHeightAdjust;
@@ -506,6 +507,7 @@ public sealed class Config
         SyntheticItalic = other.SyntheticItalic;
         SyntheticBoldItalic = other.SyntheticBoldItalic;
         IconHeightAdjust = other.IconHeightAdjust;
+        BoxThicknessAdjust = other.BoxThicknessAdjust;
         FontShapingBreak = other.FontShapingBreak;
         CellWidthAdjust = other.CellWidthAdjust;
         CellHeightAdjust = other.CellHeightAdjust;
@@ -1047,6 +1049,7 @@ public sealed class Config
         CursorThicknessAdjust = GetAdjust("adjust-cursor-thickness");
         CursorHeightAdjust = GetAdjust("adjust-cursor-height");
         IconHeightAdjust = GetAdjust("adjust-icon-height");
+        BoxThicknessAdjust = GetAdjust("adjust-box-thickness");
 
         BackgroundImage = ResolveImagePath(Last("background-image") ?? string.Empty);
         BackgroundOpacity = Math.Clamp(GetFloat("background-opacity", BackgroundOpacity), 0.0f, 1.0f);

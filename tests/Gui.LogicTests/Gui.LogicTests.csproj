@@ -30,6 +30,7 @@
     <Compile Include="../../Gui/Gui.Cli/Launch.cs" Link="Launch.cs" />
     <Compile Include="../../Gui/Gui.Cli/AppChannel.cs" Link="AppChannel.cs" />
     <Compile Include="../../Gui/Gui/Term/IpcProtocol.cs" Link="IpcProtocol.cs" />
+    <Compile Include="../../Gui/Gui/Term/BoxDrawing.cs" Link="BoxDrawing.cs" />
     <Compile Include="../../Gui/Gui/Term/Config.cs" Link="Config.cs" />
     <Compile Include="../../Gui/Gui/Term/ConfigSchema.cs" Link="ConfigSchema.cs" />
     <Compile Include="../../Gui/Gui/Term/ColorReport.cs" Link="ColorReport.cs" />

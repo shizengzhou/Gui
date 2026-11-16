@@ -734,6 +734,21 @@ public class ConfigSurfaceTests : IDisposable
     }
 
     [Fact]
+    public void BoxThicknessResolves()
+    {
+        Config pixels = Config.Load(Write("adjust-box-thickness = 2\n"));
+        Assert.False(pixels.BoxThicknessAdjust.IsPercent);
+        Assert.Equal(2f, pixels.BoxThicknessAdjust.Amount);
+
+        Config percent = Config.Load(Write("adjust-box-thickness = 50%\n"));
+        Assert.True(percent.BoxThicknessAdjust.IsPercent);
+        Assert.Equal(50f, percent.BoxThicknessAdjust.Amount);
+
+        // Unset means "leave the font's own thickness alone".
+        Assert.True(new Config().BoxThicknessAdjust.IsZero);
+    }
+
+    [Fact]
     public void FontVariationAxesParsePerFace()
     {
         Config config = Config.Load(Write(

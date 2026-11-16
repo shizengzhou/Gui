@@ -1197,12 +1197,16 @@ public sealed unsafe class TerminalRenderer
     /// <summary>A cell whose Powerline rune is drawn as a shape instead of a font glyph.</summary>
     private readonly record struct ShapeCell(int Col, char Rune, Color Fg);
 
+    /// <summary>A cell whose box-drawing character is drawn as strokes instead of a glyph.</summary>
+    private readonly record struct BoxCell(int Col, BoxSpec Spec, Color Fg);
+
     /// <summary>One viewport row's resolved runs, kept for the background and text passes.</summary>
     private sealed class RowRuns
     {
         public int ViewportY;
         public required List<Run> Runs;
         public required List<ShapeCell> Shapes;
+        public required List<BoxCell> Boxes;
         public bool HasSelection;
         public GhosttyNative.GhosttyRenderStateRowSelection Selection;
     }
@@ -1359,6 +1363,7 @@ public sealed unsafe class TerminalRenderer
 
                 var runs = new List<Run>(16);
                 var shapes = new List<ShapeCell>(0);
+                var boxes = new List<BoxCell>(0);
                 int col = 0;
                 bool spacer = false;
 
@@ -1441,6 +1446,15 @@ public sealed unsafe class TerminalRenderer
                         text = " ";
                     }
 
+                    // Box drawing is stroked from the cell geometry, the way Ghostty draws
+                    // it: the lines land on the cell edges whatever the font's outline does,
+                    // and "adjust-box-thickness" gets a thickness to change.
+                    if (text.Length == 1 && BoxDrawing.TryGet(text[0], out BoxSpec box) && !style.Invisible)
+                    {
+                        boxes.Add(new BoxCell(col, box, textFg));
+                        text = " ";
+                    }
+
                     var run = new Run
                     {
                         Col = col,
@@ -1501,6 +1515,7 @@ public sealed unsafe class TerminalRenderer
                     ViewportY = viewportY,
                     Runs = runs,
                     Shapes = shapes,
+                    Boxes = boxes,
                     HasSelection = hasSelection,
                     Selection = selection,
                 });
@@ -1588,6 +1603,11 @@ public sealed unsafe class TerminalRenderer
         // neighbouring cell the way the prompt's blocks are built.
         foreach (RowRuns row in rowRuns)
             DrawShapeCells(ds, row, cellW, cellH, _rasterizationScale);
+
+        // Box-drawing strokes sit in the same layer, over the (space) glyph that keeps the
+        // cell's width on the grid.
+        foreach (RowRuns row in rowRuns)
+            DrawBoxCells(ds, row, cellW, cellH);
 
         DrawImageLayer(ds, resources, graphics, GhosttyNative.IMAGE_LAYER_ABOVE_TEXT, cellW, cellH);
         PruneImages();
@@ -1790,6 +1810,210 @@ public sealed unsafe class TerminalRenderer
             if (filled) ds.FillGeometry(geometry, cell.Fg);
             else ds.DrawGeometry(geometry, cell.Fg, stroke);
         }
+    }
+
+    /// <summary>
+    /// Draws the box-drawing cells as strokes instead of glyphs. Every edge is snapped to the
+    /// device pixel grid, a double line is two strokes with a gap of one thickness, and a
+    /// junction joins the matching strokes, so tiled boxes have no seams or steps.
+    /// </summary>
+    private void DrawBoxCells(CanvasDrawingSession ds, RowRuns row, float cellW, float cellH)
+    {
+        if (row.Boxes.Count == 0) return;
+
+        float s = _rasterizationScale <= 0f ? 1f : _rasterizationScale;
+        float pixel = 1f / s;
+        float Snap(float dip) => MathF.Round(dip * s) / s;
+
+        float rowTop = Snap(row.ViewportY * cellH);
+        float rowBottom = Snap((row.ViewportY + 1) * cellH);
+
+        // The font's own box strokes are about one pixel at a 16 DIP cell; keep that, and let
+        // "adjust-box-thickness" move it the way the other adjust-* options do.
+        float light = MathF.Max(pixel, Snap(MathF.Max(1f, MathF.Round(cellH * 0.0625f * s) / s)));
+        if (_config is not null)
+            light = MathF.Max(pixel, Snap(_config.BoxThicknessAdjust.Apply(light, s)));
+        float heavy = MathF.Max(light + pixel, Snap(light * 2f));
+        float offset = light; // the band centres of a double line sit one thickness apart
+
+        foreach (BoxCell cell in row.Boxes)
+        {
+            BoxSpec spec = cell.Spec;
+            Color color = cell.Fg;
+
+            float left = Snap(cell.Col * cellW);
+            float right = Snap((cell.Col + 1) * cellW);
+            float cx = Snap((left + right) / 2f);
+            float cy = Snap((rowTop + rowBottom) / 2f);
+
+            bool hasLeft = spec.Left != BoxWeight.None;
+            bool hasRight = spec.Right != BoxWeight.None;
+            bool hasUp = spec.Up != BoxWeight.None;
+            bool hasDown = spec.Down != BoxWeight.None;
+
+            if (spec.Diagonal != BoxDiagonal.None)
+            {
+                if (spec.Diagonal != BoxDiagonal.Backward)
+                    ds.DrawLine(new Vector2(left, rowBottom), new Vector2(right, rowTop), color, light);
+                if (spec.Diagonal != BoxDiagonal.Forward)
+                    ds.DrawLine(new Vector2(left, rowTop), new Vector2(right, rowBottom), color, light);
+                continue;
+            }
+
+            void Horizontal(float from, float to, float centerY, float thickness)
+            {
+                float x0 = Snap(MathF.Min(from, to));
+                float x1 = Snap(MathF.Max(from, to));
+                if (x1 - x0 < pixel || thickness <= 0f) return;
+                ds.FillRectangle(new Rect(x0, Snap(centerY - thickness / 2f), x1 - x0, thickness), color);
+            }
+
+            void Vertical(float centerX, float from, float to, float thickness)
+            {
+                float y0 = Snap(MathF.Min(from, to));
+                float y1 = Snap(MathF.Max(from, to));
+                if (y1 - y0 < pixel || thickness <= 0f) return;
+                ds.FillRectangle(new Rect(Snap(centerX - thickness / 2f), y0, thickness, y1 - y0), color);
+            }
+
+            void Dashed(float from, float to, float center, float thickness, int count, bool vertical)
+            {
+                float dash = MathF.Abs(to - from) / (2 * count - 1);
+                float step = to >= from ? dash : -dash;
+                float start = from;
+                for (int i = 0; i < count; i++)
+                {
+                    if (vertical) Vertical(center, start, start + step, thickness);
+                    else Horizontal(start, start + step, center, thickness);
+                    start += step * 2;
+                }
+            }
+
+            float Thickness(BoxWeight weight) => weight switch
+            {
+                BoxWeight.Heavy => heavy,
+                BoxWeight.Light => light,
+                _ => 0f,
+            };
+
+            if (spec.Rounded)
+            {
+                // The four ARC characters have one horizontal and one vertical arm. The turn
+                // is a quarter circle centred inside it, so the arms stay on the cell's centre
+                // lines and only the corner is rounded.
+                float sx = hasRight ? 1f : -1f;
+                float sy = hasDown ? 1f : -1f;
+                float radius = MathF.Min(right - left, rowBottom - rowTop) * 0.45f;
+
+                if (hasRight) Horizontal(cx, right, cy, light);
+                else Horizontal(left, cx, cy, light);
+                if (hasDown) Vertical(cx, cy, rowBottom, light);
+                else Vertical(cx, rowTop, cy, light);
+
+                float arcX = cx + sx * radius;
+                float arcY = cy + sy * radius;
+                float start = MathF.Atan2(-sy, 0f);
+                float sweep = MathF.Atan2(0f, -sx) - start;
+                while (sweep > MathF.PI) sweep -= MathF.Tau;
+                while (sweep < -MathF.PI) sweep += MathF.Tau;
+
+                const int segments = 12;
+                var previous = new Vector2(arcX, cy);
+                for (int i = 1; i <= segments; i++)
+                {
+                    float angle = start + sweep * i / segments;
+                    var point = new Vector2(arcX + radius * MathF.Cos(angle),
+                        arcY + radius * MathF.Sin(angle));
+                    ds.DrawLine(previous, point, color, light);
+                    previous = point;
+                }
+                continue;
+            }
+
+            bool horizontalDouble = spec.HorizontalDouble;
+            bool verticalDouble = spec.VerticalDouble;
+            // A true cross leaves the small hole the double-line glyphs have; every other
+            // junction keeps the through axis continuous.
+            bool hole = horizontalDouble && verticalDouble && hasLeft && hasRight && hasUp && hasDown;
+
+            if (horizontalDouble)
+            {
+                for (int band = 0; band < 2; band++)
+                {
+                    float shift = band == 0 ? -offset : offset;
+                    float y = cy + shift;
+
+                    if (hole)
+                    {
+                        Horizontal(left, cx - offset + light / 2f, y, light);
+                        Horizontal(cx + offset - light / 2f, right, y, light);
+                        continue;
+                    }
+
+                    float from = hasLeft ? left : EndingArm(cx, shift, true, verticalDouble, hasUp, hasDown, light);
+                    float to = hasRight ? right : EndingArm(cx, shift, false, verticalDouble, hasUp, hasDown, light);
+                    Horizontal(from, to, y, light);
+                }
+            }
+            else if (spec.Dashes > 0)
+            {
+                Dashed(left, right, cy, Thickness(hasLeft ? spec.Left : spec.Right), spec.Dashes, false);
+            }
+            else
+            {
+                if (hasLeft) Horizontal(left, cx, cy, Thickness(spec.Left));
+                if (hasRight) Horizontal(cx, right, cy, Thickness(spec.Right));
+            }
+
+            if (verticalDouble)
+            {
+                for (int band = 0; band < 2; band++)
+                {
+                    float shift = band == 0 ? -offset : offset;
+                    float x = cx + shift;
+
+                    if (hole)
+                    {
+                        Vertical(x, rowTop, cy - offset + light / 2f, light);
+                        Vertical(x, cy + offset - light / 2f, rowBottom, light);
+                        continue;
+                    }
+
+                    float from = hasUp ? rowTop : EndingArm(cy, shift, true, horizontalDouble, hasLeft, hasRight, light);
+                    float to = hasDown ? rowBottom : EndingArm(cy, shift, false, horizontalDouble, hasLeft, hasRight, light);
+                    Vertical(x, from, to, light);
+                }
+            }
+            else if (spec.Dashes > 0)
+            {
+                Dashed(rowTop, rowBottom, cx, Thickness(hasUp ? spec.Up : spec.Down), spec.Dashes, true);
+            }
+            else
+            {
+                if (hasUp) Vertical(cx, rowTop, cy, Thickness(spec.Up));
+                if (hasDown) Vertical(cx, cy, rowBottom, Thickness(spec.Down));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Where a double line's stroke ends when it has an arm on one side only. The stroke joins
+    /// the matching stroke of the perpendicular pair: the near one at a T junction, and the one
+    /// at the same offset around a corner, which is how the double-line glyphs are drawn.
+    /// </summary>
+    private static float EndingArm(float center, float shift, bool armPointsPositive,
+        bool perpendicularDouble, bool perpendicularUp, bool perpendicularDown, float thickness)
+    {
+        if (!perpendicularDouble) return center;
+
+        // At a T the stroke joins the near stroke of the perpendicular pair; around a corner
+        // it joins the one at its own offset. Either way it has to reach the far edge of that
+        // stroke, or the joint shows a notch half a thickness wide.
+        float join = perpendicularUp && perpendicularDown
+            ? center + (armPointsPositive ? MathF.Abs(shift) : -MathF.Abs(shift))
+            : center + shift;
+
+        return join + (armPointsPositive ? -thickness / 2f : thickness / 2f);
     }
 
     private void DrawRowText(CanvasDrawingSession ds, RowRuns row, float cellW, float cellH,
