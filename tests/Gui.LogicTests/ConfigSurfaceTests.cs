@@ -79,7 +79,13 @@ public class ConfigSurfaceTests : IDisposable
         foreach (ConfigOption option in ConfigSchema.Ghostty)
         {
             if (skip.Contains(option.Name)) continue;
-            string sample = option.Name == "language" ? "en" : Sample(option.Kind);
+            // "key-remap" needs its from=to shape, not the generic list sample.
+            string sample = option.Name switch
+            {
+                "language" => "en",
+                "key-remap" => "ctrl=super",
+                _ => Sample(option.Kind),
+            };
             text.Append(option.Name).Append(" = ").Append(sample).Append('\n');
         }
 

@@ -51,6 +51,7 @@
     <Compile Include="../Gui/Term/ColorReport.cs" Link="ColorReport.cs" />
     <Compile Include="../Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../Gui/Term/Keybinds.cs" Link="Keybinds.cs" />
+    <Compile Include="../Gui/Term/KeyRemap.cs" Link="KeyRemap.cs" />
     <Compile Include="../Gui/Term/QuickTerminalGeometry.cs" Link="QuickTerminalGeometry.cs" />
     <Compile Include="../Gui/Term/IpcProtocol.cs" Link="IpcProtocol.cs" />
     <Compile Include="../Gui/Term/TerminalTheme.cs" Link="TerminalTheme.cs" />

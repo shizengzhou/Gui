@@ -367,6 +367,12 @@ public sealed class Config
 
     public List<(string Name, string Value)> ExtraEnvironment = new();
     public string Input = string.Empty;
+
+    /// <summary>
+    /// "key-remap" lines: which physical modifier acts as which. Applied once per key press by
+    /// <see cref="ModifierKeys"/>, so shortcuts, encoding and mouse reports agree on it.
+    /// </summary>
+    public IReadOnlyList<KeyRemap> KeyRemaps = Array.Empty<KeyRemap>();
     public bool WaitAfterCommand;
     public int AbnormalCommandExitRuntime = 250;   // ms; Ghostty's default
     public string TermVariable = string.Empty;
@@ -589,6 +595,7 @@ public sealed class Config
 
         ExtraEnvironment = new List<(string, string)>(other.ExtraEnvironment);
         Input = other.Input;
+        KeyRemaps = other.KeyRemaps;
         WaitAfterCommand = other.WaitAfterCommand;
         AbnormalCommandExitRuntime = other.AbnormalCommandExitRuntime;
         TermVariable = other.TermVariable;
@@ -1192,6 +1199,7 @@ public sealed class Config
 
         ExtraEnvironment = ParseEnvironment(All("env"));
         Input = string.Concat(All("input"));
+        KeyRemaps = ParseKeyRemaps(All("key-remap"));
         WaitAfterCommand = GetBool("wait-after-command", false);
         AbnormalCommandExitRuntime = Math.Clamp(GetInt("abnormal-command-exit-runtime", 250), 0, 3600000);
         TermVariable = Last("term") ?? string.Empty;
@@ -2443,6 +2451,23 @@ public sealed class Config
             i += length;
         }
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Parses "key-remap" lines, reporting the ones that name an unknown modifier instead of
+    /// dropping them silently: a typo here changes how every chord behaves.
+    /// </summary>
+    private List<KeyRemap> ParseKeyRemaps(List<string> entries)
+    {
+        var result = new List<KeyRemap>(entries.Count);
+        foreach (string entry in entries)
+        {
+            if (KeyRemapTable.TryParse(entry, out KeyRemap remap, out string error))
+                result.Add(remap);
+            else
+                _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, "key-remap", error));
+        }
+        return result;
     }
 
     private static List<(string Name, string Value)> ParseEnvironment(List<string> entries)

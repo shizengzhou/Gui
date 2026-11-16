@@ -1192,7 +1192,7 @@ public sealed class TerminalPane
         if (args.Key == VirtualKey.Enter)
         {
             args.Handled = true;
-            NavigateSearch(!IsDown(VirtualKey.Shift));
+            NavigateSearch(!ModifierKeys.IsDown(VirtualKey.Shift));
         }
     }
 
@@ -2565,12 +2565,6 @@ public sealed class TerminalPane
 
     // ---------------- input ----------------
 
-    private static bool IsDown(VirtualKey key)
-    {
-        CoreVirtualKeyStates state = InputKeyboardSource.GetKeyStateForCurrentThread(key);
-        return (state & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
-    }
-
     /// <summary>True when a toggled key (Caps Lock, Num Lock) is currently latched.</summary>
     private static bool IsLocked(VirtualKey key)
     {
@@ -2578,14 +2572,9 @@ public sealed class TerminalPane
         return (state & CoreVirtualKeyStates.Locked) == CoreVirtualKeyStates.Locked;
     }
 
-    private static int CurrentMods()
+    private int CurrentMods()
     {
-        int mods = 0;
-        if (IsDown(VirtualKey.Shift)) mods |= GhosttyNative.MODS_SHIFT;
-        if (IsDown(VirtualKey.Control)) mods |= GhosttyNative.MODS_CTRL;
-        if (IsDown(VirtualKey.Menu)) mods |= GhosttyNative.MODS_ALT;
-        if (IsDown(VirtualKey.LeftWindows) || IsDown(VirtualKey.RightWindows))
-            mods |= GhosttyNative.MODS_SUPER;
+        int mods = ModifierKeys.Chord(_config.KeyRemaps);
         // The kitty protocol reports the latched locks in its modifier field; the encoder
         // only forwards these bits and never treats them as a chord.
         if (IsLocked(VirtualKey.CapitalLock)) mods |= GhosttyNative.MODS_CAPS_LOCK;
@@ -3536,14 +3525,8 @@ public sealed class TerminalPane
 
     // ---------------- mouse reporting and links ----------------
 
-    private static int PointerMods()
-    {
-        int mods = 0;
-        if (IsDown(VirtualKey.Shift)) mods |= GhosttyNative.MODS_SHIFT;
-        if (IsDown(VirtualKey.Control)) mods |= GhosttyNative.MODS_CTRL;
-        if (IsDown(VirtualKey.Menu)) mods |= GhosttyNative.MODS_ALT;
-        return mods;
-    }
+    private int PointerMods() => ModifierKeys.Chord(_config.KeyRemaps) &
+        (GhosttyNative.MODS_CTRL | GhosttyNative.MODS_ALT | GhosttyNative.MODS_SHIFT);
 
     /// <summary>
     /// Sends one mouse event to the running program when it is in a mouse tracking mode.

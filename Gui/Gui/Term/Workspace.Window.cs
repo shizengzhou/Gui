@@ -625,17 +625,8 @@ public sealed partial class Workspace
         return (state & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
     }
 
-    private static int CurrentMods()
-    {
-        int mods = 0;
-        if (IsDown(VirtualKey.Shift)) mods |= GhosttyNative.MODS_SHIFT;
-        if (IsDown(VirtualKey.Control)) mods |= GhosttyNative.MODS_CTRL;
-        if (IsDown(VirtualKey.Menu)) mods |= GhosttyNative.MODS_ALT;
-        // Ghostty calls the Win key "super"; a few default bindings use it.
-        if (IsDown(VirtualKey.LeftWindows) || IsDown(VirtualKey.RightWindows))
-            mods |= GhosttyNative.MODS_SUPER;
-        return mods;
-    }
+    /// <summary>The chord modifiers, with "key-remap" applied to each physical key.</summary>
+    private int CurrentMods() => ModifierKeys.Chord(_config.KeyRemaps);
 
     private static bool IsModifierKey(VirtualKey key) =>
         key is VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu or
