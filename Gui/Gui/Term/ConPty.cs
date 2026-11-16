@@ -83,11 +83,15 @@ internal sealed class ConPty : IDisposable
         else SystemClosePseudoConsole(pseudoConsole);
     }
 
+    /// <summary>What GetExitCodeProcess returns while the process is still running.</summary>
+    private const uint StillActive = 259;
+
     private readonly IntPtr _pseudoConsole;
     private readonly IntPtr _inputWrite;
     private readonly IntPtr _outputRead;
     private readonly IntPtr _process;
     private readonly Thread _reader;
+    private readonly long _startedTicks;
     private volatile bool _disposed;
 
     /// <summary>Raised on the reader thread with raw PTY output.</summary>
@@ -95,6 +99,26 @@ internal sealed class ConPty : IDisposable
 
     /// <summary>Raised on the reader thread once the shell's output pipe closes.</summary>
     public event Action? Exited;
+
+    /// <summary>
+    /// Raised on a pool thread as soon as the shell process is gone, with
+    /// <see cref="ExitCode"/> and <see cref="Runtime"/> filled in. ConPTY keeps the output
+    /// pipe open behind OpenConsole, so <see cref="Exited"/> is not enough to notice a shell
+    /// that exited on its own.
+    /// </summary>
+    public event Action? ProcessExited;
+
+    /// <summary>
+    /// Exit code of the shell, read when its output closes. -1 when Windows still reports
+    /// STILL_ACTIVE or the query failed, which is the only answer a killed process gives.
+    /// </summary>
+    public int ExitCode { get; private set; } = -1;
+
+    /// <summary>
+    /// How long the shell ran, from the moment the pseudoconsole was created to the moment its
+    /// output closed. "abnormal-command-exit-runtime" is measured against it.
+    /// </summary>
+    public TimeSpan Runtime { get; private set; }
 
     public int ProcessId { get; }
 
@@ -107,6 +131,10 @@ internal sealed class ConPty : IDisposable
         _outputRead = outputRead;
         _process = process;
         ProcessId = pid;
+        // The shell starts a few instructions before this constructor runs; the difference is
+        // far below the resolution "abnormal-command-exit-runtime" cares about.
+        _startedTicks = Environment.TickCount64;
+        WatchProcess();
 
         _reader = new Thread(ReadLoop)
         {
@@ -270,6 +298,41 @@ internal sealed class ConPty : IDisposable
         Diag.Debug("pty.path", $"prepended {cliDir}");
     }
 
+    /// <summary>
+    /// Waits for the shell process so its exit code and runtime are known even when ConPTY
+    /// keeps the output pipe open behind OpenConsole. The wait is short so Dispose is noticed
+    /// without needing to close a handle someone else is blocked on.
+    /// </summary>
+    private void WatchProcess()
+    {
+        var thread = new Thread(() =>
+        {
+            const uint WaitTimeout = 0x102;
+            while (!_disposed)
+            {
+                if (WaitForSingleObject(_process, 250) != WaitTimeout) break;
+            }
+
+            if (_disposed) return;
+
+            if (GetExitCodeProcess(_process, out uint code) && code != StillActive)
+                ExitCode = (int)code;
+            Runtime = TimeSpan.FromMilliseconds(Environment.TickCount64 - _startedTicks);
+
+            // The pane closes as soon as this is reported, so give the reader a moment to take
+            // whatever the pty flushed; otherwise a command's last lines leave with the pane.
+            Thread.Sleep(150);
+            if (_disposed) return;
+
+            ProcessExited?.Invoke();
+        })
+        {
+            IsBackground = true,
+            Name = "gui-pty-exit",
+        };
+        thread.Start();
+    }
+
     private unsafe void ReadLoop()
     {
         var buffer = new byte[64 * 1024];
@@ -291,7 +354,16 @@ internal sealed class ConPty : IDisposable
         }
 
         if (!_disposed)
+        {
+            // The output pipe closes when the child goes away, but "gone" is not the same as
+            // "reaped": wait for the process briefly so the code is the real one rather than
+            // STILL_ACTIVE, and stamp the runtime before anyone reacts to the exit.
+            WaitForSingleObject(_process, 2000);
+            if (GetExitCodeProcess(_process, out uint code) && code != StillActive)
+                ExitCode = (int)code;
+            Runtime = TimeSpan.FromMilliseconds(Environment.TickCount64 - _startedTicks);
             Exited?.Invoke();
+        }
     }
 
     public void Write(ReadOnlySpan<byte> data)
@@ -446,6 +518,13 @@ internal sealed class ConPty : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]

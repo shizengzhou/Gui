@@ -697,6 +697,14 @@ public sealed partial class Workspace
         if (_tabs.Count > 0 && _tabs[_active].Focused is { SearchHasFocus: true })
             return false;
 
+        // A surface held open after its shell exited ("wait-after-command", or the abnormal
+        // exit notice) closes on the next key, which is what those options describe.
+        if (_tabs.Count > 0 && _tabs[_active].Focused is { HoldingAfterExit: true } held)
+        {
+            held.CloseFromHold();
+            return true;
+        }
+
         // While a composition is open the IME owns the keyboard: the keys that build it, and
         // the keys that commit or cancel it, belong to the input method. Handling one of them
         // here would run a shortcut the IME is about to re-inject once the composition ends.

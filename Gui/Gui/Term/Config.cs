@@ -368,6 +368,7 @@ public sealed class Config
     public List<(string Name, string Value)> ExtraEnvironment = new();
     public string Input = string.Empty;
     public bool WaitAfterCommand;
+    public int AbnormalCommandExitRuntime = 250;   // ms; Ghostty's default
     public string TermVariable = string.Empty;
 
     private readonly Dictionary<string, List<string>> _values = new(StringComparer.OrdinalIgnoreCase);
@@ -589,6 +590,7 @@ public sealed class Config
         ExtraEnvironment = new List<(string, string)>(other.ExtraEnvironment);
         Input = other.Input;
         WaitAfterCommand = other.WaitAfterCommand;
+        AbnormalCommandExitRuntime = other.AbnormalCommandExitRuntime;
         TermVariable = other.TermVariable;
         ShellIntegration = other.ShellIntegration;
         ShellFeatures = other.ShellFeatures;
@@ -1191,6 +1193,7 @@ public sealed class Config
         ExtraEnvironment = ParseEnvironment(All("env"));
         Input = string.Concat(All("input"));
         WaitAfterCommand = GetBool("wait-after-command", false);
+        AbnormalCommandExitRuntime = Math.Clamp(GetInt("abnormal-command-exit-runtime", 250), 0, 3600000);
         TermVariable = Last("term") ?? string.Empty;
         ShellIntegration = NormalizeShellIntegration(Last("shell-integration"));
         ApplyShellFeatures(Last("shell-integration-features"));
@@ -1742,6 +1745,18 @@ public sealed class Config
         ["whitesmoke"] = new(245, 245, 245),
         ["transparent"] = new(0, 0, 0),
     };
+
+    /// <summary>
+    /// Whether an exit is "abnormal" for "abnormal-command-exit-runtime": the process ran
+    /// shorter than the threshold and did not exit cleanly. A process we killed reports no
+    /// code (-1) and is not judged; like Ghostty on Linux, the code has to be non-zero.
+    /// </summary>
+    public bool IsAbnormalExit(int exitCode, TimeSpan runtime)
+    {
+        if (AbnormalCommandExitRuntime <= 0) return false;
+        if (exitCode == 0 || exitCode == -1) return false;
+        return runtime < TimeSpan.FromMilliseconds(AbnormalCommandExitRuntime);
+    }
 
     /// <summary>
     /// Parses the #RGB / #RRGGBB / #RRGGBBAA forms used by Ghostty plus X11 names. Ghostty's

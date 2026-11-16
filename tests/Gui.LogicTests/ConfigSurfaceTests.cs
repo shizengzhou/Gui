@@ -734,6 +734,26 @@ public class ConfigSurfaceTests : IDisposable
     }
 
     [Fact]
+    public void AbnormalExitFollowsTheRuntimeThreshold()
+    {
+        Assert.Equal(250, new Config().AbnormalCommandExitRuntime);
+
+        Config config = Config.Load(Write("abnormal-command-exit-runtime = 1000\n"));
+        Assert.Equal(1000, config.AbnormalCommandExitRuntime);
+
+        // Too quick and not clean: abnormal.
+        Assert.True(config.IsAbnormalExit(3, TimeSpan.FromMilliseconds(200)));
+        // A clean exit, or one that ran long enough, is normal.
+        Assert.False(config.IsAbnormalExit(0, TimeSpan.FromMilliseconds(200)));
+        Assert.False(config.IsAbnormalExit(3, TimeSpan.FromMilliseconds(1500)));
+        // A process we killed reports no code and is not judged.
+        Assert.False(config.IsAbnormalExit(-1, TimeSpan.FromMilliseconds(10)));
+        // 0 turns the check off entirely.
+        Assert.False(Config.Load(Write("abnormal-command-exit-runtime = 0\n"))
+            .IsAbnormalExit(3, TimeSpan.FromMilliseconds(10)));
+    }
+
+    [Fact]
     public void MinimumContrastResolves()
     {
         Assert.Equal(1f, new Config().MinimumContrast);

@@ -81,6 +81,9 @@ public sealed unsafe class TerminalSession : IDisposable
     // OSC 133 marks emitted by the injected shell integration. UI-thread only.
     private readonly ShellMarkParser _marks = new();
 
+    /// <summary>Set once the exit has been handed to the pane, so it is only handed over once.</summary>
+    private bool _exitNotified;
+
     // OSC 7501 program status records. UI-thread only.
     private readonly ProgramStatusTracker _programStatus = new();
 
@@ -95,6 +98,15 @@ public sealed unsafe class TerminalSession : IDisposable
     public Action<string>? OnTitle;
     public Action? OnBell;
     public Action? OnExit;
+
+    /// <summary>
+    /// Exit code of the shell, read when its output closed; -1 while it runs or when Windows
+    /// only reports STILL_ACTIVE. Valid once <see cref="OnExit"/> has run.
+    /// </summary>
+    public int ExitCode => _pty?.ExitCode ?? -1;
+
+    /// <summary>How long the shell ran; valid once <see cref="OnExit"/> has run.</summary>
+    public TimeSpan Runtime => _pty?.Runtime ?? TimeSpan.Zero;
 
     /// <summary>OSC 133 D: a command finished, with its exit code and runtime.</summary>
     public Action<int, TimeSpan>? OnCommandFinished;
@@ -309,6 +321,7 @@ public sealed unsafe class TerminalSession : IDisposable
 
         _pty.OutputReceived += OnPtyOutput;
         _pty.Exited += OnPtyExited;
+        _pty.ProcessExited += OnPtyProcessExited;
 
         Resize(cols, rows, metrics);
         _pty.BeginRead();
@@ -329,11 +342,23 @@ public sealed unsafe class TerminalSession : IDisposable
         Post?.Invoke(Drain);
     }
 
-    private void OnPtyExited()
+    private void OnPtyExited() => NotifyExit();
+
+    private void OnPtyProcessExited() => NotifyExit();
+
+    /// <summary>
+    /// Hands the exit to the pane exactly once: the process watch and the output-pipe close
+    /// both report it, and ConPTY usually only ever raises the former.
+    /// </summary>
+    private void NotifyExit()
     {
+        if (_exitNotified) return;
+        _exitNotified = true;
+
         Post?.Invoke(() =>
         {
             Drain();
+            Diag.Log("session.exit", $"code={ExitCode} runtime={Runtime.TotalMilliseconds:0}ms ");
             // Nothing is running any more; finished and failed reports stay for the user.
             if (_programStatus.ClearBusy()) OnProgramStatus?.Invoke();
             OnExit?.Invoke();
@@ -1467,6 +1492,24 @@ public sealed unsafe class TerminalSession : IDisposable
 
     /// <summary>True while the shell is sitting at its prompt (shell integration only).</summary>
     public bool AtPrompt => _marks.AtPrompt;
+
+    /// <summary>
+    /// Prints a line into the terminal after the shell is gone ("the process exited
+    /// abnormally" notice). The terminal object outlives the pty, so the screen and the
+    /// scrollback still take text; the notice goes through the same queue as output.
+    /// </summary>
+    public void WriteNotice(string text)
+    {
+        if (_terminal == IntPtr.Zero || text.Length == 0) return;
+
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        lock (_pendingLock)
+        {
+            if (_disposed) return;
+            _pending.AddRange(bytes);
+        }
+        Post?.Invoke(Drain);
+    }
 
     /// <summary>
     /// Clears the screen and the scrollback ("clear_screen"), following Ghostty: at a prompt

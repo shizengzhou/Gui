@@ -107,6 +107,13 @@ public sealed class TerminalPane
     private bool _hoverHadCtrl;
     private bool _pointerInside;
     private bool _pressDragged;
+
+    /// <summary>
+    /// True while a finished surface is waiting for a key or a click: the shell exited and
+    /// either "wait-after-command" or the abnormal-exit notice is holding the pane open.
+    /// </summary>
+    public bool HoldingAfterExit { get; private set; }
+
     private readonly List<LinkRun> _hoverRuns = new();
     private readonly List<Border> _linkUnderlines = new();
     private Grid? _underlineLayer;
@@ -1688,9 +1695,46 @@ public sealed class TerminalPane
         };
         _session.OnExit = () =>
         {
+            // "abnormal-command-exit-runtime": a process that dies within the threshold with a
+            // bad exit code keeps its surface and says so, instead of vanishing before the
+            // message can be read.
+            if (_config.IsAbnormalExit(_session.ExitCode, _session.Runtime))
+            {
+                ShowExitNotice(_session.ExitCode, _session.Runtime);
+                HoldingAfterExit = true;
+                return;
+            }
+
             // wait-after-command keeps the surface (and its scrollback) open after the shell exits.
-            if (!_config.WaitAfterCommand) OnExit?.Invoke(this);
+            if (_config.WaitAfterCommand)
+            {
+                HoldingAfterExit = true;
+                return;
+            }
+
+            OnExit?.Invoke(this);
         };
+    }
+
+    /// <summary>
+    /// Prints the abnormal-exit line into the surface. The shell is gone, so the line goes
+    /// through the terminal, not the pty; the pane then holds until a key or click arrives.
+    /// </summary>
+    private void ShowExitNotice(int exitCode, TimeSpan runtime)
+    {
+        string duration = runtime.TotalMilliseconds < 1000
+            ? $"{runtime.TotalMilliseconds:0} ms"
+            : $"{runtime.TotalSeconds:0.0} s";
+        string text = string.Format(Strings.AbnormalExit, exitCode, duration);
+        _session.WriteNotice($"\r\n\u001b[1;31m{text}\u001b[0m\r\n");
+    }
+
+    /// <summary>Closes a surface that was held open after its shell exited.</summary>
+    public void CloseFromHold()
+    {
+        if (!HoldingAfterExit) return;
+        HoldingAfterExit = false;
+        OnExit?.Invoke(this);
     }
 
     public void Close()
@@ -3144,6 +3188,14 @@ public sealed class TerminalPane
     private void OnPointerPressed(object sender, PointerRoutedEventArgs args)
     {
         if (!_ready) return;
+
+        // A held surface closes on the next click, the same as on the next key.
+        if (HoldingAfterExit)
+        {
+            args.Handled = true;
+            CloseFromHold();
+            return;
+        }
 
         _keyboardSelecting = false;
         ShowPointer();

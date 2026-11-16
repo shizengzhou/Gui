@@ -41,6 +41,14 @@ public static class Strings
     public static string ClosePane => Pick("Close pane", "关闭窗格");
     public static string CloseSplit => Pick("Close split", "关闭拆分");
 
+    /// <summary>
+    /// Printed into a surface whose process died too quickly ("abnormal-command-exit-runtime").
+    /// {0} is the exit code, {1} the runtime.
+    /// </summary>
+    public static string AbnormalExit => Pick(
+        "Process exited abnormally: code {0} after {1}",
+        "进程异常退出：退出码 {0}，运行 {1}");
+
     // ---- tab context menu -------------------------------------------------
 
     public static string RenameTab => Pick("Rename tab", "重命名标签页");
