@@ -87,7 +87,7 @@ public static class ListFonts
         }
 
         bool browse = !plain && !Console.IsOutputRedirected && !Console.IsInputRedirected;
-        if (browse) return FontBrowser.Run(families, CurrentFamily(), UseImages(images));
+        if (browse) return FontBrowser.Run(families, CurrentFamily(), UseImages(images), Foreground());
 
         var text = new StringBuilder();
         foreach (FontFamilyInfo family in families)
@@ -98,6 +98,29 @@ public static class ListFonts
         }
         Console.Out.Write(text.ToString());
         return 0;
+    }
+
+    /// <summary>
+    /// The colour the sample is drawn in: the config's "foreground" when it sets one, else the
+    /// light text the Gui themes use. The card itself is transparent, so the sample sits on
+    /// whatever background the terminal paints.
+    /// </summary>
+    private static (byte r, byte g, byte b) Foreground()
+    {
+        try
+        {
+            Config config = Config.LoadRaw(Config.ConfigFile());
+            if (config.Values.TryGetValue("foreground", out List<string>? values) && values.Count > 0 &&
+                Config.TryParseColor(values[^1], out Rgb rgb))
+            {
+                return (rgb.R, rgb.G, rgb.B);
+            }
+        }
+        catch (Exception)
+        {
+            // The fallback colour is the theme's light text either way.
+        }
+        return (245, 245, 247);
     }
 
     /// <summary>The family the config currently names, so the browser starts on it.</summary>

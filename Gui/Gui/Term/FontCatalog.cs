@@ -6,7 +6,7 @@ using Microsoft.Win32;
 namespace Gui.Term;
 
 /// <summary>One face of an installed family: what the style slots of a terminal can pick.</summary>
-public readonly record struct FontFace(string Style, int Weight, bool Italic);
+public readonly record struct FontFace(string Style, int Weight, bool Italic, string File = "");
 
 /// <summary>An installed font family and the faces it provides.</summary>
 public sealed class FontFamilyInfo
@@ -15,6 +15,17 @@ public sealed class FontFamilyInfo
     public List<FontFace> Faces = new();
     /// <summary>True or false when it is known; null when the source cannot tell.</summary>
     public bool? Monospaced;
+
+    /// <summary>The face a preview should show: the regular one when the family has it.</summary>
+    public FontFace Primary()
+    {
+        foreach (FontFace face in Faces)
+        {
+            if (face.Style.Length == 0 || face.Style.Equals("Regular", StringComparison.OrdinalIgnoreCase))
+                return face;
+        }
+        return Faces.Count > 0 ? Faces[0] : default;
+    }
 
     /// <summary>The style names the family provides, in weight order, without duplicates.</summary>
     public IReadOnlyList<string> Styles()
@@ -142,7 +153,7 @@ public static class FontCatalog
                 if (family.Faces.Any(f => string.Equals(f.Style, style, StringComparison.OrdinalIgnoreCase)))
                     continue;
 
-                family.Faces.Add(new FontFace(style, WeightOf(style), IsItalic(style)));
+                family.Faces.Add(new FontFace(style, WeightOf(style), IsItalic(style), ResolveFile(file)));
             }
         }
         catch (Exception error)
@@ -150,6 +161,19 @@ public static class FontCatalog
             // An unreadable key is not worth failing a listing over.
             Diag.Warn("fonts.registry", $"{error.GetType().Name}: {error.Message} (path={path})");
         }
+    }
+
+    /// <summary>
+    /// The registry names a file without a directory for machine-wide fonts ("consola.ttf") and
+    /// with one for fonts installed per user; both are turned into a path the preview can show.
+    /// </summary>
+    private static string ResolveFile(string file)
+    {
+        if (file.Length == 0) return string.Empty;
+        if (System.IO.Path.IsPathRooted(file)) return file;
+
+        string windir = Environment.GetEnvironmentVariable("WINDIR") ?? @"C:\Windows";
+        return System.IO.Path.Combine(windir, "Fonts", file);
     }
 
     /// <summary>The weight a style name stands for; the faces Windows installs are one of these.</summary>

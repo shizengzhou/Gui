@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
@@ -6,29 +7,63 @@ using System.Runtime.InteropServices;
 namespace Gui.Cli;
 
 /// <summary>
-/// Rasterizes a font sample with GDI into a PNG, which the browser then shows through the
-/// terminal's image protocol. GDI draws the family's real outlines, so the preview is the same
-/// text a pane would render, not the terminal's current font dressed up.
+/// Rasterizes a font sample with GDI into a PNG that the browser shows through the terminal's
+/// image protocol. GDI draws the family's real outlines, so the preview is the text a pane would
+/// render. The card is transparent and the glyphs are coverage, so the sample sits on the
+/// terminal's own background the way tsp's and kitty's font browsers do.
 /// </summary>
 internal static class FontPreview
 {
-    private const int PngHeader = 8;
+    private static readonly Dictionary<string, bool> _monospace = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Renders <paramref name="text"/> in <paramref name="family"/> at the given pixel height.
-    /// The card is a dark surface with light text so the sample stays readable whatever theme
-    /// the terminal uses; the image carries its own background instead of blending with one.
+    /// Whether every glyph the family draws advances the same amount. Measured rather than read
+    /// from the font tables: the picker offers monospaced families only, and nothing in the
+    /// registry says which ones are.
     /// </summary>
-    public static byte[]? Render(string family, string text, int pixelHeight, int maxWidth,
-        out int width, out int height)
+    public static bool IsMonospaced(string family)
+    {
+        if (_monospace.TryGetValue(family, out bool known)) return known;
+        bool answer = MeasureAdvance(family, "iiiiiiii") == MeasureAdvance(family, "WWWWWWWW");
+        _monospace[family] = answer;
+        return answer;
+    }
+
+    private static int MeasureAdvance(string family, string text)
+    {
+        IntPtr screen = GetDC(IntPtr.Zero);
+        if (screen == IntPtr.Zero) return 0;
+        IntPtr dc = CreateCompatibleDC(screen);
+        IntPtr font = IntPtr.Zero;
+        try
+        {
+            font = CreateFontW(-40, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
+            if (font == IntPtr.Zero) return 0;
+            IntPtr previous = SelectObject(dc, font);
+            bool measured = GetTextExtentPoint32W(dc, text, text.Length, out SIZE size);
+            SelectObject(dc, previous);
+            return measured ? size.cx : 0;
+        }
+        finally
+        {
+            if (font != IntPtr.Zero) DeleteObject(font);
+            DeleteDC(dc);
+            ReleaseDC(IntPtr.Zero, screen);
+        }
+    }
+
+    /// <summary>
+    /// Renders the sample lines in <paramref name="family"/> at the given pixel height, in the
+    /// terminal's foreground colour with alpha coverage around the glyphs.
+    /// </summary>
+    public static byte[]? Render(string family, IReadOnlyList<string> lines, int pixelHeight,
+        int maxWidth, (byte r, byte g, byte b) foreground, out int width, out int height)
     {
         width = 0;
         height = 0;
+        if (lines.Count == 0) return null;
 
-        var background = (r: 24, g: 25, b: 32);
-        var foreground = (r: 232, g: 233, b: 238);
-        const int pad = 10;
-
+        const int pad = 6;
         IntPtr screen = GetDC(IntPtr.Zero);
         if (screen == IntPtr.Zero) return null;
         IntPtr dc = CreateCompatibleDC(screen);
@@ -38,9 +73,8 @@ internal static class FontPreview
 
         try
         {
-            // A font height is in logical units, so the screen's DPI would scale the sample on
-            // a high-density display. Ask for device pixels instead, then shrink the height
-            // until the line fits the space the caller gives it.
+            // A font height is in logical units, so a high-density screen would scale the
+            // sample. Ask for device pixels, then shrink until the widest line fits.
             int dpi = GetDeviceCaps(dc, 90); // LOGPIXELSY
             if (dpi <= 0) dpi = 96;
             int heightLogical = -(int)Math.Round(pixelHeight * 96.0 / dpi);
@@ -48,23 +82,23 @@ internal static class FontPreview
             font = CreateFontW(heightLogical, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
             if (font == IntPtr.Zero) return null;
             previous = SelectObject(dc, font);
-            if (!GetTextExtentPoint32W(dc, text, text.Length, out SIZE extent)) return null;
 
-            if (extent.cx + pad * 2 > maxWidth && extent.cx > 0)
+            if (!MeasureLines(dc, lines, out int widest, out int lineHeight)) return null;
+
+            if (widest + pad * 2 > maxWidth && widest > 0)
             {
-                // Too wide for the card: scale the height down by the same ratio.
                 SelectObject(dc, previous);
                 DeleteObject(font);
                 font = IntPtr.Zero;
-                heightLogical = Math.Max(-8, (int)(heightLogical * (double)maxWidth / (extent.cx + pad * 2)));
+                heightLogical = Math.Max(-8, (int)(heightLogical * (double)maxWidth / (widest + pad * 2)));
                 font = CreateFontW(heightLogical, 0, 0, 0, 400, 0, 0, 0, 1, 5, 4, 4, 0, family);
                 if (font == IntPtr.Zero) return null;
                 SelectObject(dc, font);
-                if (!GetTextExtentPoint32W(dc, text, text.Length, out extent)) return null;
+                if (!MeasureLines(dc, lines, out widest, out lineHeight)) return null;
             }
 
-            width = Math.Min(maxWidth, extent.cx + pad * 2);
-            height = extent.cy + pad * 2;
+            width = widest + pad * 2;
+            height = lineHeight * lines.Count + pad * 2;
             if (width < 8 || height < 8) return null;
 
             var info = new BITMAPINFO
@@ -84,24 +118,19 @@ internal static class FontPreview
             if (dib == IntPtr.Zero || bits == IntPtr.Zero) return null;
             SelectObject(dc, dib);
 
-            // Paint the card, then draw the sample. GDI writes BGRA into the DIB.
+            // Black everywhere; the glyph coverage becomes the alpha channel below.
             var pixels = new byte[width * height * 4];
-            for (int i = 0; i < pixels.Length; i += 4)
-            {
-                pixels[i] = (byte)background.b;
-                pixels[i + 1] = (byte)background.g;
-                pixels[i + 2] = (byte)background.r;
-                pixels[i + 3] = 255;
-            }
+            for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
             Marshal.Copy(pixels, 0, bits, pixels.Length);
 
             SetBkMode(dc, 1); // TRANSPARENT
-            SetTextColor(dc, foreground.r | (foreground.g << 8) | (foreground.b << 16));
-            TextOutW(dc, pad, pad, text, text.Length);
+            SetTextColor(dc, 0x00FFFFFF);
+            for (int i = 0; i < lines.Count; i++)
+                TextOutW(dc, pad, pad + i * lineHeight, lines[i], lines[i].Length);
             GdiFlush();
 
             Marshal.Copy(bits, pixels, 0, pixels.Length);
-            return EncodePng(pixels, width, height);
+            return EncodePng(ToCoverage(pixels, foreground), width, height);
         }
         finally
         {
@@ -111,6 +140,41 @@ internal static class FontPreview
             DeleteDC(dc);
             ReleaseDC(IntPtr.Zero, screen);
         }
+    }
+
+    private static bool MeasureLines(IntPtr dc, IReadOnlyList<string> lines, out int widest,
+        out int lineHeight)
+    {
+        widest = 0;
+        lineHeight = 0;
+        foreach (string line in lines)
+        {
+            if (!GetTextExtentPoint32W(dc, line, line.Length, out SIZE size)) return false;
+            if (size.cx > widest) widest = size.cx;
+            if (size.cy > lineHeight) lineHeight = size.cy;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Turns "white glyphs on black" into the foreground colour with coverage as alpha, so the
+    /// terminal composites the sample over whatever background the theme paints.
+    /// </summary>
+    private static byte[] ToCoverage(byte[] bgra, (byte r, byte g, byte b) foreground)
+    {
+        for (int i = 0; i < bgra.Length; i += 4)
+        {
+            byte b = bgra[i];
+            byte g = bgra[i + 1];
+            byte r = bgra[i + 2];
+            byte alpha = Math.Max(r, Math.Max(g, b));
+
+            bgra[i] = foreground.b;
+            bgra[i + 1] = foreground.g;
+            bgra[i + 2] = foreground.r;
+            bgra[i + 3] = alpha;
+        }
+        return bgra;
     }
 
     /// <summary>A minimal RGBA PNG: the pixels already are the rows the terminal decodes.</summary>
