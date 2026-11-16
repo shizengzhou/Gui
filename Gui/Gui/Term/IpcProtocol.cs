@@ -82,7 +82,7 @@ public static class IpcProtocol
     /// <summary>One command for the running app. Unknown fields are ignored.</summary>
     public sealed class Request
     {
-        /// <summary>Currently only "new-tab".</summary>
+        /// <summary>"new-tab" or "render-sample".</summary>
         public string Action { get; set; } = string.Empty;
 
         /// <summary>Directory the new tab's shell starts in; null keeps the app's default.</summary>
@@ -93,6 +93,15 @@ public static class IpcProtocol
 
         /// <summary>Title override for the new tab.</summary>
         public string? Title { get; set; }
+        /// <summary>Font family for "render-sample".</summary>
+        public string? Family { get; set; }
+        /// <summary>Cell size in physical pixels for "render-sample".</summary>
+        public int CellWidth { get; set; }
+        public int CellHeight { get; set; }
+        /// <summary>Foreground colour as #RRGGBB for "render-sample".</summary>
+        public string? Foreground { get; set; }
+        /// <summary>Where "render-sample" writes its PNG.</summary>
+        public string? Output { get; set; }
     }
 
     /// <summary>The app's answer: ok, or a message the CLI prints on stderr.</summary>

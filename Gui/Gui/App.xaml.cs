@@ -268,6 +268,14 @@ public partial class App : Application
     /// </summary>
     private string? HandleIpcRequest(Term.IpcProtocol.Request request)
     {
+        if (string.Equals(request.Action, "render-sample", StringComparison.Ordinal))
+        {
+            if (string.IsNullOrEmpty(request.Family) || string.IsNullOrEmpty(request.Output))
+                return "render-sample needs family and output";
+            return Term.SampleImage.Render(request.Family, request.CellWidth, request.CellHeight,
+                request.Foreground, request.Output);
+        }
+
         if (!string.Equals(request.Action, "new-tab", StringComparison.Ordinal))
             return $"unknown action '{request.Action}'";
 

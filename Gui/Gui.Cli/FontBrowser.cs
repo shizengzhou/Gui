@@ -421,6 +421,13 @@ internal static class FontBrowser
         return (Math.Max(4, width), Math.Max(8, height));
     }
 
+    private static int LongestSample()
+    {
+        int longest = 0;
+        foreach (string line in Sample) longest = Math.Max(longest, line.Length);
+        return longest;
+    }
+
     private static int ReadEnv(string name, int fallback) =>
         int.TryParse(Environment.GetEnvironmentVariable(name), out int value) && value > 0
             ? value
@@ -437,8 +444,20 @@ internal static class FontBrowser
         // one glyph per cell at the cell's advance and height. That is what makes the preview
         // look like the terminal's own text rather than a caption at some other size.
         (int cellWidth, int cellHeight) = CellSize();
-        byte[]? png = FontPreview.Render(family, Sample, cellWidth, cellHeight, foreground,
-            out int pixelWidth, out int pixelHeight);
+
+        // Gui renders it with Win2D (the pane's own pipeline); the local rasterizer is only the
+        // fallback for a pane whose window did not answer.
+        byte[]? png = SampleImages.Render(family, cellWidth, cellHeight, foreground);
+        int pixelWidth;
+        if (png is not null)
+        {
+            pixelWidth = LongestSample() * cellWidth + 4;
+        }
+        else
+        {
+            png = FontPreview.Render(family, Sample, cellWidth, cellHeight, foreground,
+                out pixelWidth, out _);
+        }
         if (png is null) return;
 
         // The image spans exactly its cells; Gui draws it at its natural size.
