@@ -21,6 +21,7 @@ internal static class Program
         "Actions (prefixed with '+', like ghostty):\n" +
         "  +show-config    print the effective configuration in Ghostty format\n" +
         "  +list-keybinds  print the key bindings this build honors, as Ghostty keybind lines\n" +
+        "  +list-fonts     print the installed font families, one per line\n" +
         "  +new-tab        open a new tab, starting the app when none is running\n" +
         "  +help           list the available actions\n" +
         "  +version        print the version\n" +
@@ -60,6 +61,8 @@ internal static class Program
 
             case "+list-keybinds":
                 return ListKeybinds.Run(rest);
+            case "+list-fonts":
+                return ListFonts.Run(rest);
 
             case "+new-tab":
                 return NewTab.Run(rest);

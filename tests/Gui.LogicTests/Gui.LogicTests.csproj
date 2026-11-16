@@ -33,6 +33,7 @@
     <Compile Include="../../Gui/Gui/Term/BoxDrawing.cs" Link="BoxDrawing.cs" />
     <Compile Include="../../Gui/Gui/Term/Contrast.cs" Link="Contrast.cs" />
     <Compile Include="../../Gui/Gui/Term/KeyRemap.cs" Link="KeyRemap.cs" />
+    <Compile Include="../../Gui/Gui/Term/FontCatalog.cs" Link="FontCatalog.cs" />
     <Compile Include="../../Gui/Gui/Term/Config.cs" Link="Config.cs" />
     <Compile Include="../../Gui/Gui/Term/ConfigSchema.cs" Link="ConfigSchema.cs" />
     <Compile Include="../../Gui/Gui/Term/ColorReport.cs" Link="ColorReport.cs" />

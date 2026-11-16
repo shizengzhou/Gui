@@ -239,7 +239,6 @@ internal sealed class ConPty : IDisposable
     private static IntPtr BuildEnvironment(IReadOnlyList<(string Name, string Value)>? extra, string term)
     {
         bool hasTerm = !string.IsNullOrEmpty(term);
-        if ((extra is null || extra.Count == 0) && !hasTerm && CliDirectory().Length == 0) return IntPtr.Zero;
 
         var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in System.Environment.GetEnvironmentVariables())
@@ -249,6 +248,9 @@ internal sealed class ConPty : IDisposable
         }
 
         if (hasTerm) variables["TERM"] = term;
+        // Programs inside a pane detect what the terminal can do through TERM_PROGRAM: the
+        // kitty graphics protocol here, which "gui +list-fonts" uses for its font previews.
+        variables["TERM_PROGRAM"] = "Gui";
         if (extra is not null)
         {
             foreach ((string name, string value) in extra)
