@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -54,6 +55,26 @@ internal static class FontBrowser
         // echoed into the frame. Raw mode is what makes a browser usable at all.
         uint? previousMode = EnterRawMode();
 
+        // Keys are read on their own thread: a blocked ReadKey would also block the resize
+        // check, and polling KeyAvailable depends on the console reporting it correctly.
+        var keys = new BlockingCollection<ConsoleKeyInfo>();
+        var reader = new Thread(() =>
+        {
+            try
+            {
+                while (true) keys.Add(Console.ReadKey(intercept: true));
+            }
+            catch (Exception)
+            {
+                // The console went away; the loop below just keeps painting on resize.
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "gui-fonts-keys",
+        };
+        reader.Start();
+
         Console.Out.Write("\x1b[?1049h\x1b[?25l");
         try
         {
@@ -73,17 +94,17 @@ internal static class FontBrowser
                     Draw(shown, monospaced.Count, cursor, ref offset, query, filtering, images, foreground);
                 }
 
-                // Redraw when the window changes size: the preview image sits on the cell grid,
-                // so a resize would leave it hanging where it was drawn.
-                while (!Console.KeyAvailable)
+                // Wait for a key, and redraw when the window changes size: the preview image
+                // sits on the cell grid, so a resize would leave it where it was drawn.
+                ConsoleKeyInfo key = default;
+                bool haveKey = keys.TryTake(out key, 40);
+                while (!haveKey)
                 {
-                    Thread.Sleep(40);
                     if (Console.WindowWidth != drawnWidth || Console.WindowHeight != drawnHeight)
                         break;
+                    haveKey = keys.TryTake(out key, 40);
                 }
-                if (!Console.KeyAvailable) continue;
-
-                ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+                if (!haveKey) continue;
                 dirty = true;
 
                 if (key.Key == ConsoleKey.Escape)
