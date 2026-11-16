@@ -315,6 +315,9 @@ public sealed unsafe class TerminalRenderer
             FontWeight = new Windows.UI.Text.FontWeight { Weight = weight },
             FontStyle = italic ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal,
             FontStretch = stretch,
+            // DirectDraw text skips color glyphs unless asked: without this an emoji is
+            // painted as its monochrome outline, which is not what any other terminal shows.
+            Options = CanvasDrawTextOptions.EnableColorFont,
         };
     }
 
@@ -1042,6 +1045,8 @@ public sealed unsafe class TerminalRenderer
         try
         {
             layout = new CanvasTextLayout(CanvasDevice.GetSharedDevice(), text, FormatFor(face, key.Family), 0f, 0f);
+            // DrawTextLayout reads the options from the layout, not from the format.
+            layout.Options = CanvasDrawTextOptions.EnableColorFont;
         }
         catch
         {
