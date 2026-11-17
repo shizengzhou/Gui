@@ -598,9 +598,9 @@ public sealed partial class Workspace
             SettingsRow(Strings.SettingsCompact, Strings.SettingsCompactDescription,
                 SettingsSwitch(_config.Compact, ApplyCompactChoice)))));
 
-        List<(string Name, bool Light)> bundled = TerminalThemes.Bundled();
-        List<string> lightThemes = bundled.Where(t => t.Light).Select(t => t.Name).ToList();
-        List<string> darkThemes = bundled.Where(t => !t.Light).Select(t => t.Name).ToList();
+        List<(string Name, bool Light)> available = TerminalThemes.Available();
+        List<string> lightThemes = available.Where(t => t.Light).Select(t => t.Name).ToList();
+        List<string> darkThemes = available.Where(t => !t.Light).Select(t => t.Name).ToList();
         // The built-in design themes are not files in Assets\Themes, so they have to stay in
         // the list explicitly. Otherwise picking a bundled theme makes them unreachable.
         InsertDefaultTheme(lightThemes, Config.LightThemeName);

@@ -1167,7 +1167,7 @@ public sealed partial class Workspace
         if (ReferenceEquals(items, _paletteThemeItems) && !_paletteThemesBuilt)
         {
             _paletteThemesBuilt = true;
-            foreach ((string name, bool light) in TerminalThemes.Bundled())
+            foreach ((string name, bool light) in TerminalThemes.Available())
             {
                 string themeName = name;
                 bool themeLight = light;

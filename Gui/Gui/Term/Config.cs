@@ -406,9 +406,8 @@ public sealed class Config
     /// <summary>%APPDATA%\gui\config.</summary>
     public static string ConfigFile()
     {
-        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (string.IsNullOrEmpty(appData)) return string.Empty;
-        return Path.Combine(appData, "gui", "config");
+        string directory = TerminalThemes.ConfigDirectory();
+        return directory.Length == 0 ? string.Empty : Path.Combine(directory, "config");
     }
 
     /// <summary>Resolves the path, writes the template when missing and parses it.</summary>

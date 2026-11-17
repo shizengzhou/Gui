@@ -26,6 +26,7 @@
     <Compile Include="../../Gui/Gui/Diag.cs" Link="Diag.cs" />
     <Compile Include="../../Gui/Gui.Cli/ShowConfig.cs" Link="ShowConfig.cs" />
     <Compile Include="../../Gui/Gui.Cli/ListKeybinds.cs" Link="ListKeybinds.cs" />
+    <Compile Include="../../Gui/Gui.Cli/ThemeCatalog.cs" Link="ThemeCatalog.cs" />
     <Compile Include="../../Gui/Gui.Cli/NewTab.cs" Link="NewTab.cs" />
     <Compile Include="../../Gui/Gui.Cli/Launch.cs" Link="Launch.cs" />
     <Compile Include="../../Gui/Gui.Cli/AppChannel.cs" Link="AppChannel.cs" />

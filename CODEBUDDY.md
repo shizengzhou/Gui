@@ -39,6 +39,11 @@ dotnet build Gui/Gui/Gui.csproj -p:Platform=x64
 # Run (no packaging, no deploy)
 Gui/Gui/bin/x64/Debug/net8.0-windows10.0.19041.0/win-x64/Gui.exe
 
+# Theme picker (tsp's layout): All/Light/Dark chips, the highlighted theme's colors and a
+# sample on the right, Enter writes the matching half of "theme" into the config. When the
+# output is redirected the names are printed instead.
+gui +list-themes
+
 # ABI contract test (no WinUI, no NuGet packages)
 dotnet run --project tests/Gui.AbiTests -c Release
 
@@ -157,7 +162,7 @@ resulting cell grid is drawn with Win2D.
 | --- | --- |
 | `Term/Config.cs` | Ghostty-shaped text config in `%APPDATA%\gui\config` |
 | `Term/Theme.cs` | Design tokens; two app palettes plus a separately resolved window palette |
-| `Term/TerminalTheme.cs` | Loads bundled Ghostty themes into a 256-color palette |
+| `Term/TerminalTheme.cs` | Loads bundled and user Ghostty themes into a 256-color palette |
 | `Term/TerminalSession.cs` | libghostty-vt facade + ConPTY + shell process + reader thread |
 | `Term/ConPty.cs` | `CreatePseudoConsole` + `CreateProcess`, pipe reader/writer |
 | `Term/GhosttyNative.cs` | P/Invoke surface for `ghostty-vt.dll` |
@@ -486,9 +491,21 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   appearances. The side selected by `window-theme` is painted and the theme list only offers
   themes of that brightness; a bundled Ghostty theme also drives the chrome through tonal
   steps off its background. In the command palette a light theme edits only the `light:` half
-  and a dark theme only the `dark:` half.
+  and a dark theme only the `dark:` half. Themes are the bundled files and the ones in the
+  `themes` folder beside the config (`%APPDATA%\gui\themes`), the folder Ghostty reads as
+  `$XDG_CONFIG_HOME/ghostty/themes`: a file there shadows the bundled theme of the same name,
+  and its light/dark side comes from the background's perceived luminance.
 - `window-theme` is `system` (default), `light`, or `dark` and chooses which half of `theme`
   is active; it no longer forces a theme whose brightness matches.
+- `gui +list-themes` browses the bundled assets and the user's own themes:
+  `Gui.Cli/ThemeCatalog.cs` reads `Assets/Themes/{light,dark}` and the flat
+  `%APPDATA%\gui\themes` (classified by the theme's background, the user's file winning a
+  name clash; no WinRT, no libghostty), `ThemeBrowser.cs` draws tsp's layout (chips, list with
+  brightness, the 16 ANSI colors, a panel painted in the theme with a shell and a C# sample
+  that shows its selection and cursor colors) and `ThemeCatalog.Apply` writes only the
+  `light:` or `dark:` half that matches the chosen theme. Redirected output prints
+  `name  (light|dark)` instead, like `+list-fonts`.
+  `ConsoleRaw.cs` holds the raw-mode/VT setup the two browsers share.
 - The command palette (`Ctrl+Shift+P`) switches both live and persists the choice with
   `Config.SaveValue`.
 - `Ctrl+Shift+,` re-reads the file and applies it live: theme, window theme, font, split

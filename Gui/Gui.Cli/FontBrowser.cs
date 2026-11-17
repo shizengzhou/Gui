@@ -50,7 +50,7 @@ internal static class FontBrowser
 
         // A console starts in line mode: keys sit in the buffer until Enter and would be
         // echoed into the frame. Raw mode is what makes a browser usable at all.
-        ConsoleModes? previousMode = EnterRawMode();
+        ConsoleRaw.Modes? previousMode = ConsoleRaw.Enter();
 
         // Keys are read on their own thread: a blocked ReadKey would also block the resize
         // check, and polling KeyAvailable depends on the console reporting it correctly.
@@ -88,7 +88,8 @@ internal static class FontBrowser
                     dirty = false;
                     drawnWidth = Console.WindowWidth;
                     drawnHeight = Console.WindowHeight;
-                    Draw(shown, monospaced.Count, cursor, ref offset, query, filtering, images, foreground);
+                    Draw(shown, monospaced.Count, current, cursor, ref offset, query, filtering,
+                        images, foreground);
                 }
 
                 // Wait for a key, and redraw when the window changes size: the preview image
@@ -200,7 +201,7 @@ internal static class FontBrowser
             Console.Out.Write("\x1b_Ga=d,d=A\x1b\\");
             Console.Out.Write("\x1b[?25h\x1b[?1049l");
             Console.Out.Flush();
-            if (previousMode is { } mode) RestoreConsoleMode(mode);
+            if (previousMode is { } mode) ConsoleRaw.Restore(mode);
         }
 
         if (chosen is null) return 0;
@@ -211,75 +212,14 @@ internal static class FontBrowser
     }
 
 
-    // ---- console mode -----------------------------------------------------
-
-    private const int StdInput = -10;
-    private const int StdOutput = -11;
-    private const uint EnableProcessedOutput = 0x0001;
-    private const uint EnableLineInput = 0x0002;
-    private const uint EnableEchoInput = 0x0004;
-    private const uint EnableVirtualTerminalProcessing = 0x0004;
-
-    private readonly record struct ConsoleModes(uint Input, uint Output);
-
     /// <summary>
-    /// Prepares the console for a full-screen browser: raw input, so every key arrives as it is
-    /// pressed (nothing is echoed, Ctrl+C comes back as a key instead of killing the process
-    /// before the screen is restored), and virtual terminal processing on output, without which
-    /// a classic conhost window prints the escape sequences as text.
+    /// Rows the list covers: everything between the chip and the footer, so the footer sits on
+    /// the window's last row instead of leaving an empty one below it.
     /// </summary>
-    private static ConsoleModes? EnterRawMode()
-    {
-        IntPtr input = GetStdHandle(StdInput);
-        IntPtr output = GetStdHandle(StdOutput);
-        bool haveInput = GetConsoleMode(input, out uint inputMode);
-        bool haveOutput = GetConsoleMode(output, out uint outputMode);
-        if (!haveInput && !haveOutput) return null;
+    private static int ListRows() => Math.Max(3, Console.WindowHeight - 2);
 
-        if (haveInput)
-            SetConsoleMode(input, inputMode & ~(EnableLineInput | EnableEchoInput));
-        if (haveOutput)
-        {
-            SetConsoleMode(output,
-                outputMode | EnableProcessedOutput | EnableVirtualTerminalProcessing);
-        }
-
-        try
-        {
-            Console.TreatControlCAsInput = true;
-        }
-        catch (Exception)
-        {
-            // Without a console the setting is meaningless; the keys still arrive.
-        }
-
-        return new ConsoleModes(haveInput ? inputMode : 0, haveOutput ? outputMode : 0);
-    }
-
-    private static void RestoreConsoleMode(ConsoleModes modes)
-    {
-        try
-        {
-            Console.TreatControlCAsInput = false;
-        }
-        catch (Exception)
-        {
-            // Nothing to restore.
-        }
-
-        SetConsoleMode(GetStdHandle(StdInput), modes.Input);
-        SetConsoleMode(GetStdHandle(StdOutput), modes.Output);
-    }
-
-    [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int which);
-    [DllImport("kernel32.dll")] private static extern bool GetConsoleMode(IntPtr handle, out uint mode);
-    [DllImport("kernel32.dll")] private static extern bool SetConsoleMode(IntPtr handle, uint mode);
-
-    /// <summary>Rows the list covers: everything between the chip and the footer.</summary>
-    private static int ListRows() => Math.Max(3, Console.WindowHeight - 3);
-
-    private static void Draw(List<FontFamilyInfo> shown, int total, int cursor, ref int offset,
-        string query, bool filtering, bool images, (byte r, byte g, byte b) foreground)
+    private static void Draw(List<FontFamilyInfo> shown, int total, string current, int cursor,
+        ref int offset, string query, bool filtering, bool images, (byte r, byte g, byte b) foreground)
     {
         // The window can be wider than the buffer in a classic conhost window; anything past
         // the buffer width would wrap and shift every row below it.
@@ -327,10 +267,15 @@ internal static class FontBrowser
             if (index < shown.Count)
             {
                 string name = shown[index].Name;
-                if (name.Length > listWidth - 2) name = name[..(listWidth - 3)] + "\u2026";
+                // The font Gui is using carries a check in the column's last two cells,
+                // the way tsp marks the one in effect.
+                bool inUse = string.Equals(name, current, StringComparison.OrdinalIgnoreCase);
+                int room = listWidth - (inUse ? 4 : 2);
+                if (name.Length > room) name = name[..Math.Max(1, room - 1)] + "\u2026";
                 left = index == cursor
                     ? Accent + "\u258C " + Strong + name + Reset
                     : Muted + "  " + name + Reset;
+                if (inUse) left = Pad(left, listWidth - 2) + " " + Accent + "\u2713" + Reset;
             }
 
             string text = i < right.Count ? right[i] : string.Empty;

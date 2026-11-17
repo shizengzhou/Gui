@@ -22,6 +22,7 @@ internal static class Program
         "  +show-config    print the effective configuration in Ghostty format\n" +
         "  +list-keybinds  print the key bindings this build honors, as Ghostty keybind lines\n" +
         "  +list-fonts     browse the installed fonts; Enter writes font-family to the config\n" +
+        "  +list-themes    browse the bundled themes; Enter writes theme to the config\n" +
         "  +new-tab        open a new tab, starting the app when none is running\n" +
         "  +help           list the available actions\n" +
         "  +version        print the version\n" +
@@ -63,6 +64,9 @@ internal static class Program
                 return ListKeybinds.Run(rest);
             case "+list-fonts":
                 return ListFonts.Run(rest);
+
+            case "+list-themes":
+                return ListThemes.Run(rest);
 
             case "+new-tab":
                 return NewTab.Run(rest);

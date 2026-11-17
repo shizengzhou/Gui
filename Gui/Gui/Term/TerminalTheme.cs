@@ -166,9 +166,72 @@ public static class TerminalThemes
     private static string ThemeDirectory =>
         Path.Combine(AppContext.BaseDirectory, "Assets", "Themes");
 
+    /// <summary>
+    /// The "gui" folder under %APPDATA%, where the config file and the user's themes live. It
+    /// lives here rather than in Config so the theme loader's own harnesses (the ABI and
+    /// performance tests compile this file without the config parser) can still find it.
+    /// </summary>
+    public static string ConfigDirectory()
+    {
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return appData.Length == 0 ? string.Empty : Path.Combine(appData, "gui");
+    }
+
+    /// <summary>
+    /// The user's own themes: the "themes" folder beside the config file, the directory
+    /// Ghostty reads as "$XDG_CONFIG_HOME/ghostty/themes".
+    /// </summary>
+    public static string UserDirectory()
+    {
+        string directory = ConfigDirectory();
+        return directory.Length == 0 ? string.Empty : Path.Combine(directory, "themes");
+    }
+
+    /// <summary>
+    /// The light/dark split of a theme file, from its background: the perceived luminance
+    /// Ghostty's own theme list uses. Plain managed math, so listing themes needs neither the
+    /// native library nor a full palette.
+    /// </summary>
+    public static bool IsLightFile(string path)
+    {
+        try
+        {
+            foreach (string raw in File.ReadLines(path))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line[0] == '#') continue;
+
+                int equals = line.IndexOf('=');
+                if (equals <= 0) continue;
+                if (!line[..equals].Trim().Equals("background", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!ParseColor(line[(equals + 1)..].Trim(), out Rgb background)) return false;
+
+                double luminance = 0.299 * (background.R / 255.0) +
+                    0.587 * (background.G / 255.0) + 0.114 * (background.B / 255.0);
+                return luminance > 0.5;
+            }
+        }
+        catch (IOException)
+        {
+        }
+
+        return false;
+    }
+
     private static string? ThemeFile(string name)
     {
         if (!ValidName(name)) return null;
+
+        // The user's folder is searched first, so a theme there replaces the bundled one of
+        // the same name, the way Ghostty reads the config directory before its resources.
+        string user = UserDirectory();
+        if (user.Length > 0)
+        {
+            string mine = Path.Combine(user, name);
+            if (File.Exists(mine)) return mine;
+        }
+
         foreach (var folder in Folders)
         {
             string file = Path.Combine(ThemeDirectory, folder.Name, name);
@@ -178,13 +241,27 @@ public static class TerminalThemes
     }
 
     /// <summary>
-    /// Bundled Ghostty themes, sorted case-insensitively; the flag is the folder they
-    /// live in (light or dark). The folder is the light/dark classification, so
-    /// listing the menu never parses 890 files.
+    /// Every theme the pickers offer, sorted case-insensitively: the user's folder first, then
+    /// the bundled ones whose folder is the light/dark classification, so listing the menu never
+    /// parses 890 files. A user theme is classified from its background, and shadows a bundled
+    /// theme of the same name.
     /// </summary>
-    public static List<(string Name, bool Light)> Bundled()
+    public static List<(string Name, bool Light)> Available(string? userDirectory = null)
     {
+        userDirectory ??= UserDirectory();
         var themes = new List<(string, bool)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrEmpty(userDirectory) && Directory.Exists(userDirectory))
+        {
+            foreach (string file in Directory.EnumerateFiles(userDirectory))
+            {
+                string name = Path.GetFileName(file);
+                if (!ValidName(name) || !seen.Add(name)) continue;
+                themes.Add((name, IsLightFile(file)));
+            }
+        }
+
         foreach (var folder in Folders)
         {
             string directory = Path.Combine(ThemeDirectory, folder.Name);
@@ -193,7 +270,7 @@ public static class TerminalThemes
             foreach (string file in Directory.EnumerateFiles(directory))
             {
                 string name = Path.GetFileName(file);
-                if (!ValidName(name)) continue;
+                if (!ValidName(name) || !seen.Add(name)) continue;
                 themes.Add((name, folder.Light));
             }
         }
