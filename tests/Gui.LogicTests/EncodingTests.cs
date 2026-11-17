@@ -33,22 +33,31 @@ public class EncodingTests
     private static IEnumerable<string> SourceFiles()
     {
         string root = RepositoryRoot();
-        foreach (string path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+
+        // The skip list has to apply while walking, not after: .git holds worktree
+        // administrative directories that a plain recursive enumeration dies on ("access to
+        // the path ... is denied"), and bin/obj/node_modules are not worth reading at all.
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
         {
-            string relative = Path.GetRelativePath(root, path);
-            string[] parts = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string directory = pending.Pop();
 
-            bool skipped = false;
-            foreach (string part in parts)
+            foreach (string child in Directory.EnumerateDirectories(directory))
             {
-                if (SkipDirectories.Contains(part, StringComparer.OrdinalIgnoreCase)) skipped = true;
+                string name = Path.GetFileName(child);
+                if (SkipDirectories.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+                pending.Push(child);
             }
-            if (skipped) continue;
 
-            string extension = Path.GetExtension(path);
-            if (!Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase)) continue;
+            foreach (string path in Directory.EnumerateFiles(directory))
+            {
+                string extension = Path.GetExtension(path);
+                if (!Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase)) continue;
 
-            yield return relative;
+                yield return Path.GetRelativePath(root, path);
+            }
         }
     }
 
