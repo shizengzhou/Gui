@@ -158,11 +158,11 @@ public static class ListKeybinds
     /// </summary>
     private static string ChordText(string chord, Dictionary<string, int>? palette)
     {
-        string[] parts = chord.Split('+');
-        var sb = new StringBuilder();
-        for (int i = 0; i < parts.Length - 1; i++)
+        (string prefix, string body) = SplitTable(chord);
+        (string mods, string key) = SplitChord(body);
+        var sb = new StringBuilder(prefix);
+        foreach (string name in mods.Split('+', StringSplitOptions.RemoveEmptyEntries))
         {
-            string name = parts[i];
             string label = name.PadRight(5);
             if (palette is not null && palette.TryGetValue(name, out int index))
                 sb.Append("\u001b[38;5;").Append(index).Append('m').Append(label).Append(Reset);
@@ -172,7 +172,7 @@ public static class ListKeybinds
             sb.Append(" + ");
         }
 
-        sb.Append(parts[^1]);
+        sb.Append(KeyText(key));
         return sb.ToString();
     }
 
@@ -205,8 +205,58 @@ public static class ListKeybinds
     /// </summary>
     private static string Canonical(string chord)
     {
-        string[] parts = chord.Split('+');
-        var modifiers = new HashSet<string>(parts[..^1], StringComparer.Ordinal);
+        (string prefix, string body) = SplitTable(chord);
+        if (!body.Contains('>')) return prefix + CanonicalChord(body);
+
+        var text = new StringBuilder();
+        foreach (string part in body.Split('>'))
+        {
+            if (text.Length > 0) text.Append('>');
+            text.Append(CanonicalChord(part));
+        }
+        return prefix + text;
+    }
+
+    /// <summary>
+    /// Splits "table/ctrl+a" into its table prefix and the chord. A table name never holds
+    /// '/', so the first one marks the boundary.
+    /// </summary>
+    private static (string Prefix, string Chord) SplitTable(string chord)
+    {
+        var prefix = new StringBuilder();
+        while (TryPrefix(ref chord, out string before)) prefix.Append(before);
+
+        int slash = chord.IndexOf('/');
+        if (slash > 0)
+        {
+            prefix.Append(chord, 0, slash + 1);
+            chord = chord[(slash + 1)..];
+            while (TryPrefix(ref chord, out string after)) prefix.Append(after);
+        }
+
+        return (prefix.ToString(), chord);
+    }
+
+    /// <summary>Strips one trigger prefix ("performable:" and friends) when it leads the chord.</summary>
+    private static bool TryPrefix(ref string chord, out string prefix)
+    {
+        foreach (string known in new[] { "performable:", "unconsumed:", "all:", "physical:", "global:" })
+        {
+            if (!chord.StartsWith(known, StringComparison.Ordinal)) continue;
+            prefix = known;
+            chord = chord[known.Length..];
+            return true;
+        }
+
+        prefix = string.Empty;
+        return false;
+    }
+
+    private static string CanonicalChord(string chord)
+    {
+        (string mods, string key) = SplitChord(chord);
+        var modifiers = new HashSet<string>(
+            mods.Split('+', StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
         var sb = new StringBuilder();
         foreach (string name in new[] { "super", "ctrl", "alt", "shift" })
         {
@@ -214,8 +264,32 @@ public static class ListKeybinds
             sb.Append(name).Append('+');
         }
 
-        sb.Append(parts[^1]);
+        sb.Append(key);
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Splits a canonical chord into its modifiers and its key. A codepoint key ("u+03c0")
+    /// carries a '+' of its own, so the last '+' is not always the boundary.
+    /// </summary>
+    private static (string Mods, string Key) SplitChord(string chord)
+    {
+        int codepoint = chord.LastIndexOf("+u+", StringComparison.Ordinal);
+        if (codepoint > 0) return (chord[..codepoint], chord[(codepoint + 1)..]);
+        if (chord.Length > 2 && chord[0] == 'u' && chord[1] == '+') return (string.Empty, chord);
+
+        int plus = chord.LastIndexOf('+');
+        return plus < 0 ? (string.Empty, chord) : (chord[..plus], chord[(plus + 1)..]);
+    }
+
+    /// <summary>Renders a key for the table: a codepoint key prints as its character.</summary>
+    private static string KeyText(string key)
+    {
+        if (key.Length < 4 || key[0] != 'u' || key[1] != '+') return key;
+        if (int.TryParse(key[2..], System.Globalization.NumberStyles.HexNumber, null, out int codepoint) &&
+            codepoint > 0 && codepoint <= 0x10FFFF)
+            return char.ConvertFromUtf32(codepoint);
+        return key;
     }
 
     private static int CompareEntries(Entry a, Entry b)
@@ -232,11 +306,19 @@ public static class ListKeybinds
     /// <summary>Modifier bit value, modifier count and key name of a chord.</summary>
     private static (int Mods, int Count, string Key) Split(string chord)
     {
-        string[] parts = chord.Split('+');
+        // A sequence sorts by its first chord; the rest stays in the key so two sequences
+        // that start the same way keep a stable order.
+        (string prefix, string body) = SplitTable(chord);
+        int greater = body.IndexOf('>');
+        string first = greater < 0 ? body : body[..greater];
+        string rest = greater < 0 ? string.Empty : body[greater..];
+
+        (string modsText, string key) = SplitChord(first);
+        string[] names = modsText.Split('+', StringSplitOptions.RemoveEmptyEntries);
         int mods = 0;
-        for (int i = 0; i < parts.Length - 1; i++)
+        foreach (string name in names)
         {
-            mods |= parts[i] switch
+            mods |= name switch
             {
                 "super" => GhosttyNative.MODS_SUPER,
                 "alt" => GhosttyNative.MODS_ALT,
@@ -246,7 +328,7 @@ public static class ListKeybinds
             };
         }
 
-        return (mods, parts.Length - 1, parts[^1]);
+        return (mods, names.Length, prefix + key + rest);
     }
 
     /// <summary>

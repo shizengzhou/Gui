@@ -18,23 +18,139 @@ internal enum KeybindMatch
     Unbound,
 }
 
+/// <summary>Where a matched binding lives and how it has to be dispatched.</summary>
+internal readonly record struct KeybindMatchInfo(
+    string? Table, bool Performable, bool All, bool Unconsumed)
+{
+    public static readonly KeybindMatchInfo None = new(null, false, false, false);
+}
+
+/// <summary>How one key advances a multi-key trigger sequence.</summary>
+internal enum KeybindStep
+{
+    /// <summary>No sequence is open and this chord does not start one.</summary>
+    None,
+
+    /// <summary>The chord is a sequence prefix; the next key decides the binding.</summary>
+    Pending,
+
+    /// <summary>The chord completed a sequence bound to an action.</summary>
+    Action,
+
+    /// <summary>A sequence was open and this chord does not continue it.</summary>
+    Miss,
+}
+
 /// <summary>
 /// Parses Ghostty's "keybind = &lt;trigger&gt;=&lt;action&gt;" lines and answers two questions:
 /// which action a chord runs, and which chord the palette should advertise for an action.
 ///
 /// Triggers are normalised to a canonical "ctrl+shift+key" form, so the order the modifiers
-/// were written in does not matter. Defaults stay in the hardcoded key handler; this class
-/// only carries the user's additions, removals and the "clear" state.
+/// were written in does not matter. A trigger may be several chords separated by "&gt;"
+/// (Ghostty's trigger sequence); the chords are joined the same way and `Step` advances the
+/// sequence one key at a time. Defaults stay in the hardcoded key handler; this class only
+/// carries the user's additions, removals and the "clear" state.
 /// </summary>
 internal sealed class Keybinds
 {
-    private readonly Dictionary<string, string> _bindings = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _unbound = new(StringComparer.Ordinal);
+    /// <summary>
+    /// One set of bindings: the default set (Name is empty) or a named key table. A lookup
+    /// walks the active tables from the innermost outwards and ends at the default set.
+    /// </summary>
+    private sealed class BindingSet
+    {
+        public BindingSet(string name) => Name = name;
+
+        public string Name { get; }
+        public Dictionary<string, string> Bindings { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> Unbound { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Chords written with the "performable:" prefix.</summary>
+        public HashSet<string> Performable { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Chords written with the "all:" (or "global:") prefix.</summary>
+        public HashSet<string> All { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Chords written with the "physical:" prefix.</summary>
+        public HashSet<string> Physical { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Chords written with the "unconsumed:" prefix.</summary>
+        public HashSet<string> Unconsumed { get; } = new(StringComparer.Ordinal);
+        public List<(string Chord, string Action)> Ordered { get; } = new();
+
+        /// <summary>True when a longer, still-bound sequence starts with this chord.</summary>
+        public bool IsPrefix(string chord)
+        {
+            foreach (KeyValuePair<string, string> entry in Bindings)
+            {
+                if (entry.Key.Length <= chord.Length) continue;
+                if (entry.Key[chord.Length] != '>') continue;
+                if (entry.Key.StartsWith(chord, StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Forgets every line that named this chord.</summary>
+        public void Remove(string chord)
+        {
+            Bindings.Remove(chord);
+            Unbound.Remove(chord);
+            Performable.Remove(chord);
+            All.Remove(chord);
+            Physical.Remove(chord);
+            Unconsumed.Remove(chord);
+            Ordered.RemoveAll(entry => entry.Chord == chord);
+        }
+
+        /// <summary>
+        /// Drops every sequence that starts with the given chord. Ghostty does this when a
+        /// non-sequence binding uses a chord that was previously a sequence prefix.
+        /// </summary>
+        public void RemoveSequencesUnder(string chord)
+        {
+            string prefix = chord + ">";
+            var stale = new List<string>();
+            foreach (string key in Bindings.Keys)
+                if (key.StartsWith(prefix, StringComparison.Ordinal)) stale.Add(key);
+            foreach (string key in stale) Bindings.Remove(key);
+
+            Unbound.RemoveWhere(key => key.StartsWith(prefix, StringComparison.Ordinal));
+            Performable.RemoveWhere(key => key.StartsWith(prefix, StringComparison.Ordinal));
+            All.RemoveWhere(key => key.StartsWith(prefix, StringComparison.Ordinal));
+            Physical.RemoveWhere(key => key.StartsWith(prefix, StringComparison.Ordinal));
+            Unconsumed.RemoveWhere(key => key.StartsWith(prefix, StringComparison.Ordinal));
+            Ordered.RemoveAll(entry => entry.Chord.StartsWith(prefix, StringComparison.Ordinal));
+        }
+
+        public void Clear()
+        {
+            Bindings.Clear();
+            Unbound.Clear();
+            Performable.Clear();
+            All.Clear();
+            Physical.Clear();
+            Unconsumed.Clear();
+            Ordered.Clear();
+        }
+    }
+
+    private readonly BindingSet _root = new(string.Empty);
+
+    /// <summary>The named key tables the config defined, keyed by name.</summary>
+    private readonly Dictionary<string, BindingSet> _tables = new(StringComparer.Ordinal);
 
     /// <summary>Chords the user marked with the "global:" prefix, in canonical form.</summary>
     private readonly HashSet<string> _global = new(StringComparer.Ordinal);
-    private readonly List<(string Chord, string Action)> _ordered = new();
     private bool _cleared;
+
+    /// <summary>
+    /// True once a binding names a Unicode codepoint: only then does the caller have to
+    /// probe the layout for the character a key produces (a user32 call per key press).
+    /// </summary>
+    private bool _hasCodepoints;
+
+    /// <summary>True when a codepoint binding exists, so a probe is worth doing.</summary>
+    public bool HasCodepoints => _hasCodepoints;
 
     /// <summary>
     /// The default chords of the actions this build implements, in the order the UI prefers
@@ -135,45 +251,162 @@ internal sealed class Keybinds
         }
 
         int equals = text.IndexOf('=');
-        if (equals <= 0)
+        if (equals < 0)
         {
+            // "table/" defines a table and clears every binding in it.
+            if (text.EndsWith('/'))
+            {
+                DeclareTable(text[..^1].Trim());
+                return;
+            }
+
             Diag.Log("keybind", $"ignored '{text}'");
             return;
         }
 
-        string trigger = StripPrefixes(text[..equals].Trim(), out bool global);
+        string left = text[..equals].Trim();
         string action = text[(equals + 1)..].Trim();
-        string? chord = NormalizeTrigger(trigger);
-        if (chord is null)
+
+        // A trigger may name a table in front of it: "<table>/ctrl+a=new_window".
+        string tableName = string.Empty;
+        string triggerText = left;
+        int slash = left.IndexOf('/');
+        if (slash >= 0)
+        {
+            tableName = left[..slash].Trim();
+            triggerText = left[(slash + 1)..].Trim();
+            if (!IsTableName(tableName))
+            {
+                Diag.Log("keybind", $"invalid key table '{tableName}'");
+                return;
+            }
+
+            // "table/=" only clears the table.
+            if (triggerText.Length == 0)
+            {
+                DeclareTable(tableName);
+                return;
+            }
+        }
+
+        string trigger = StripPrefixes(triggerText, out bool global, out bool performable, out bool all,
+            out bool physical, out bool unconsumed);
+        string? sequence = NormalizeSequence(trigger, physical, out int chords);
+        if (sequence is null)
         {
             Diag.Log("keybind", $"unsupported trigger '{trigger}'");
             return;
         }
 
-        _unbound.Remove(chord);
-        _bindings.Remove(chord);
-        _global.Remove(chord);
-        _ordered.RemoveAll(entry => entry.Chord == chord);
-
-        // An empty action removes the binding so the shell sees the key again.
-        if (action.Length == 0)
+        // A global chord is registered with the OS as one system-wide key, so Ghostty does
+        // not allow a sequence behind that prefix, and a table only exists while it is
+        // active, so a line inside one cannot be global either.
+        if (global && chords > 1)
         {
-            _unbound.Add(chord);
+            Diag.Log("keybind", $"trigger sequence '{trigger}' cannot be global");
+            return;
+        }
+        if (global && tableName.Length > 0)
+        {
+            Diag.Log("keybind", $"key table '{tableName}' cannot hold a global binding");
             return;
         }
 
-        _bindings[chord] = action;
-        _ordered.Add((chord, action));
-        if (global) _global.Add(chord);
+        BindingSet set = tableName.Length == 0 ? _root : Table(tableName);
+
+        set.Remove(sequence);
+        _global.Remove(sequence);
+
+        // A direct binding of a chord other lines use as a sequence prefix drops those
+        // sequences, so the two cannot both claim the same first key.
+        if (chords == 1) set.RemoveSequencesUnder(sequence);
+
+        // An unbind of a codepoint has to probe too, or the key would keep falling through.
+        if (sequence.Contains("u+", StringComparison.Ordinal)) _hasCodepoints = true;
+
+        // An empty action — or Ghostty's spelled-out "unbind" — removes the binding so the
+        // shell sees the key again.
+        if (action.Length == 0 || string.Equals(action, "unbind", StringComparison.Ordinal))
+        {
+            set.Unbound.Add(sequence);
+            return;
+        }
+
+        set.Bindings[sequence] = action;
+        set.Ordered.Add((sequence, action));
+        if (performable) set.Performable.Add(sequence);
+        if (all) set.All.Add(sequence);
+        if (physical) set.Physical.Add(sequence);
+
+        // Ghostty: "all:" and "global:" always consume, since they are not tied to one
+        // surface and have nothing to encode the key into.
+        if (unconsumed && !all) set.Unconsumed.Add(sequence);
+
+        if (global) _global.Add(sequence);
+    }
+
+    /// <summary>"table/" (or "table/=") defines the table and clears every binding in it.</summary>
+    private void DeclareTable(string name)
+    {
+        if (!IsTableName(name))
+        {
+            Diag.Log("keybind", $"invalid key table '{name}'");
+            return;
+        }
+        Table(name).Clear();
+    }
+
+    /// <summary>Ghostty reserves the characters its trigger syntax uses.</summary>
+    private static bool IsTableName(string name)
+    {
+        if (name.Length == 0) return false;
+        foreach (char c in name)
+            if (c is '/' or '=' or '+' or '>') return false;
+        return true;
+    }
+
+    private BindingSet Table(string name)
+    {
+        if (_tables.TryGetValue(name, out BindingSet? set)) return set;
+        set = new BindingSet(name);
+        _tables[name] = set;
+        return set;
+    }
+
+    /// <summary>True when the config defined a table with this name.</summary>
+    public bool HasTable(string name) => _tables.ContainsKey(name);
+
+    /// <summary>True when any line carries the "all:" (or "global:") prefix.</summary>
+    public bool HasAll
+    {
+        get
+        {
+            if (_root.All.Count > 0) return true;
+            foreach (BindingSet set in _tables.Values)
+                if (set.All.Count > 0) return true;
+            return false;
+        }
+    }
+
+    /// <summary>True when any line carries the "performable:" prefix.</summary>
+    public bool HasPerformable
+    {
+        get
+        {
+            if (_root.Performable.Count > 0) return true;
+            foreach (BindingSet set in _tables.Values)
+                if (set.Performable.Count > 0) return true;
+            return false;
+        }
     }
 
     private void ResetOverrides()
     {
-        _bindings.Clear();
-        _unbound.Clear();
+        _root.Clear();
+        _tables.Clear();
         _global.Clear();
-        _ordered.Clear();
         _cleared = false;
+        _hasCodepoints = false;
     }
 
     /// <summary>
@@ -191,33 +424,135 @@ internal sealed class Keybinds
                 {
                     if (!trigger.StartsWith("global:", StringComparison.OrdinalIgnoreCase)) continue;
                     string? chord = NormalizeTrigger(trigger);
-                    if (chord is null || _unbound.Contains(chord)) continue;
-                    // An explicit line for this chord wins; it is listed from _ordered below.
-                    if (_bindings.ContainsKey(chord)) continue;
+                    if (chord is null || _root.Unbound.Contains(chord)) continue;
+                    // An explicit line for this chord wins; it is listed from Ordered below.
+                    if (_root.Bindings.ContainsKey(chord)) continue;
+                    // A chord a sequence starts with never fires on its own.
+                    if (_root.IsPrefix(chord)) continue;
                     yield return (chord, entry.Key);
                 }
             }
         }
 
-        foreach ((string chord, string action) in _ordered)
+        foreach ((string chord, string action) in _root.Ordered)
             if (_global.Contains(chord)) yield return (chord, action);
     }
 
     /// <summary>Looks up the chord the event describes, including the "ctrl+plus" spelling.</summary>
-    public KeybindMatch Resolve(int mods, VirtualKey key, out string? action)
+    public KeybindMatch Resolve(int mods, VirtualKey key, out string? action, uint codepoint = 0)
+        => Resolve(mods, key, out action, codepoint, null, out _);
+
+    /// <summary>
+    /// The same lookup with the surface's active key tables: the innermost table answers
+    /// first, then the ones below it, then the default set. <paramref name="sourceTable"/>
+    /// is where the winning line lives (null for the default set), which is what the caller
+    /// needs to drop a "once" table after it fires.
+    /// </summary>
+    public KeybindMatch Resolve(int mods, VirtualKey key, out string? action, uint codepoint,
+        IReadOnlyList<string>? tables, out KeybindMatchInfo info, Func<string, bool>? canPerform = null)
     {
         action = null;
-        foreach ((int chordMods, string name) in Candidates(mods, key))
+        info = KeybindMatchInfo.None;
+
+        foreach (BindingSet set in Sets(tables))
         {
-            string chord = ChordName(chordMods, name);
-            if (_bindings.TryGetValue(chord, out string? bound))
+            foreach ((int chordMods, string name) in Candidates(mods, key, codepoint))
             {
-                action = bound;
-                return KeybindMatch.Action;
+                string chord = ChordName(chordMods, name);
+                if (set.Bindings.TryGetValue(chord, out string? bound))
+                {
+                    // "performable:" declines the key when the action cannot run, so the
+                    // lookup keeps going: another chord spelling, table or the default set
+                    // may still answer.
+                    if (canPerform is not null && set.Performable.Contains(chord) && !canPerform(bound))
+                        continue;
+
+                    action = bound;
+                    info = Info(set, chord);
+                    return KeybindMatch.Action;
+                }
+                if (set.Unbound.Contains(chord)) return KeybindMatch.Unbound;
             }
-            if (_unbound.Contains(chord)) return KeybindMatch.Unbound;
         }
         return KeybindMatch.None;
+    }
+
+    /// <summary>
+    /// Advances a trigger sequence one key at a time. <paramref name="pending"/> is the
+    /// sequence built so far, or null when none is open; `Pending` returns the longer
+    /// sequence in <paramref name="next"/>. A chord that is also a complete binding still
+    /// pends when a longer sequence starts with it, which is Ghostty's rule that a prefix
+    /// overrides a plain binding of the same chord.
+    /// </summary>
+    public KeybindStep Step(string? pending, int mods, VirtualKey key,
+        out string? action, out string next, uint codepoint = 0)
+        => Step(pending, mods, key, out action, out next, codepoint, null, out _);
+
+    /// <summary>The same step with the surface's active key tables.</summary>
+    public KeybindStep Step(string? pending, int mods, VirtualKey key,
+        out string? action, out string next, uint codepoint,
+        IReadOnlyList<string>? tables, out KeybindMatchInfo info, Func<string, bool>? canPerform = null)
+    {
+        action = null;
+        next = string.Empty;
+        info = KeybindMatchInfo.None;
+
+        foreach (BindingSet set in Sets(tables))
+        {
+            foreach ((int chordMods, string name) in Candidates(mods, key, codepoint))
+            {
+                string chord = ChordName(chordMods, name);
+                string sequence = pending is null ? chord : pending + ">" + chord;
+
+                if (set.IsPrefix(sequence))
+                {
+                    next = sequence;
+                    return KeybindStep.Pending;
+                }
+
+                // A chord that starts no sequence is Resolve's business; only a continuation
+                // can complete a sequence.
+                if (pending is null)
+                {
+                    // An unbind in a table still shadows the sets below it.
+                    if (set.Unbound.Contains(chord)) return KeybindStep.None;
+                    continue;
+                }
+
+                if (set.Unbound.Contains(sequence)) return KeybindStep.Miss;
+                if (set.Bindings.TryGetValue(sequence, out string? bound))
+                {
+                    // A sequence whose action cannot run is reset: the caller sees a miss
+                    // and nothing of the sequence fires.
+                    if (canPerform is not null && set.Performable.Contains(sequence) && !canPerform(bound))
+                        return KeybindStep.Miss;
+
+                    action = bound;
+                    info = Info(set, sequence);
+                    return KeybindStep.Action;
+                }
+            }
+        }
+
+        return pending is null ? KeybindStep.None : KeybindStep.Miss;
+    }
+
+    /// <summary>Where a matched chord lives and how the caller has to dispatch it.</summary>
+    private static KeybindMatchInfo Info(BindingSet set, string chord)
+        => new(set.Name.Length == 0 ? null : set.Name,
+            set.Performable.Contains(chord),
+            set.All.Contains(chord),
+            set.Unconsumed.Contains(chord));
+
+    /// <summary>The sets a lookup walks: innermost table first, the default set last.</summary>
+    private IEnumerable<BindingSet> Sets(IReadOnlyList<string>? tables)
+    {
+        if (tables is not null)
+        {
+            for (int i = tables.Count - 1; i >= 0; i--)
+                if (_tables.TryGetValue(tables[i], out BindingSet? set)) yield return set;
+        }
+        yield return _root;
     }
 
     /// <summary>
@@ -227,6 +562,36 @@ internal sealed class Keybinds
     /// </summary>
     public IEnumerable<(string Chord, string Action)> Effective()
     {
+        foreach ((string chord, string action) in RootEffective())
+            yield return (chord, action);
+
+        var names = new List<string>(_tables.Keys);
+        names.Sort(StringComparer.Ordinal);
+        foreach (string name in names)
+            foreach ((string chord, string action) in _tables[name].Ordered)
+                yield return (name + "/" + Spell(_tables[name], chord), action);
+    }
+
+    /// <summary>The config spelling of a binding, prefixes included.</summary>
+    private static string Spell(BindingSet set, string chord)
+    {
+        bool all = set.All.Contains(chord);
+        bool performable = set.Performable.Contains(chord);
+        bool physical = set.Physical.Contains(chord);
+        bool unconsumed = set.Unconsumed.Contains(chord);
+        if (!all && !performable && !physical && !unconsumed) return chord;
+
+        var text = new StringBuilder();
+        if (all) text.Append("all:");
+        if (performable) text.Append("performable:");
+        if (physical) text.Append("physical:");
+        if (unconsumed) text.Append("unconsumed:");
+        return text.Append(chord).ToString();
+    }
+
+    /// <summary>Every binding of the default set, in config spelling.</summary>
+    private IEnumerable<(string Chord, string Action)> RootEffective()
+    {
         if (!_cleared)
         {
             foreach (KeyValuePair<string, string[]> entry in Defaults)
@@ -234,16 +599,22 @@ internal sealed class Keybinds
                 foreach (string trigger in entry.Value)
                 {
                     string? chord = NormalizeTrigger(trigger);
-                    if (chord is null || _unbound.Contains(chord)) continue;
-                    // An explicit line for this chord wins (it is listed from _ordered below).
-                    if (_bindings.ContainsKey(chord)) continue;
+                    if (chord is null || _root.Unbound.Contains(chord)) continue;
+                    // An explicit line for this chord wins (it is listed from Ordered below).
+                    if (_root.Bindings.ContainsKey(chord)) continue;
+                    // A chord a sequence starts with never fires on its own.
+                    if (_root.IsPrefix(chord)) continue;
                     yield return (chord, entry.Key);
                 }
             }
         }
 
-        foreach ((string chord, string action) in _ordered)
-            yield return (chord, action);
+        foreach ((string chord, string action) in _root.Ordered)
+        {
+            // The first chord of a sequence is not a binding of its own.
+            if (!chord.Contains('>') && _root.IsPrefix(chord)) continue;
+            yield return (Spell(_root, chord), action);
+        }
     }
 
     /// <summary>
@@ -260,8 +631,10 @@ internal sealed class Keybinds
         foreach (string trigger in defaults)
             if (IsDefaultActive(trigger, actionId)) return Pretty(trigger);
 
-        foreach ((string chord, string action) in _ordered)
-            if (action == actionId) return Pretty(chord);
+        // Ghostty keeps performable bindings out of the menus: the chord only runs while the
+        // action can actually do something, so advertising it as "the" shortcut would lie.
+        foreach ((string chord, string action) in _root.Ordered)
+            if (action == actionId && !_root.Performable.Contains(chord)) return Pretty(chord);
 
         return defaults.Length > 0 ? string.Empty : fallback;
     }
@@ -273,7 +646,7 @@ internal sealed class Keybinds
     public List<string> Chords(string actionId)
     {
         var chords = new List<string>();
-        foreach ((string chord, string action) in Effective())
+        foreach ((string chord, string action) in RootEffective())
             if (action == actionId) chords.Add(Pretty(chord));
         return chords;
     }
@@ -282,8 +655,9 @@ internal sealed class Keybinds
     {
         if (_cleared) return false;
         string? chord = NormalizeTrigger(trigger);
-        if (chord is null || _unbound.Contains(chord)) return false;
-        if (_bindings.TryGetValue(chord, out string? bound)) return bound == actionId;
+        if (chord is null || _root.Unbound.Contains(chord)) return false;
+        if (_root.IsPrefix(chord)) return false;
+        if (_root.Bindings.TryGetValue(chord, out string? bound)) return bound == actionId;
         return true;
     }
 
@@ -298,44 +672,74 @@ internal sealed class Keybinds
     };
 
     /// <summary>
-    /// Removes the prefixes Ghostty puts in front of a trigger. "global:" is the one that
-    /// changes behaviour here (the chord is registered system-wide); the others are accepted
-    /// so a real Ghostty config keeps loading.
+    /// Removes the prefixes Ghostty puts in front of a trigger. "global:" and "performable:"
+    /// change behaviour here (the chord is registered system-wide; the action has to be able
+    /// to run); the others are accepted so a real Ghostty config keeps loading.
     /// </summary>
-    private static string StripPrefixes(string trigger, out bool global)
+    private static string StripPrefixes(string trigger, out bool global, out bool performable, out bool all,
+        out bool physical, out bool unconsumed)
     {
         global = false;
-        while (true)
-        {
-            int colon = trigger.IndexOf(':');
-            if (colon <= 0) return trigger;
+        performable = false;
+        all = false;
+        physical = false;
+        unconsumed = false;
 
-            switch (trigger[..colon].Trim().ToLowerInvariant())
-            {
-                case "global":
-                    global = true;
-                    break;
-                case "all":
-                case "unconsumed":
-                case "physical":
-                    break;
-                default:
-                    return trigger;
-            }
+        int colon = trigger.IndexOf(':');
+        while (colon > 0)
+        {
+            string name = trigger[..colon].Trim().ToLowerInvariant();
+            if (name is not ("global" or "performable" or "all" or "unconsumed" or "physical")) break;
+
+            global |= name == "global";
+            performable |= name == "performable";
+            all |= name == "all";
+            physical |= name == "physical";
+            unconsumed |= name == "unconsumed";
+
             trigger = trigger[(colon + 1)..].TrimStart();
+            colon = trigger.IndexOf(':');
         }
+
+        // Ghostty: "global:" implies "all:" — a system-wide chord has no focused surface.
+        all |= global;
+        return trigger;
+    }
+
+    /// <summary>
+    /// Parses a trigger into its canonical chords, joining a sequence with "&gt;".
+    /// Returns null for anything this build cannot register: key tables (the "/" form) or
+    /// a chord with an unknown key name.
+    /// </summary>
+    private static string? NormalizeSequence(string trigger, bool physical, out int chords)
+    {
+        chords = 0;
+        if (trigger.Contains('/')) return null;
+
+        string[] parts = trigger.Split('>');
+        var names = new string[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string? chord = NormalizeTrigger(parts[i].Trim(), physical);
+            if (chord is null) return null;
+            names[i] = chord;
+        }
+
+        chords = names.Length;
+        return string.Join('>', names);
     }
 
     /// <summary>
     /// Parses "ctrl+shift+t", "alt+shift+plus", "global:ctrl+backquote" or
     /// "physical:ctrl+comma" into the canonical chord.
     /// </summary>
-    private static string? NormalizeTrigger(string trigger)
+    private static string? NormalizeTrigger(string trigger, bool physical = false)
     {
-        trigger = StripPrefixes(trigger.Trim(), out _);
+        trigger = StripPrefixes(trigger.Trim(), out _, out _, out _, out bool prefixPhysical, out _);
+        physical |= prefixPhysical;
         if (trigger.Length == 0) return null;
 
-        // This build has no key tables or chorded triggers.
+        // A single chord never carries the sequence or key-table separators.
         if (trigger.Contains('/') || trigger.Contains('>')) return null;
 
         string keyPart;
@@ -358,7 +762,7 @@ internal sealed class Keybinds
             modPart = plus < 0 ? string.Empty : trigger[..plus];
         }
 
-        string? key = NormalizeKey(keyPart);
+        string? key = NormalizeKey(keyPart, physical);
         if (key is null) return null;
 
         int mods = 0;
@@ -385,9 +789,10 @@ internal sealed class Keybinds
         return ChordName(mods, key);
     }
 
-    private static string? NormalizeKey(string name)
+    private static string? NormalizeKey(string name, bool physical)
     {
-        name = name.Trim().ToLowerInvariant();
+        string raw = name.Trim();
+        name = raw.ToLowerInvariant();
         switch (name)
         {
             case "esc": return "escape";
@@ -433,7 +838,80 @@ internal sealed class Keybinds
             name[3] is >= '0' and <= '9')
             return name;
 
+        // Anything else that is exactly one Unicode codepoint is a codepoint trigger: it
+        // matches whatever key produces that character under the active layout. ASCII
+        // letters and digits stay physical names (above), which is what "a" and "0" always
+        // meant here.
+        bool single = raw.Length == 1 ? !char.IsSurrogate(raw[0])
+            : raw.Length == 2 && char.IsSurrogatePair(raw, 0);
+        if (single)
+        {
+            // "physical:" promises a physical key code, so a character that is not one of
+            // the names above is a config error instead of a codepoint trigger.
+            if (physical) return null;
+
+            int codepoint = FoldCodepoint((uint)char.ConvertToUtf32(raw, 0));
+            if (codepoint > 0) return CodepointName(codepoint);
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// A codepoint key is stored as "u+03c0": the hex value cannot collide with a key name
+    /// and survives being read back out of a chord string.
+    /// </summary>
+    private static string CodepointName(int codepoint) => "u+" + codepoint.ToString("x4");
+
+    private static bool TryCodepoint(string key, out int codepoint)
+    {
+        codepoint = 0;
+        if (key.Length < 4 || key[0] != 'u' || key[1] != '+') return false;
+
+        int value = 0;
+        for (int i = 2; i < key.Length; i++)
+        {
+            char c = key[i];
+            int digit = c switch
+            {
+                >= '0' and <= '9' => c - '0',
+                >= 'a' and <= 'f' => c - 'a' + 10,
+                _ => -1,
+            };
+            if (digit < 0) return false;
+            value = value * 16 + digit;
+        }
+
+        if (value == 0 || value > 0x10FFFF) return false;
+        codepoint = value;
+        return true;
+    }
+
+    /// <summary>
+    /// Case-folds a produced codepoint the way the config spelling is folded (the trigger
+    /// text goes through ToLowerInvariant), so "Ä" and "ä" are one trigger, matching
+    /// Ghostty's case-insensitive codepoint matching.
+    /// </summary>
+    private static int FoldCodepoint(uint codepoint)
+    {
+        if (codepoint == 0 || codepoint > 0x10FFFF || codepoint is >= 0xD800 and <= 0xDFFF) return 0;
+
+        string text = char.ConvertFromUtf32((int)codepoint).ToLowerInvariant();
+        return text.Length == 0 ? 0 : char.ConvertToUtf32(text, 0);
+    }
+
+    /// <summary>
+    /// Splits a canonical chord into its modifier prefix and its key. A codepoint key
+    /// ("u+03c0") carries a '+' of its own, so splitting at the last '+' would cut it in half.
+    /// </summary>
+    private static (string Mods, string Key) SplitChord(string chord)
+    {
+        int codepoint = chord.LastIndexOf("+u+", StringComparison.Ordinal);
+        if (codepoint > 0) return (chord[..codepoint], chord[(codepoint + 1)..]);
+        if (TryCodepoint(chord, out _)) return (string.Empty, chord);
+
+        int plus = chord.LastIndexOf('+');
+        return plus < 0 ? (string.Empty, chord) : (chord[..plus], chord[(plus + 1)..]);
     }
 
     private static string ChordName(int mods, string key)
@@ -506,47 +984,68 @@ internal sealed class Keybinds
     /// <summary>
     /// The exact chord first, then the "ctrl+plus"/"ctrl+equal" spellings that share one
     /// physical key. Shift is dropped for those glyph keys because the glyph already implies
-    /// it on most layouts.
+    /// it on most layouts. A codepoint binding comes last: Ghostty gives physical keys
+    /// priority over codepoints for the same press.
     /// </summary>
-    private static IEnumerable<(int Mods, string Name)> Candidates(int mods, VirtualKey key)
+    private IEnumerable<(int Mods, string Name)> Candidates(int mods, VirtualKey key, uint codepoint)
     {
         string? name = KeyName(key);
-        if (name is null) yield break;
-
-        yield return (mods, name);
-
-        if (name is not ("plus" or "equal" or "minus")) yield break;
-
-        int relaxed = mods & ~GhosttyNative.MODS_SHIFT;
-        if (relaxed != mods) yield return (relaxed, name);
-
-        string alternate = name switch
+        if (name is not null)
         {
-            "plus" => "equal",
-            "equal" => "plus",
-            _ => name,
-        };
-        if (alternate == name) yield break;
-        yield return (mods, alternate);
-        if (relaxed != mods) yield return (relaxed, alternate);
+            yield return (mods, name);
+
+            if (name is "plus" or "equal" or "minus")
+            {
+                int relaxed = mods & ~GhosttyNative.MODS_SHIFT;
+                if (relaxed != mods) yield return (relaxed, name);
+
+                string alternate = name switch
+                {
+                    "plus" => "equal",
+                    "equal" => "plus",
+                    _ => name,
+                };
+                if (alternate != name)
+                {
+                    yield return (mods, alternate);
+                    if (relaxed != mods) yield return (relaxed, alternate);
+                }
+            }
+        }
+
+        // The character the key types with no modifiers, matched case-folded. Ghostty's rule
+        // is that a codepoint trigger matches any key that produces that codepoint, so the
+        // caller probes the active layout and hands the result in.
+        if (codepoint == 0) yield break;
+        int folded = FoldCodepoint(codepoint);
+        if (folded > 0) yield return (mods, CodepointName(folded));
     }
 
     // ---------------- display ----------------
 
+    /// <summary>
+    /// "Control+A N": the chords of a sequence are shown in order, separated by a space.
+    /// </summary>
     private static string Pretty(string trigger)
     {
-        string chord = NormalizeTrigger(trigger) ?? trigger;
-        string[] parts = chord.Split('+');
-        var text = new StringBuilder();
-        for (int i = 0; i < parts.Length; i++)
-        {
-            string part = parts[i];
-            if (i == parts.Length - 1)
-            {
-                text.Append(PrettyKey(part));
-                break;
-            }
+        if (!trigger.Contains('>')) return PrettyChord(trigger);
 
+        var text = new StringBuilder();
+        foreach (string part in trigger.Split('>'))
+        {
+            if (text.Length > 0) text.Append(' ');
+            text.Append(PrettyChord(part));
+        }
+        return text.ToString();
+    }
+
+    private static string PrettyChord(string trigger)
+    {
+        string chord = NormalizeTrigger(trigger) ?? trigger;
+        (string mods, string key) = SplitChord(chord);
+        var text = new StringBuilder();
+        foreach (string part in mods.Split('+', StringSplitOptions.RemoveEmptyEntries))
+        {
             text.Append(part switch
             {
                 "ctrl" => "Ctrl",
@@ -556,10 +1055,14 @@ internal sealed class Keybinds
                 _ => part,
             }).Append('+');
         }
-        return text.ToString();
+        return text.Append(PrettyKey(key)).ToString();
     }
 
-    private static string PrettyKey(string key) => key switch
+    private static string PrettyKey(string key)
+    {
+        if (TryCodepoint(key, out int codepoint)) return char.ConvertFromUtf32(codepoint);
+
+        return key switch
     {
         "left" => "\u2190",
         "right" => "\u2192",
@@ -590,4 +1093,5 @@ internal sealed class Keybinds
         "apostrophe" => "'",
         _ => key.Length == 1 ? key.ToUpperInvariant() : key.ToUpperInvariant(),
     };
+    }
 }

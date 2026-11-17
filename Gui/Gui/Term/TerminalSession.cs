@@ -1446,6 +1446,12 @@ public sealed unsafe class TerminalSession : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// DECCKM (DEC private mode 1): the running program asked for "application" cursor keys,
+    /// which report SS3 sequences instead of CSI ones.
+    /// </summary>
+    public bool CursorKeysApplication => ModeEnabled(1);
+
     /// <summary>One DEC private mode (or ANSI mode with <paramref name="ansi"/>) as a bool.</summary>
     private bool ModeEnabled(int mode, bool ansi = false)
     {

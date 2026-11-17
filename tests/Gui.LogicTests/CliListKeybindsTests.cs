@@ -91,6 +91,58 @@ public class CliListKeybindsTests : IDisposable
     }
 
     [Fact]
+    public void CodepointChordKeepsItsHexNameAndPrintsTheGlyph()
+    {
+        IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = ctrl+π=open_directory");
+
+        Assert.True(Has(entries, "ctrl+u+03c0", "open_directory"));
+        Assert.Contains("keybind = ctrl+u+03c0=open_directory",
+            ListKeybinds.RenderPlain(entries, docs: false));
+        Assert.Contains("π", ListKeybinds.RenderTable(entries, color: false));
+    }
+
+    [Fact]
+    public void TableBindingIsListedWithItsPrefix()
+    {
+        IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = foo/ctrl+a=new_window");
+
+        Assert.True(Has(entries, "foo/ctrl+a", "new_window"));
+        Assert.Contains("keybind = foo/ctrl+a=new_window",
+            ListKeybinds.RenderPlain(entries, docs: false));
+    }
+
+    [Fact]
+    public void PerformableBindingKeepsItsPrefixInTheListing()
+    {
+        IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = performable:ctrl+a=new_window");
+
+        Assert.True(Has(entries, "performable:ctrl+a", "new_window"));
+        Assert.Contains("keybind = performable:ctrl+a=new_window",
+            ListKeybinds.RenderPlain(entries, docs: false));
+        Assert.Contains("a", ListKeybinds.RenderTable(entries, color: false));
+    }
+
+    [Fact]
+    public void PhysicalBindingKeepsItsPrefixInTheListing()
+    {
+        IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = physical:ctrl+a=new_window");
+
+        Assert.True(Has(entries, "physical:ctrl+a", "new_window"));
+        Assert.Contains("keybind = physical:ctrl+a=new_window",
+            ListKeybinds.RenderPlain(entries, docs: false));
+    }
+
+    [Fact]
+    public void UnconsumedBindingKeepsItsPrefixInTheListing()
+    {
+        IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = unconsumed:ctrl+a=new_window");
+
+        Assert.True(Has(entries, "unconsumed:ctrl+a", "new_window"));
+        Assert.Contains("keybind = unconsumed:ctrl+a=new_window",
+            ListKeybinds.RenderPlain(entries, docs: false));
+    }
+
+    [Fact]
     public void UnbindDropsTheDefaultButKeepsTheSiblings()
     {
         IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = ctrl+tab=");

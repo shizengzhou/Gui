@@ -22,8 +22,6 @@ internal sealed class QuickTerminal
 {
     private static QuickTerminal? _instance;
 
-    private readonly List<GlobalHotkey> _hotkeys = new();
-
     private Window? _window;
     private Grid? _root;
     private Workspace? _workspace;
@@ -89,35 +87,7 @@ internal sealed class QuickTerminal
 
     // ---------------- installation ----------------
 
-    private void Apply(Config config)
-    {
-        _config = config;
-
-        foreach (GlobalHotkey hotkey in _hotkeys) hotkey.Dispose();
-        _hotkeys.Clear();
-
-        foreach ((string chord, string action) in new Keybinds(config).Global())
-        {
-            if (!string.Equals(action, "toggle_quick_terminal", StringComparison.Ordinal))
-            {
-                Diag.Debug("quick.hotkey", $"'{chord}' is global for '{action}', which is not registered");
-                continue;
-            }
-
-            GlobalHotkey? hotkey = GlobalHotkey.TryRegister(chord, Toggle, out string error);
-            if (hotkey is null)
-            {
-                Diag.Warn("quick.hotkey", $"{chord}: {error}");
-                continue;
-            }
-
-            _hotkeys.Add(hotkey);
-            Diag.Log("quick.hotkey", chord);
-        }
-
-        if (_hotkeys.Count == 0)
-            Diag.Log("quick.hotkey", "no global chord is registered; the palette row still works");
-    }
+    private void Apply(Config config) => _config = config;
 
     // ---------------- show and hide ----------------
 

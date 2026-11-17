@@ -169,25 +169,42 @@ public sealed partial class Workspace
 
     private void CloseFocusedPane()
     {
-        if (_tabs.Count == 0) return;
-        Tab tab = _tabs[_active];
-        if (tab.Focused is null || tab.Root is null) return;
-        if (PaneIsClosing(tab.Focused)) return;
+        TerminalPane? pane = ActivePane();
+        if (pane is null) return;
+
+        Tab? tab = TabForPane(pane);
+        if (tab is not null) ClosePane(tab, pane);
+    }
+
+    /// <summary>
+    /// Closes one pane in whichever tab holds it: "all:" bindings point ActivePane() outside
+    /// the active tab, so the close has to be pane-targeted rather than tab-targeted.
+    /// </summary>
+    private void ClosePane(Tab tab, TerminalPane pane)
+    {
+        if (tab.Root is null || PaneIsClosing(pane)) return;
 
         // A single-pane tab closes like a tab, as in Windows Terminal.
         if (tab.Root.Pane is not null)
         {
-            CloseTab(_active);
+            int index = IndexOf(tab);
+            if (index >= 0) CloseTab(index);
             return;
         }
 
-        TerminalPane pane = tab.Focused;
         if (NeedsCloseConfirm(pane.CommandRunning))
         {
             _ = ConfirmAndClosePaneAsync(tab, pane);
             return;
         }
         RemovePane(tab, pane);
+    }
+
+    private Tab? TabForPane(TerminalPane pane)
+    {
+        foreach (Tab tab in _tabs)
+            if (TabContainsPane(tab, pane)) return tab;
+        return null;
     }
 
     private async Task ConfirmAndClosePaneAsync(Tab tab, TerminalPane pane)

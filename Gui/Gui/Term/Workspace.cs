@@ -2940,8 +2940,14 @@ public sealed partial class Workspace
             ? Math.Min(_active + 1, _tabs.Count)
             : _tabs.Count;
 
+    /// <summary>
+    /// The pane an action works on. "all:" bindings run once per pane and point this at each
+    /// of them in turn, so every action that goes through ActivePane() follows the prefix
+    /// without a second, pane-targeted copy of the action table.
+    /// </summary>
     private TerminalPane? ActivePane() =>
-        _tabs.Count > 0 && _active >= 0 && _active < _tabs.Count ? _tabs[_active].Focused : null;
+        _surfaceTarget ??
+        (_tabs.Count > 0 && _active >= 0 && _active < _tabs.Count ? _tabs[_active].Focused : null);
 
     /// <summary>
     /// The config for a new tab. Tabs inherit the focused shell's directory and font size

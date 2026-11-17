@@ -40,6 +40,7 @@
     <Compile Include="../../Gui/Gui/Term/FontStyleNames.cs" Link="FontStyleNames.cs" />
     <Compile Include="../../Gui/Gui/Term/GhosttyNative.cs" Link="GhosttyNative.cs" />
     <Compile Include="../../Gui/Gui/Term/KeyMap.cs" Link="KeyMap.cs" />
+    <Compile Include="../../Gui/Gui/Term/ActionText.cs" Link="ActionText.cs" />
     <Compile Include="../../Gui/Gui/Term/Keybinds.cs" Link="Keybinds.cs" />
     <Compile Include="../../Gui/Gui/Term/QuickTerminalGeometry.cs" Link="QuickTerminalGeometry.cs" />
     <Compile Include="../../Gui/Gui/Term/GlobalHotkey.cs" Link="GlobalHotkey.cs" />

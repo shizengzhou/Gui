@@ -73,6 +73,18 @@ public sealed class TerminalPane
     private readonly List<ActionVisual> _actionVisuals = new();
     private Keybinds _keybinds = null!;
 
+    /// <summary>Ghostty's limit on how many key tables one surface can nest.</summary>
+    private const int MaxKeyTables = 8;
+
+    /// <summary>
+    /// The named key tables active on this surface, innermost last. Keys are matched
+    /// against the innermost table first, then outward, then the default bindings.
+    /// </summary>
+    private readonly List<(string Name, bool Once)> _keyTables = new();
+
+    /// <summary>The active table names, in the same order, cached for the key handler.</summary>
+    private string[] _keyTableNames = Array.Empty<string>();
+
     private readonly DispatcherQueue? _dispatcher;
     private DispatcherQueueTimer? _blinkTimer;
     private DispatcherQueueTimer? _cwdTimer;
@@ -2669,6 +2681,120 @@ public sealed class TerminalPane
         return true;
     }
 
+    /// <summary>True while a key table is active on this surface.</summary>
+    public bool HasKeyTables => _keyTables.Count > 0;
+
+    /// <summary>The active table names, innermost last. Empty when none is active.</summary>
+    public IReadOnlyList<string> KeyTableNames => _keyTableNames;
+
+    /// <summary>
+    /// Pushes a named table onto the surface's stack. Ghostty ignores an activation past
+    /// eight levels and one that names the table already on top, so the stack stays a real
+    /// nesting instead of an unbounded list.
+    /// </summary>
+    public void ActivateKeyTable(string name, bool once)
+    {
+        if (_keyTables.Count >= MaxKeyTables) return;
+        if (_keyTables.Count > 0 && _keyTables[^1].Name == name) return;
+
+        _keyTables.Add((name, once));
+        SyncKeyTableNames();
+    }
+
+    /// <summary>Pops the innermost table; the one below it becomes active again.</summary>
+    public void DeactivateKeyTable()
+    {
+        if (_keyTables.Count == 0) return;
+        _keyTables.RemoveAt(_keyTables.Count - 1);
+        SyncKeyTableNames();
+    }
+
+    /// <summary>Drops every active table.</summary>
+    public void DeactivateAllKeyTables()
+    {
+        if (_keyTables.Count == 0) return;
+        _keyTables.Clear();
+        SyncKeyTableNames();
+    }
+
+    /// <summary>
+    /// Drops a "once" table after a binding from it ran. Ghostty only pops while that table
+    /// is still the innermost one: an action that pushed another table leaves it in place
+    /// until the stack comes back out to it.
+    /// </summary>
+    public void CompleteKeyTable(string name)
+    {
+        if (_keyTables.Count == 0) return;
+        (string Name, bool Once) top = _keyTables[^1];
+        if (top.Name == name && top.Once) DeactivateKeyTable();
+    }
+
+    private void SyncKeyTableNames()
+    {
+        if (_keyTables.Count == 0)
+        {
+            _keyTableNames = Array.Empty<string>();
+            return;
+        }
+
+        var names = new string[_keyTables.Count];
+        for (int i = 0; i < names.Length; i++) names[i] = _keyTables[i].Name;
+        _keyTableNames = names;
+    }
+
+    /// <summary>
+    /// Writes raw bytes to the shell as one request. The "text:", "csi:" and "esc:" keybind
+    /// actions use this: splitting a sequence across writes would let the shell read the
+    /// parts as literals.
+    /// </summary>
+    public void SendRaw(ReadOnlySpan<byte> bytes)
+    {
+        if (!_ready || _session is null || bytes.IsEmpty) return;
+
+        _session.WriteInput(bytes);
+        if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
+    }
+
+    /// <summary>
+    /// Encodes a key the workspace held as a trigger-sequence prefix and sends it after the
+    /// next key proved the sequence was not meant. The user did press these keys, they were
+    /// only delayed, so the typing side effects apply as if they had gone straight through.
+    /// </summary>
+    public void SendBufferedKey(VirtualKey pressed, int mods)
+    {
+        if (!_ready || _session is null) return;
+        if (ReadOnly) return;
+        if (KamBlocksKeyboard()) return;
+
+        int key = KeyMap.FromVirtualKey(pressed);
+        if (key == KeyMap.Unidentified) return;
+
+        int kitty = _session.KittyKeyboardFlags();
+        bool reportAll = (kitty & GhosttyNative.KITTY_KEY_REPORT_ALL) != 0;
+        if (KeyMap.IsModifierKey(key) && !reportAll) return;
+
+        bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
+        bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
+
+        uint unshifted = 0;
+        byte[]? utf8 = null;
+        if (KeyMap.IsTextKey(key))
+        {
+            unshifted = KeyMap.UnshiftedCodepoint(pressed);
+            string text = ctrl && !alt && key >= KeyMap.KeyA && key <= KeyMap.KeyZ
+                ? ((char)('a' + (key - KeyMap.KeyA))).ToString()
+                : KeyMap.Text(pressed);
+            if (text.Length == 0) return;
+            utf8 = System.Text.Encoding.UTF8.GetBytes(text);
+        }
+
+        ClearSelectionOnTyping();
+        HidePointer();
+        ClearBellState();
+        _session.SendKey(key, mods, utf8, GhosttyNative.KEY_ACTION_PRESS, unshifted);
+        if (_config.ScrollToBottomKeystroke) _session.ScrollToBottom();
+    }
+
     /// <summary>
     /// "report event types": the kitty protocol wants the release of every key whose press
     /// reached the shell, including the plain text keys the IME typed.
@@ -2878,6 +3004,17 @@ public sealed class TerminalPane
 
     /// <summary>Scrolls the viewport by one window ("scroll_page_up/down").</summary>
     public void ScrollPage(bool up) => _session.ScrollPage(up);
+
+    /// <summary>DECCKM: the running program wants application cursor keys.</summary>
+    public bool CursorKeysApplication => _ready && _session is not null && _session.CursorKeysApplication;
+
+    /// <summary>True when the scrollback holds rows above the viewport.</summary>
+    public bool CanScrollBack => _session is not null &&
+        _session.Scrollbar(out _, out ulong offset, out _) && offset > 0;
+
+    /// <summary>True when the viewport sits away from the bottom of the scrollback.</summary>
+    public bool ScrolledBack => _session is not null &&
+        _session.Scrollbar(out ulong total, out ulong offset, out ulong len) && offset + len < total;
 
     /// <summary>Jumps to the previous (-1) or next (+1) shell prompt.</summary>
     public void JumpToPrompt(int delta) => _session.JumpToPrompt(delta);

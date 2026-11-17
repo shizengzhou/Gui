@@ -24,6 +24,13 @@ public partial class App : Application
     /// </summary>
     private MainWindow? _active;
 
+    /// <summary>
+    /// The last activated window's workspace. "global:" bindings fire while another
+    /// application has the focus, so they run against the window the user last used.
+    /// </summary>
+    internal static Term.Workspace? ActiveWorkspace =>
+        Application.Current is App { _active: { } window } ? window.Workspace : null;
+
     /// <summary>The CLI control channel, started with the first window.</summary>
     private Term.IpcServer? _ipc;
 
@@ -166,10 +173,11 @@ public partial class App : Application
     {
         try
         {
-            // The quick terminal's global hotkey belongs to the process, not to a window:
-            // it has to work while another application has the focus, so it is registered
-            // here rather than when the drop-down is first shown.
+            // Global chords belong to the process, not to a window: they have to work while
+            // another application has the focus, so the set is registered here rather than
+            // when a window or the drop-down is first shown.
             Term.QuickTerminal.Install(_config);
+            Term.GlobalKeys.Apply(_config);
 
             // Read the shell's icon while the first window is still being built: the chip of a
             // restored background tab is drawn long before its shell starts, and a cold icon

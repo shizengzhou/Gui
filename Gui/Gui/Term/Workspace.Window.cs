@@ -658,18 +658,25 @@ public sealed partial class Workspace
 
         // The palette owns its own keys (filter box, arrow navigation, Enter/Esc).
         if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible)
+        {
+            ClearPendingSequence();
             return OnPaletteKey(args);
+        }
 
         // The settings page closes on Esc; every other key goes to the focused setting instead
         // of the shell or a window shortcut.
         if (_settingsLayer is not null && _settingsLayer.Visibility == Visibility.Visible)
+        {
+            ClearPendingSequence();
             return OnSettingsKey(args);
+        }
 
         // The inline tab rename editor owns the keyboard. Enter and Esc are decided here,
         // before the text box swallows them; arrows, Home/End and Delete stay with the box,
         // which is why every other key is passed through untouched.
         if (_renamingTab is { } renaming)
         {
+            ClearPendingSequence();
             if (args.Key == VirtualKey.Enter)
             {
                 EndRename(renaming, true);
@@ -686,7 +693,10 @@ public sealed partial class Workspace
         // The find bar owns typing, Enter and Esc only while focus is in it; after Esc with
         // a query the bar stays visible and the terminal gets the keyboard back.
         if (_tabs.Count > 0 && _tabs[_active].Focused is { SearchHasFocus: true })
+        {
+            ClearPendingSequence();
             return false;
+        }
 
         // A surface held open after its shell exited ("wait-after-command", or the abnormal
         // exit notice) closes on the next key, which is what those options describe.
@@ -705,6 +715,46 @@ public sealed partial class Workspace
         bool ctrl = (mods & GhosttyNative.MODS_CTRL) != 0;
         bool shift = (mods & GhosttyNative.MODS_SHIFT) != 0;
         bool alt = (mods & GhosttyNative.MODS_ALT) != 0;
+
+        // A trigger sequence ("keybind = ctrl+a>n=new_tab") holds the keys that built its
+        // prefix instead of running them: the next key either completes the sequence or
+        // proves it was no sequence, in which case the held keys go to the shell.
+        // A codepoint binding is the one case that needs the character this layout types
+        // for the key, so the probe only runs when such a line exists. The key tables are
+        // per surface, so the focused pane's stack is what the lookup walks.
+        TerminalPane? keyPane = _tabs.Count > 0 ? _tabs[_active].Focused : null;
+        IReadOnlyList<string>? keyTables = keyPane is { HasKeyTables: true } ? keyPane.KeyTableNames : null;
+        uint codepoint = _keybinds.HasCodepoints ? KeyMap.UnshiftedCodepoint(args.Key) : 0;
+        Func<string, bool>? canPerform = _keybinds.HasPerformable ? _canPerform ??= CanPerform : null;
+        KeybindStep step = _keybinds.Step(_pendingSequence, mods, args.Key,
+            out string? sequenceAction, out string sequenceNext, codepoint, keyTables,
+            out KeybindMatchInfo sequenceInfo, canPerform);
+        switch (step)
+        {
+            case KeybindStep.Pending:
+                _pendingSequence = sequenceNext;
+                _pendingKeys.Add((mods, args.Key));
+                return true;
+            case KeybindStep.Action:
+            {
+                // "unconsumed:" still sends the keys on to the shell: the held prefix of a
+                // sequence first, then the key that completed it.
+                List<(int Mods, VirtualKey Key)>? heldKeys = sequenceInfo.Unconsumed
+                    ? new List<(int Mods, VirtualKey Key)>(_pendingKeys)
+                    : null;
+
+                ClearPendingSequence();
+                RunKeybindAction(sequenceAction, sequenceInfo.All);
+                // A table activated "once" pops after the binding it provided ran.
+                if (sequenceInfo.Table is not null) keyPane?.CompleteKeyTable(sequenceInfo.Table);
+                if (heldKeys is not null && keyPane is not null) return SendUnconsumed(keyPane, heldKeys, args);
+                return true;
+            }
+            case KeybindStep.Miss:
+                _pendingSequence = null;
+                ReplayPendingKeys();
+                break;
+        }
 
         // Ctrl+K starts the "Open Directory" chord. The second key decides: Ctrl+O opens the
         // picker, Escape cancels silently, and anything else goes on to the normal handlers
@@ -726,13 +776,22 @@ public sealed partial class Workspace
 
         // A "keybind" line wins over the built-in chord, and an explicit unbind hands the
         // key back to the shell instead of running the default action.
-        KeybindMatch match = _keybinds.Resolve(mods, args.Key, out string? boundAction);
+        KeybindMatch match = _keybinds.Resolve(mods, args.Key, out string? boundAction, codepoint,
+            keyTables, out KeybindMatchInfo boundInfo, canPerform);
         if (match == KeybindMatch.Action)
         {
-            RunKeybindAction(boundAction);
+            RunKeybindAction(boundAction, boundInfo.All);
+            if (boundInfo.Table is not null) keyPane?.CompleteKeyTable(boundInfo.Table);
+            if (boundInfo.Unconsumed && keyPane is not null) return keyPane.KeyDown(args);
             return true;
         }
-        if (match == KeybindMatch.Unbound) return false;
+        if (match == KeybindMatch.Unbound)
+        {
+            // An unbound chord belongs to the shell: it has to be encoded like any other key
+            // the app does not handle, which is what Ghostty means by "sent through to the
+            // child command if it is printable".
+            return keyPane is not null && keyPane.KeyDown(args);
+        }
 
         // "keybind = clear" drops the built-in chords; only configured lines remain.
         if (!_keybinds.Cleared && DefaultShortcut(mods, args))
@@ -748,6 +807,19 @@ public sealed partial class Workspace
         if (_tabs.Count > 0 && _tabs[_active].Focused is { } focused)
             return focused.KeyDown(args);
         return false;
+    }
+
+    /// <summary>
+    /// Sends a binding's keys to the shell after its action ran: the prefix a sequence was
+    /// holding, then the key that completed it. A plain text key returns false so the IME
+    /// types it, which is exactly what would have happened without the binding.
+    /// </summary>
+    private static bool SendUnconsumed(TerminalPane pane,
+        List<(int Mods, VirtualKey Key)> held, KeyRoutedEventArgs args)
+    {
+        foreach ((int mods, VirtualKey key) in held)
+            pane.SendBufferedKey(key, mods);
+        return pane.KeyDown(args);
     }
 
     /// <summary>

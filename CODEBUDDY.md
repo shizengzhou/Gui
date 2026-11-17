@@ -250,10 +250,17 @@ its shell and scrollback survive between toggles.
 `tests/Gui.LogicTests`) decides where it lands.
 
 - The chord is a global keybind: `Keybinds.Global()` reports the `global:` lines still in
-  effect and `Term/GlobalHotkey.cs` registers them with `RegisterHotKey` on a hidden message
-  window owned by the UI thread. There is no default chord: until the user binds one, the
-  command palette row is the only way in. A chord another application already owns logs a
-  warning and leaves the palette row working.
+  effect and `Term/GlobalKeys.cs` registers them with `RegisterHotKey` (through
+  `Term/GlobalHotkey.cs`) on a hidden message window owned by the UI thread. There is no
+  default chord: until the user binds one, the command palette row is the only way in. A
+  chord another application already owns logs a warning.
+- `GlobalKeys` is the process-wide owner of every `global:` chord (not just this one):
+  `App` applies it at start-up and a real window re-applies it on config reload; the quick
+  terminal's workspace deliberately skips the call because its config is rebuilt without the
+  launch overrides. A fired chord runs `Workspace.RunGlobalAction` on `App.ActiveWorkspace`
+  (`all:` semantics), and `toggle_quick_terminal` also works when no window is open.
+  `RegisterHotKey` takes the chord away from the focused window, so a `global:` binding is
+  never also handled by the local key path.
 - The window is built lazily on the first toggle, with a `Workspace` in quick mode: the
   header is collapsed (no caption buttons, no tab strip, no tools, no drag band), density is
   forced compact so the surface is flush with the window, and Alt+F4 hides it instead of
@@ -363,6 +370,62 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
 - `click-repeat-interval` drives double- and triple-click selection (0 means Ghostty's 500 ms
   non-macOS default); `clipboard-paste-protection` asks before pasting multi-line or control
   text, and `clipboard-paste-bracketed-safe` treats bracketed pastes as safe.
+- `keybind` triggers may be chained into a sequence with `>` (`ctrl+a>n=new_tab`).
+  `Keybinds.Step` advances one key at a time: a prefix waits with no timeout, overrides a
+  plain binding of the same chord (and hides it from the palette and `+list-keybinds`), and
+  a key that does not continue the sequence makes the workspace replay the held chords into
+  the shell (`TerminalPane.SendBufferedKey`). A direct binding of a prefix drops the
+  sequences under it; `global:` / `all:` sequences are rejected; `/` key tables and
+  `performable:` are still unsupported. A trigger that is exactly one character outside
+  the key-name table is a Unicode codepoint binding (`ctrl+π` → `ctrl+u+03c0`): lookup
+  probes the active layout with `KeyMap.UnshiftedCodepoint` and folds case, with physical
+  names taking priority. That probe only runs while `_hasCodepoints` is set.
+- Key tables (`keybind = foo/ctrl+a=new_window`, Ghostty 1.3+) are a `BindingSet` per table
+  next to the default set in `Keybinds`; a lookup walks the focused surface's stack
+  (`TerminalPane`, innermost last, at most 8) and then the default set, so a table binding —
+  and an unbind in a table — shadows the sets below it. `activate_key_table:<name>`,
+  `activate_key_table_once:<name>`, `deactivate_key_table` and `deactivate_all_key_tables`
+  are handled at the top of `RunKeybindAction` in `Workspace.Keybinds.cs`; a "once" table
+  pops after the binding it provided ran. Names may not contain `/ = + >`, a line inside a
+  table cannot be `global:`, and `foo/` alone clears the table. The palette keeps
+  advertising the default set (`Label`/`Chords`), while `+list-keybinds` lists table lines
+  with their `table/` prefix.
+- `performable:` is implemented: `Keybinds` stores the flag per chord and `Resolve`/`Step`
+  take an optional `canPerform` predicate, so an action that cannot run declines the key and
+  the lookup keeps going (another table, another spelling, the default set). The predicate
+  table is `Workspace.Keybinds.CanPerform` (selection, open find bar, tab count, split count,
+  scroll position, `goto_tab`); a performable sequence resets as a miss. Such chords are kept
+  out of `Label` and printed with the prefix by `+list-keybinds`.
+- `all:` runs a surface action once per pane in the window, across tabs, while window- and
+  app-level actions (`new_tab`, `quit`, split and tab motions) run once. The fan-out sets
+  `_surfaceTarget`, which `ActivePane()` answers while set, so the shared action table needs
+  no pane-targeted copy; `IsSurfaceAction` in `Workspace.Keybinds.cs` is the classification
+  and `close_surface` is pane-targeted (`ClosePane(tab, pane)`) because the old close path
+  read `tab.Focused`. `global:` implies `all:` (Ghostty's rule) and is registered system-wide
+  by `Term/GlobalKeys.cs`, which dispatches the action through the same table. `physical:` forces a key-code spelling: a character
+  outside the key-name table is rejected instead of becoming a codepoint trigger, and the
+  prefix round-trips through `+list-keybinds`. `unconsumed:` sends the keys after the action
+  runs — the prefix a sequence was holding through `SendBufferedKey`, then the completing key
+  through `TerminalPane.KeyDown` so text keys still reach the IME; `all:`/`global:` lines
+  never carry it (Ghostty: they are not tied to one surface). `Resolve`/`Step` report the
+  matched line's table, performable, all and unconsumed flags in a `KeybindMatchInfo`.
+- `ignore` is the no-op action: the key is consumed and nothing is encoded
+  (`unconsumed:ctrl+a=ignore` is the documented way to forward it instead). `unbind` is the
+  spelled-out empty action, so it lands in the set's `Unbound` at parse time; an unbound
+  chord is now encoded to the pane like any other unhandled key (`keyPane.KeyDown`), which is
+  what makes both `ctrl+a=` and `ctrl+a=unbind` hand the key to the shell.
+- `text:` sends its value to the shell decoded with the Zig string-literal escapes Ghostty
+  reuses from its config parser (`Term/ActionText.cs`: `\n \r \t \\ \' \" \xNN
+  \u{...}`). `csi:` decodes the same escapes and prepends `ESC [`; only `esc:` keeps its
+  value literal (upstream behaviour). All three go through `TerminalPane.SendRaw`, which
+  writes one `WriteInput` so the
+  shell cannot read a sequence as separate literals, and follows `scroll-to-bottom` like a
+  keystroke. A bad escape drops the action with a warning and still consumes the key.
+- `cursor_key:<normal>,<application>` sends one of two escape-decoded sequences depending on
+  DECCKM (`TerminalSession.CursorKeysApplication`, DEC private mode 1), so a custom chord can
+  act like an arrow key inside vim/less. Upstream declares the action but its parser rejects
+  it from a config file, so the two-part spelling is this build's; both halves decode like
+  `text:` and the action is surface-scoped for `all:`.
 - `bell-features` (system / audio / attention / title / border) is wired to libghostty's
   `OPT_BELL`; `bell-audio-path` and `bell-audio-volume` drive a `MediaPlayer`.
 - `config-file` includes load after the including file, relative to the file that names them;
