@@ -1069,11 +1069,12 @@ public sealed unsafe class TerminalRenderer
             case "vert": name = CanvasTypographyFeatureName.VerticalWriting; break;
             case "vrt2": name = CanvasTypographyFeatureName.VerticalAlternatesAndRotation; break;
             default:
-                // ss01..ss20 have named members, cv01..cv99 does not. Passing the four-byte tag
-                // as the enum's (undefined) value was measured against the real renderer: Win2D
-                // maps the enum through its own table, so the tag is dropped and all that is
-                // left behind is the typography object's side effect (the run loses its
-                // ligatures). Character variants need a DirectWrite text path instead.
+                // ss01..ss20 have named members; anything else shaped like an OpenType tag is
+                // passed through as one of the enum's undefined values. Win2D stores a member as
+                // the tag's bytes in little-endian order (ContextualAlternates is 0x746C6163)
+                // and its projection swaps them into the tag DirectWrite compares against, so
+                // the four characters are packed the same way here. That is what makes character
+                // variants (cv01..cv99) work even though the enum has no member for them.
                 if (tag.Length == 4 && tag[0] == 's' && tag[1] == 's' &&
                     int.TryParse(tag[2..], NumberStyles.Integer, CultureInfo.InvariantCulture, out int set) &&
                     set is >= 1 and <= 20)
@@ -1081,7 +1082,10 @@ public sealed unsafe class TerminalRenderer
                     name = StylisticSets[set - 1];
                     break;
                 }
-                return false;
+
+                if (!FontFeatureTag.IsTag(tag)) return false;
+                name = (CanvasTypographyFeatureName)unchecked((int)FontFeatureTag.Pack(tag));
+                break;
         }
         return true;
     }
