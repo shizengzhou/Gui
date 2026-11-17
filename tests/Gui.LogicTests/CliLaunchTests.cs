@@ -61,13 +61,26 @@ public class CliLaunchTests
     }
 
     [Fact]
-    public void ParseRejectsConfigFile()
+    public void ParseAcceptsTheConfigFileFlags()
     {
-        // The includes were already read, so a launch flag cannot add one.
-        Launch.Options options = Launch.Parse(new[] { @"--config-file=C:\other" });
+        Launch.Options options = Launch.Parse(new[]
+        {
+            @"--config-file=C:\other\gui.conf",
+            "--config-default-files=false",
+        });
+
+        Assert.Null(options.Error);
+        Assert.Equal(new[] { @"C:\other\gui.conf" }, options.Files);
+        Assert.False(options.DefaultFiles);
+    }
+
+    [Fact]
+    public void ParseRejectsABadDefaultFilesValue()
+    {
+        Launch.Options options = Launch.Parse(new[] { "--config-default-files=maybe" });
 
         Assert.NotNull(options.Error);
-        Assert.Contains("config-file", options.Error);
+        Assert.Contains("true or false", options.Error);
     }
 
     [Fact]
@@ -88,5 +101,14 @@ public class CliLaunchTests
         });
 
         Assert.Equal("--background=282c34 --font-family=\"JetBrainsMono Nerd Font\"", text);
+    }
+
+    [Fact]
+    public void ArgumentsCarryTheConfigFileFlags()
+    {
+        string text = Launch.Arguments(System.Array.Empty<string>(),
+            new[] { @"C:\my configs\gui.conf" }, defaultFiles: false);
+
+        Assert.Equal("--config-file=\"C:\\my configs\\gui.conf\" --config-default-files=false", text);
     }
 }

@@ -28,6 +28,9 @@ public static class ShowConfig
         "  --changes-only     only print changed keys (the default; accepted for parity)\n" +
         "  --no-pager         accepted for parity; this tool always writes straight to stdout\n" +
         "  --config-file PATH read PATH instead of %APPDATA%\\gui\\config\n" +
+        "  --config-default-files=false\n" +
+        "                     do not read %APPDATA%\\gui\\config at all; with\n" +
+        "                     --config-file, the output is exactly what that file sets\n" +
         "  -h, --help         show this help\n";
 
     /// <summary>
@@ -85,6 +88,7 @@ public static class ShowConfig
         bool docs = false;
         bool full = false;
         bool help = false;
+        bool defaultFiles = true;
         string? configFile = null;
 
         for (int i = 0; i < args.Length; i++)
@@ -111,9 +115,21 @@ public static class ShowConfig
                     break;
                 default:
                     const string prefix = "--config-file=";
+                    const string defaults = "--config-default-files=";
                     if (arg.StartsWith(prefix, StringComparison.Ordinal))
                     {
                         configFile = arg[prefix.Length..];
+                    }
+                    else if (arg.StartsWith(defaults, StringComparison.Ordinal))
+                    {
+                        if (!bool.TryParse(arg[defaults.Length..], out bool flag))
+                        {
+                            Console.Error.WriteLine(
+                                "gui: --config-default-files takes true or false");
+                            return 2;
+                        }
+
+                        defaultFiles = flag;
                     }
                     else
                     {
@@ -134,9 +150,10 @@ public static class ShowConfig
         if (configFile is not null && !File.Exists(configFile))
             Console.Error.WriteLine($"gui: config file not found: {configFile}");
 
-        string file = configFile ?? Config.ConfigFile();
-        // --default ignores the user's config entirely, like ghostty.
-        Config config = showDefault ? new Config() : Config.LoadRaw(file);
+        // --default ignores the user's config entirely, like ghostty; --config-default-files=false
+        // drops it as well, so only the --config-file paths contribute.
+        string? file = configFile ?? (defaultFiles ? Config.ConfigFile() : null);
+        Config config = showDefault || file is null ? new Config() : Config.LoadRaw(file);
         Console.Out.Write(Render(config, showDefault || full, docs));
         return 0;
     }

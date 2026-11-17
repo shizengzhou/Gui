@@ -75,12 +75,15 @@ public partial class App : Application
         // and every window built later have to see them.
         ParseLaunchArgs(Environment.GetCommandLineArgs(),
             out string? launchCommand, out string? launchDirectory, out List<string> launchOverrides,
-            out bool noSessionSave);
+            out List<string> launchConfigFiles, out bool launchDefaultFiles, out bool noSessionSave);
         _launchCommand = launchCommand;
         _launchDirectory = launchDirectory;
         _launchOverrides = launchOverrides;
         _noSessionSave = noSessionSave;
 
+        // Which files to read are inputs to the config load, not overrides of it, so they are
+        // recorded before the first load and every later load sees the same set.
+        Term.Config.ConfigureStartup(launchConfigFiles, launchDefaultFiles);
         Term.Config config = Term.Config.Load();
         if (_launchOverrides.Count > 0)
         {
@@ -126,18 +129,22 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Reads "-e COMMAND", "--working-directory=DIR" and Ghostty's launch flags
-    /// ("--background=282c34") from the command line. "gui +new-tab" passes the first two when
+    /// Reads "-e COMMAND", "--working-directory=DIR", the config inputs ("--config-file=PATH",
+    /// "--config-default-files=BOOL") and Ghostty's launch flags ("--background=282c34") from the
+    /// command line. "gui +new-tab" passes the first two when
     /// nothing was running and it had to start the app itself; "gui --key=value" passes the
     /// flags. Every other argument (WinUI passes its own) is ignored, and so is anything
     /// shaped like a flag whose key the config schema does not know.
     /// </summary>
     private static void ParseLaunchArgs(string[] args, out string? command, out string? directory,
-        out List<string> overrides, out bool noSessionSave)
+        out List<string> overrides, out List<string> configFiles, out bool defaultFiles,
+        out bool noSessionSave)
     {
         command = null;
         directory = null;
         overrides = new List<string>();
+        configFiles = new List<string>();
+        defaultFiles = true;
         noSessionSave = false;
 
         for (int i = 0; i < args.Length; i++)
@@ -160,6 +167,17 @@ public partial class App : Application
                 // Internal switch the CLI adds when it starts a second instance: that window
                 // set is scratch and must not replace the running instance's saved session.
                 noSessionSave = true;
+            }
+            else if (arg.StartsWith("--config-file=", StringComparison.Ordinal))
+            {
+                // Ghostty's pair for choosing the config itself: a file to read instead of (or
+                // after) %APPDATA%\gui\config, and whether that default file is read at all.
+                configFiles.Add(arg["--config-file=".Length..]);
+            }
+            else if (arg.StartsWith("--config-default-files=", StringComparison.Ordinal) &&
+                bool.TryParse(arg["--config-default-files=".Length..], out bool flag))
+            {
+                defaultFiles = flag;
             }
             else if (arg.StartsWith("--", StringComparison.Ordinal) && arg.IndexOf('=') > 2)
             {

@@ -410,13 +410,83 @@ public sealed class Config
         return directory.Length == 0 ? string.Empty : Path.Combine(directory, "config");
     }
 
-    /// <summary>Resolves the path, writes the template when missing and parses it.</summary>
-    public static Config Load()
+    /// <summary>
+    /// The files --config-file named at startup, made absolute, and whether the default file is
+    /// read at all (--config-default-files). Every load in the process uses them, so a reload or a
+    /// drop-down terminal started later reads what the window was started with.
+    /// </summary>
+    public static IReadOnlyList<string> StartupFiles { get; private set; } = Array.Empty<string>();
+
+    public static bool StartupDefaultFiles { get; private set; } = true;
+
+    /// <summary>Records the command line's config inputs; call it before the first load.</summary>
+    public static void ConfigureStartup(IEnumerable<string> files, bool defaultFiles)
     {
-        string file = ConfigFile();
-        if (string.IsNullOrEmpty(file)) return new Config();
-        EnsureDefault(file);
-        return Load(file);
+        var resolved = new List<string>();
+        foreach (string file in files)
+        {
+            string path = ResolveStartupPath(file);
+            if (path.Length > 0) resolved.Add(path);
+        }
+
+        StartupFiles = resolved;
+        StartupDefaultFiles = defaultFiles;
+    }
+
+    /// <summary>A command-line path: "~" expanded, relative to the directory the app started in.</summary>
+    private static string ResolveStartupPath(string file)
+    {
+        string path = file.Trim();
+        if (path.Length == 0) return string.Empty;
+
+        try
+        {
+            if (path.Length > 1 && path[0] == '~' && (path[1] == '\\' || path[1] == '/'))
+            {
+                path = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..]);
+            }
+
+            return Path.GetFullPath(path);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Parses what this process was started with: the default file unless
+    /// --config-default-files=false, then every --config-file in order, the way Ghostty merges its
+    /// default config with the files the command line names.
+    /// </summary>
+    public static Config Load() => Load(StartupFiles, StartupDefaultFiles);
+
+    /// <summary>
+    /// Parses the default file when <paramref name="defaultFiles"/> is true, then the given files
+    /// in order; a missing default file is written from the template first, and a missing
+    /// command-line file is simply skipped.
+    /// </summary>
+    public static Config Load(IReadOnlyList<string> files, bool defaultFiles)
+    {
+        var all = new List<string>();
+        if (defaultFiles)
+        {
+            string file = ConfigFile();
+            if (file.Length > 0)
+            {
+                EnsureDefault(file);
+                all.Add(file);
+            }
+        }
+
+        all.AddRange(files);
+
+        var config = new Config();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string file in all) config.LoadFile(file, seen, 0);
+        config.Resolve();
+        return config;
     }
 
     /// <summary>
@@ -1013,7 +1083,7 @@ public sealed class Config
 
         if (option.Name == "config-file")
         {
-            error = "config-file cannot be set on the command line";
+            error = "config-file picks the file to read (--config-file=PATH), it is not an override";
             return false;
         }
 

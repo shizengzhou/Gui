@@ -596,6 +596,21 @@ public class ConfigSurfaceTests : IDisposable
     }
 
     [Fact]
+    public void ConfigDefaultFilesOffReadsOnlyTheNamedFiles()
+    {
+        Directory.CreateDirectory(_dir);
+        string extra = Path.Combine(_dir, "extra.conf");
+        File.WriteAllText(extra, "font-size = 21\n", new UTF8Encoding(false));
+
+        Config named = Config.Load(new[] { extra }, defaultFiles: false);
+        Assert.Equal(21f, named.FontSize);
+
+        // Nothing named and no default file: the built-in defaults, never the user's config.
+        Config none = Config.Load(Array.Empty<string>(), defaultFiles: false);
+        Assert.Equal(12f, none.FontSize);
+    }
+
+    [Fact]
     public void AConfigFileGlobWithoutMatchesWarnsUnlessOptional()
     {
         Config missing = Config.Load(Write("config-file = conf.d/*.conf\n"));

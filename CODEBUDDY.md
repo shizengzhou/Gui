@@ -506,6 +506,10 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
   `light:` or `dark:` half that matches the chosen theme. Redirected output prints
   `name  (light|dark)` instead, like `+list-fonts`.
   `ConsoleRaw.cs` holds the raw-mode/VT setup the two browsers share.
+- `--config-file=PATH` and `--config-default-files=false` pick the files a launch reads,
+  the way Ghostty's pair of the same name does: the named files load after the default one, the
+  switch drops the default file, and every later load in the process (Ctrl+Shift+, a drop-down
+  terminal) reads the same set.
 - The command palette (`Ctrl+Shift+P`) switches both live and persists the choice with
   `Config.SaveValue`.
 - `Ctrl+Shift+,` re-reads the file and applies it live: theme, window theme, font, split
