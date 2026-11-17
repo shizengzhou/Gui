@@ -934,6 +934,12 @@ public sealed unsafe class TerminalRenderer
     }
 
     /// <summary>
+    /// The features every run expects and that a typography object otherwise clears: a terminal
+    /// font draws its arrow and comparison ligatures through "calt", and kerning through "kern".
+    /// </summary>
+    private static readonly string[] DefaultOnFeatures = { "kern", "liga", "clig", "calt", "rlig" };
+
+    /// <summary>
     /// Turns "font-feature" values ("-calt", "ss01", "liga=0") into DirectWrite typography.
     /// Features Win2D does not expose, or values that are not tags, are ignored.
     /// </summary>
@@ -943,14 +949,17 @@ public sealed unsafe class TerminalRenderer
         if (_config is null || _config.FontFeatures.Count == 0) return;
 
         CanvasTypography? typography = null;
+        var named = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (string feature in _config.FontFeatures)
         {
             if (!TryParseFontFeature(feature, out CanvasTypographyFeatureName name, out uint parameter))
                 continue;
 
+            named.Add(FeatureTag(feature));
+            typography ??= new CanvasTypography();
             try
             {
-                typography ??= new CanvasTypography();
                 typography.AddFeature(name, parameter);
             }
             catch
@@ -958,7 +967,41 @@ public sealed unsafe class TerminalRenderer
                 // A duplicate feature must not take the renderer down.
             }
         }
+
+        // Nothing the config asked for made it through: attach nothing at all, because an empty
+        // typography range would still clear the run's default features for no benefit.
+        if (typography is null) return;
+
+        // A range that carries a typography object no longer gets the font's defaults applied,
+        // so the ones every run relies on are repeated here unless the config named them.
+        foreach (string tag in DefaultOnFeatures)
+        {
+            if (named.Contains(tag)) continue;
+            if (!TryParseFontFeature(tag, out CanvasTypographyFeatureName name, out uint parameter)) continue;
+            try
+            {
+                typography.AddFeature(name, parameter);
+            }
+            catch
+            {
+                // Same as above: a feature DirectWrite rejects must not drop the text.
+            }
+        }
+
         _typography = typography;
+    }
+
+    /// <summary>The OpenType tag of a "font-feature" entry: a sign and an "=value" are stripped.</summary>
+    private static string FeatureTag(string text)
+    {
+        string value = text.Trim();
+        if (value.Length == 0) return string.Empty;
+        if (value[0] is '+' or '-') value = value[1..].TrimStart();
+
+        int separator = value.IndexOf('=');
+        if (separator < 0) separator = value.IndexOf(':');
+        if (separator >= 0) value = value[..separator];
+        return value.Trim().ToLowerInvariant();
     }
 
     private static bool TryParseFontFeature(string text, out CanvasTypographyFeatureName name, out uint parameter)
@@ -1026,7 +1069,11 @@ public sealed unsafe class TerminalRenderer
             case "vert": name = CanvasTypographyFeatureName.VerticalWriting; break;
             case "vrt2": name = CanvasTypographyFeatureName.VerticalAlternatesAndRotation; break;
             default:
-                // ss01..ss20; cv01..cv20 has no CanvasTypographyFeatureName equivalent.
+                // ss01..ss20 have named members, cv01..cv99 does not. Passing the four-byte tag
+                // as the enum's (undefined) value was measured against the real renderer: Win2D
+                // maps the enum through its own table, so the tag is dropped and all that is
+                // left behind is the typography object's side effect (the run loses its
+                // ligatures). Character variants need a DirectWrite text path instead.
                 if (tag.Length == 4 && tag[0] == 's' && tag[1] == 's' &&
                     int.TryParse(tag[2..], NumberStyles.Integer, CultureInfo.InvariantCulture, out int set) &&
                     set is >= 1 and <= 20)
