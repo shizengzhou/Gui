@@ -1,0 +1,103 @@
+﻿<DocHead title="你熟悉的 Ghostty 配置，直接可用" />
+
+## 零配置
+
+和 Ghostty 一样，Gui 默认就能用：内置 JetBrains Mono Nerd Font、主题、跟随系统的亮暗，以及各组件的合理默认值。大多数情况下你不需要写任何配置，先直接跑起来看看。
+
+## 配置格式
+
+Gui 的配置就是 Ghostty 的格式：一个纯文本文件，每行一个 `key = value`。
+
+### 文件位置
+
+配置文件是 `%APPDATA%\gui\config`，通常是 `C:\Users\<你>\AppData\Roaming\gui\config`。
+
+- 与 Ghostty 不同，Gui 只读这一个文件，没有 XDG 或 macOS 那样的额外搜索路径。
+- 配置是可选的，读不到就全用默认值。
+
+### 语法
+
+语法很简单，下面这份示例同时说明了规则：
+
+~~~ini
+# 每行一个 "key = value"，等号两边的空白无关
+font-family = JetBrainsMono Nerd Font
+font-size = 12
+
+# 注释以 # 开头，只能占一整行；空行会被忽略
+
+theme = light:Gui Light,dark:Gui Dark
+window-theme = system
+
+# 空值把该键恢复默认；对 keybind 这类可重复的键，空值清空整个列表
+font-family =
+~~~
+
+补充几点：
+
+- 键**不区分大小写**，`Font-Size` 和 `font-size` 是同一个键（这点和 Ghostty 不同，Ghostty 区分大小写）。
+- 值可以加引号也可以不加：`font-family = JetBrainsMono Nerd Font` 与 `font-family = "JetBrainsMono Nerd Font"` 等价。
+- 不认识的键会给出警告并被忽略，`+show-config` 能看到这些警告。
+- 没有 `=` 的行同样会被警告并跳过。
+
+### 拆成多个文件
+
+用 `config-file` 可以把配置拆开，它可以出现多次：
+
+~~~ini
+config-file = ?C:\Users\me\.config\gui\local
+config-file = themes/extra
+~~~
+
+- 相对路径相对于**写它的那个文件**，不是进程的工作目录。
+- 值前加 `?` 表示可选：文件不存在就跳过，不报错。
+- 被引入的文件在**当前文件之后**加载，所以它们的值会覆盖当前文件里的同名键——哪怕 `config-file` 那一行写在这些键前面。
+- 循环引用会被检测到并忽略，同时给出警告。
+
+### 主题与亮暗
+
+`theme` 是一个逗号分隔的列表，条目可以带 `light:` 或 `dark:` 前缀，例如 `light:Gui Light,dark:Gui Dark`；不带前缀的主题两态通用。`window-theme` 决定用哪一半：`system`（默认，跟随系统）、`light` 或 `dark`。
+
+内置主题按背景亮度分组，可以在命令面板（`Ctrl+Shift+P`）里实时预览和切换，选择会写回配置文件。
+
+### 重新加载
+
+按 `Ctrl+Shift+,`（`reload_config`）可以在运行时重新读取整个配置，命令面板里也有「重新加载配置」。
+
+部分选项只对**新开的**标签页或窗格生效，例如 `command` 和 `working-directory`；已经在跑的东西不会被打断。
+
+### Gui 自己的键
+
+在 Ghostty 的键之外，Gui 还认这些：
+
+- `language`：界面语言，例如 `zh-CN`；不写则跟随系统。
+- `tab-position`：`top`、`left` 或 `right`。
+- `compact`：窗格是否贴边铺满（默认 `true`）。
+- `sidebar-width-left` / `sidebar-width-right`：两侧标签栏的宽度，拖动时由应用写回。
+- `debug-tap` / `crash-dumps`：调试开关，等同于 `GUI_TAP=1` 与崩溃转储注册。
+
+### 查看全部选项
+
+[选项参考](/docs/config/reference)按分组列出每一个键；命令行的输出是同一份表（安装后 `gui` 位于安装目录的 `bin` 文件夹，已在 PATH 里）：
+
+~~~bash
+gui +show-config                   # 只打印你改过的键
+gui +show-config --default --docs  # 全部选项，每个键带一行说明
+gui +list-keybinds                 # 当前生效的按键绑定
+~~~
+
+
+## 命令行覆盖
+
+每个配置键也可以直接写在命令行上，只作用于这一次启动，和 Ghostty 的写法一致：
+
+~~~bash
+gui --background=282c34 --font-size=18
+gui --font-family="JetBrainsMono Nerd Font" --window-theme=dark
+~~~
+
+- 颜色可以省掉 `#`：`--background=282c34` 与 `--background=#282c34` 等价。
+- 可重复的键（`font-family`、`env`、`keybind` …）追加在文件里已有的值之后；空值把这个键清空。
+- 键或值不对会在命令行直接报错（退出码 2），不会启动任何东西。
+- 覆盖属于**它启动的那个进程**：主题和调色板每个进程只解析一次，所以这条命令总是开一个新实例，已经在运行的 Gui 不受影响；这个临时实例的窗口也不会写回你保存的窗口布局。
+- `config-file` 不能作为普通键这样给，但命令行有专门的开关：`--config-file=PATH` 可重复，用来追加要读的文件（相对路径相对于执行命令时的目录）；`--config-default-files=false` 则完全不读 `%APPDATA%\gui\config`，只读命令行给出的文件。这两个开关同样只作用于它启动的那个进程。

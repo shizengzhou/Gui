@@ -1,0 +1,368 @@
+﻿---
+title: 按键动作参考
+description: Gui 实现的全部按键动作参考。
+---
+
+这里列出 Gui 实现的全部按键动作。动作写在 `keybind` 一行的 `=` 之后，形式是
+`action` 或 `action:参数`；触发器的写法见[按键绑定](/docs/config/keybind)。
+
+Ghostty 记录的动作比 Gui 实现的多。本页没有列出的动作在 Gui 里没有处理器：写了这样的
+行只会在调试日志里留一条警告，什么也不做。
+
+## `ignore`
+
+忽略这个按键组合。
+
+Gui 不会处理该组合，也不会把它转发给终端中的子进程，但它仍可能被操作系统或其它应用处理。与 `unconsumed:` 组合使用，就能什么都不做、但仍把按键发送给程序。
+
+## `unbind`
+
+解除此前绑定的按键。
+
+效果等同于空动作：绑定被移除，按键就像从未配置过一样发送给程序。
+
+## `csi`
+
+发送 CSI 序列。
+
+值应是不含 CSI 头（`ESC [` 或 `\x1b[`）的 CSI 序列；它会像 `text:` 一样解码，再补上 `ESC [` 头。
+
+例如 `csi:0m` 可用来重置当前文本的所有样式。
+
+## `esc`
+
+发送 `ESC` 序列。
+
+值按字面处理，并在前面补上 `ESC`。
+
+## `text`
+
+发送指定的文本。
+
+使用 Zig 字符串字面量语法（`\n`、`\r`、`\t`、`\\`、`\'`、`\"`、`\xNN`、`\u{...}`），在绑定执行时解码。如果文本无效（即包含无效的转义序列），错误只会出现在日志里，什么也不会发送。
+
+## `cursor_key`
+
+根据光标键模式是启用（`application`）还是禁用（`normal`），向 pty 发送数据。
+
+## `reset`
+
+重置终端。
+
+当运行中的程序把终端搞坏时，这能修好大部分问题，效果等同于执行 `reset` 命令。
+
+在 vim 这类 TUI 程序里执行可能弄坏程序；在 shell 里执行后可能需要再按一次回车才会出现提示符。
+
+## `copy_to_clipboard`
+
+把选中的文本复制到剪贴板。
+
+Gui 支持指定复制格式，与命令面板里的对应命令一致：`copy_to_clipboard:plain`、
+`copy_to_clipboard:vt`、`copy_to_clipboard:html`、`copy_to_clipboard:mixed`。
+
+## `paste_from_clipboard`
+
+粘贴默认剪贴板的内容。
+
+## `paste_from_selection`
+
+粘贴选区剪贴板的内容。
+
+## `copy_url_to_clipboard`
+
+如果光标下有 URL，把它复制到默认剪贴板。
+
+## `copy_title_to_clipboard`
+
+把终端标题复制到剪贴板。标题未设置或为空时什么也不做。
+
+## `increase_font_size`
+
+放大字号。Gui 实现的是 `increase_font_size:1`，每按一次放大 1 点，默认绑定用的就是这个参数。
+
+## `decrease_font_size`
+
+缩小字号。Gui 实现的是 `decrease_font_size:1`，每按一次缩小 1 点。
+
+## `reset_font_size`
+
+把字号恢复为配置中的原始大小。
+
+## `search_selection`
+
+搜索当前选中的文本。没有选区时什么也不做。如果已有搜索在进行，则改为这些新关键词。
+
+## `start_search`
+
+如果尚未开始搜索则开始搜索。它不设置任何关键词，只是打开搜索界面。
+
+## `end_search`
+
+结束当前搜索（如果有），并隐藏任何相关界面元素。
+
+## `navigate_search`
+
+在搜索结果之间跳转：`navigate_search:next` 或 `navigate_search:previous`。没有进行中的搜索时不执行。
+
+## `clear_screen`
+
+清屏并清空全部回滚。
+
+## `select_all`
+
+选中屏幕上的全部文本。
+
+## `scroll_to_top`
+
+滚到屏幕顶部。
+
+## `scroll_to_bottom`
+
+滚到屏幕底部。
+
+## `scroll_to_selection`
+
+滚动到选中文本的位置。
+
+## `scroll_page_up`
+
+向上翻一页。
+
+## `scroll_page_down`
+
+向下翻一页。
+
+## `adjust_selection`
+
+以光标为基准调整当前选区：`left`、`right`、`up`、`down`，每次移动一格或一行。
+
+警告：这不会新建选区；当前没有选区时什么也不做。
+
+## `jump_to_prompt`
+
+按给定的提示符数量前后移动视口：`jump_to_prompt:1` 跳到下一条提示符，
+`jump_to_prompt:-1` 跳到上一条。
+
+需要 shell integration。
+
+## `write_screen_file`
+
+把屏幕内容写入临时文件，参数决定后续动作。合法动作有：
+
+- `copy`
+
+  把文件路径复制到剪贴板。
+
+- `paste`
+
+  把文件路径粘贴到终端里。
+
+- `open`
+
+  用系统默认的文本编辑器打开该文件。
+
+## `new_window`
+
+打开新窗口。
+
+应用当前没有焦点时，会把它带到前台。
+
+## `new_tab`
+
+打开新标签页。
+
+## `previous_tab`
+
+切换到上一个标签页。
+
+## `next_tab`
+
+切换到下一个标签页。
+
+## `last_tab`
+
+回到上一个活动标签页。
+
+## `goto_tab`
+
+跳到指定序号的标签页，序号从 1 开始。Gui 实现的是 `goto_tab:1` 到 `goto_tab:8`。
+
+序号大于标签页数量时什么也不做。
+
+## `move_tab`
+
+按相对偏移移动标签页：`move_tab:1` 向后移动一位，`move_tab:-1` 向前移动一位。移到列表两端时什么也不做，不会循环。
+
+## `move_tab_to_new_window`
+
+把当前标签页移到一个新窗口。只剩这一个标签页时什么也不做，因为那只会把窗口重建一遍。
+
+## `toggle_sidebar`
+
+显示或隐藏标签栏。
+
+## `prompt_surface_title`
+
+通过弹窗修改当前焦点终端的标题。
+
+## `prompt_tab_title`
+
+通过弹窗修改当前标签页的标题。通过它设置的标题会覆盖终端设置的标题，并在标签页内焦点变化时保持不变。
+
+## `prompt_window_title`
+
+通过弹窗修改当前窗口的标题。
+
+## `new_split`
+
+按指定方向新建分屏：`right`、`down`、`left`、`up`。
+
+## `goto_split`
+
+聚焦指定方向的分屏（`right`、`down`、`left`、`up`），或按创建顺序聚焦相邻分屏（`previous`、`next`）。
+
+## `toggle_split_zoom`
+
+放大或还原当前分屏。
+
+放大后它会占满当前标签页的整个空间，隐藏其它分屏。标签页或标签栏也会显示一个表示缩放状态的图标。
+
+## `toggle_readonly`
+
+切换当前终端的只读模式。
+
+终端处于只读模式时：
+
+- 键盘、输入法与粘贴都被忽略，不会有内容送进 PTY。
+- 选区、复制与滚动仍然可用。
+- 只影响当前窗格，再切换一次即可继续输入。
+
+## `equalize_splits`
+
+让当前窗口内所有分屏的大小一致。
+
+## `resize_split`
+
+按指定方向调整当前分屏的大小：`left`、`right`、`up`、`down`。每次触发移动一步，绑定后连续按即可持续调整。
+
+## `reset_window_size`
+
+把窗口恢复为默认大小——即新建窗口时的大小——并在工作区居中。窗口已最大化或全屏时，会先还原。
+
+## `show_on_screen_keyboard`
+
+打开 Windows 屏幕键盘（若系统提供）。
+
+## `open_config`
+
+打开 Gui 的设置页。
+
+## `open_config_file`
+
+用系统默认编辑器打开配置文件。
+
+如果没有配置默认编辑器，这会失败。目前打开配置文件的失败只会出现在日志里。
+
+## `open_config:new_window`
+
+在新窗口中打开 Gui 的设置页。
+
+## `reload_config`
+
+重新加载配置。
+
+它会重读配置文件并应用改动，但不是所有改动都能在运行时应用：`command`、`working-directory` 这类选项只作用于新建的标签页与窗格。
+
+## `close_surface`
+
+关闭当前终端，无论它是一个标签页还是一个分屏。
+
+若其中仍有程序在运行，会先弹出关闭确认。
+
+## `close_tab`
+
+按模式关闭当前标签页及其中的全部分屏、关闭其它标签页，或关闭当前标签页右侧的所有标签页：`close_tab:this`、`close_tab:other`、`close_tab:right`。
+
+若其中仍有程序在运行，会先弹出关闭确认。
+
+## `close_window`
+
+关闭当前窗口及其中的全部标签页与分屏。
+
+若其中仍有程序在运行，会先弹出关闭确认。
+
+## `close_all_windows`
+
+关闭所有窗口。
+
+## `toggle_maximize`
+
+最大化或还原当前窗口。
+
+## `toggle_fullscreen`
+
+让当前窗口进入或退出全屏。
+
+## `toggle_window_float_on_top`
+
+切换终端窗口是否始终浮在其它窗口之上，即使没有焦点。
+
+终端窗口启动时都是普通（非置顶）窗口。
+
+## `toggle_mouse_reporting`
+
+开或关鼠标上报。
+
+关闭后，即使终端程序请求鼠标事件也不会收到。这样你随时可以用鼠标选中文本或操作终端界面，而不会被程序截获。
+
+这个行为也可以通过 `mouse-reporting` 配置项控制。
+
+## `toggle_background_opacity`
+
+在透明与不透明之间切换窗口背景。
+
+`background-opacity` 为 1 或更大时什么也不做。
+
+当 `background-opacity` 小于 1 时，该动作会按当前透明度状态让窗口变为透明或不透明。
+
+## `toggle_command_palette`
+
+打开或关闭命令面板。
+
+命令面板是一个弹窗，让你查看可以执行的操作及其关联快捷键（如果有），带搜索栏可以过滤动作，并可直接执行。
+
+## `toggle_quick_terminal`
+
+显示或隐藏快速终端。
+
+快速终端也叫 “Quake 风格” 或下拉式终端：一个按快捷键随时出现的终端窗口，通常从屏幕边缘（例如顶部）滑入。它适合在不新建窗口或标签页的情况下快速使用终端。
+
+终端状态在两次显示之间保留，因此隐藏后再呼出快速终端，看到的是同一个窗口，而不是新建一个。
+
+快速终端通常要在其它窗口有焦点时使用，所以最好搭配 `global:` 按键：
+
+```ini
+keybind = global:ctrl+backquote=toggle_quick_terminal
+```
+
+同一时间只存在一个快速终端；默认没有任何全局键位，只靠命令面板那一行也能打开它。
+
+## `activate_key_table`
+
+在当前焦点窗格上压入指定的 key table。如果配置从未定义该表、它已经是最内层、或已经嵌套了 8 层，则什么也不做。
+
+## `activate_key_table_once`
+
+与 `activate_key_table` 相同，但该表的某个绑定执行后会自动退出。
+
+## `deactivate_key_table`
+
+退出最内层的 key table（如果有）。
+
+## `deactivate_all_key_tables`
+
+退出当前焦点窗格上所有激活的 key table。
+
+## `quit`
+
+退出 Gui。同时存在多个窗口时只会确认一次，确认后所有窗口一起关闭。

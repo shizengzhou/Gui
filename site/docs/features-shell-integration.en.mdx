@@ -1,0 +1,54 @@
+﻿---
+title: Shell Integration
+description: Some Gui features require the shell to cooperate. Gui injects integration into PowerShell and bash automatically.
+---
+
+## Features
+
+- Do not confirm close for terminals where the cursor is at a prompt; Gui only asks when a command is still running.
+- New tabs and splits can start in the working directory of the pane they came from (`tab-inherit-working-directory`, `split-inherit-working-directory`).
+- The `jump_to_prompt` keybinding scrolls the terminal forward and back through prompts.
+- The cursor at the prompt is turned into a bar to represent more typical text editing.
+- `clear_screen` at a prompt hands the shell a form feed (Ctrl+L), so the shell repaints the prompt where the emulator expects it.
+- The terminal title follows the shell's working directory.
+- A command finishing while the window is unfocused can ring the bell or raise a toast (`notify-on-command-finish`).
+
+## Shell Integration Injection
+
+Gui automatically injects the shell integration code for PowerShell (`powershell` and `pwsh`) and bash. It detects your shell using a simple string match on the name of the executable it is about to run.
+
+- PowerShell receives the integration inline through `-NoExit -EncodedCommand`, so nothing has to be installed or installed into a profile.
+- bash reads a generated `--rcfile` written under `%TEMP%\gui`. A login shell (`bash -l`) ignores `--rcfile`, and a WSL launcher cannot open a Windows path, so both are left alone.
+
+If you are using a supported shell under a different name, you can force the shell integration by setting the `shell-integration` configuration option:
+
+~~~ini
+shell-integration = bash
+~~~
+
+If you want to disable automatic shell integration:
+
+~~~ini
+shell-integration = none
+~~~
+
+`zsh`, `fish`, `elvish` and `nushell` are accepted names, but Gui has no integration script for them on Windows: the shell is started without integration and a notice is written to the log.
+
+### Injected features
+
+The scripts emit the OSC 133 semantic prompt marks (prompt start, command start, command finished) and the OSC 7 working-directory report. `shell-integration-features` chooses which optional pieces are included, as a comma or space separated list, with `no-` to turn one off, and `true` / `false` for all of them:
+
+- `cursor` — bar cursor while the shell sits at a prompt. `cursor:steady` asks for a non-blinking one.
+- `title` — write the working directory into the terminal title.
+
+Cursor and title are on by default.
+
+### Verify shell integration
+
+There are no log lines to check. Two quick tests: the cursor becomes a bar when the shell is at a prompt, and `Ctrl+Shift+Up` / `Ctrl+Shift+Down` (`jump_to_prompt`) move between prompts. If neither works, integration was not injected — check the executable name and the `shell-integration` setting.
+
+## Switching Shells with Shell Integration
+
+Automatic shell integration only applies to the shell Gui launches with the pane.
+
+If you switch shells inside a pane — you run `bash` from PowerShell, start `nushell`, or open a `wsl` session — that shell has no integration, so prompt marks, working-directory reports and the features built on them stop working in that pane. Exit back to the shell Gui started to get them again.

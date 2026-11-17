@@ -1,0 +1,36 @@
+﻿<DocHead title="Feature-rich, native to Windows" />
+
+Gui is a very feature-rich terminal.
+
+Terminal features can be divided into two categories: features for end-users and features for terminal application developers.
+
+Features for end-users are things like multi-window, tabs, splits, ligatures, etc. These are features that make using a terminal more pleasant without requiring any changes to the running terminal applications (such as your shell, text editor, etc.).
+
+Features for terminal application developers are things like the Kitty graphics protocol, the Kitty keyboard protocol, colour reporting, hyperlinks, etc. These features allow terminal applications to do more than they could in other terminal emulators. While these features are not directly used by end-users, end-users benefit from them because terminal applications they use every day can do more.
+
+## Feature highlight
+
+<FeatureBlocks />
+
+### Platform-native features
+
+One of the primary design goals of Gui is to look, feel, and behave like a purpose-built native application on Windows. Here is a list of some of the platform-native features Gui has.
+
+- **Quick terminal**: a drop-down terminal that slides in from a screen edge, so a shell is one chord away without leaving the window you are in.
+- **Native windows, tabs and splits**: the title bar, tab rail and pane headers are WinUI components, not custom-drawn text.
+- **Acrylic transparency and blur**: applied to the whole window at once, with the terminal and chrome sharing the same surface.
+- **Custom shaders**: compile GLSL into HLSL for Win2D and stack several passes, with an animation switch for the focused pane.
+- **Chinese input**: composition is drawn live at the cursor cell and kept out of the serialised key path.
+- **Settings and command palette**: themes, fonts and behaviour are editable without hand-writing config, and the palette lists every action with its current chord.
+
+## Terminal (VT) features
+
+Gui does not re-implement the parser: libghostty-vt, the same engine Ghostty uses, consumes the ConPTY byte stream. Terminal behaviour, control sequences and protocols therefore track Ghostty's, which follows these principles:
+
+1. Xterm compatibility: xterm is the de facto standard for terminal emulation. If xterm does something, we should do the same thing.
+
+2. Protocol origin compatibility: if the terminal that defined a protocol behaves a certain way, we should follow that behaviour, even if it is not specified.
+
+3. De facto standard compatibility: if a behaviour is widely accepted as the standard, we should follow that behaviour. "Widely accepted" is generally subjective based on popular opinion and usage.
+
+For the list of terminal developer features Gui supports, see Ghostty's [VT reference](https://ghostty.org/docs/vt/reference) — Gui answers the same queries.

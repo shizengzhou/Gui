@@ -52,14 +52,14 @@ public class ConfigSurfaceTests : IDisposable
     [Fact]
     public void TheSchemaCoversEveryGhosttyReferenceOption()
     {
-        Assert.Equal(213, ConfigSchema.Count);
-        Assert.Equal(213, ConfigSchema.Ghostty.Select(o => o.Name).Distinct().Count());
+        Assert.Equal(192, ConfigSchema.Count);
+        Assert.Equal(192, ConfigSchema.Ghostty.Select(o => o.Name).Distinct().Count());
 
         foreach (string name in new[]
                  {
                      "font-family", "font-size", "theme", "background", "palette", "cursor-style",
                      "window-padding-x", "keybind", "clipboard-read", "scrollback-limit-bytes",
-                     "scrollback-compression", "link-osc8", "middle-click-action", "drag-handle",
+                     "link-osc8", "middle-click-action", "drag-handle",
                      "macos-window-shadow", "gtk-tabs-location", "auto-update-channel",
                  })
         {
@@ -573,7 +573,6 @@ public class ConfigSurfaceTests : IDisposable
             d => d.Key == "config-file" && d.Severity == ConfigSeverity.Warning);
         Assert.Equal(12f, config.FontSize);
     }
-
 
     [Fact]
     public void ConfigFileGlobsLoadEveryMatchInNameOrder()

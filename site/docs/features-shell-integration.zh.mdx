@@ -1,0 +1,54 @@
+﻿---
+title: Shell 集成
+description: Gui 的一些功能需要 shell 配合。Gui 会自动为 PowerShell 和 bash 注入集成脚本。
+---
+
+## 功能
+
+- 光标停在提示符上时不弹出关闭确认；只有仍有命令在运行时 Gui 才会询问。
+- 新建标签页与分屏可以继承来源窗格的工作目录（`tab-inherit-working-directory`、`split-inherit-working-directory`）。
+- `jump_to_prompt` 快捷键可以在提示符之间前后滚动。
+- 提示符处的光标会变成竖线，更接近普通文本编辑的观感。
+- 在提示符上执行 `clear_screen` 时，会向 shell 发送换页符（Ctrl+L），让 shell 在模拟器预期的位置重新画出提示符。
+- 终端标题跟随 shell 的工作目录。
+- 窗口未聚焦时命令执行完毕，可以响铃或弹出提示（`notify-on-command-finish`）。
+
+## 注入 shell 集成
+
+Gui 会自动为 PowerShell（`powershell` 与 `pwsh`）和 bash 注入集成脚本。它用简单的字符串匹配，按即将运行的可执行文件名识别 shell。
+
+- PowerShell 通过 `-NoExit -EncodedCommand` 内联接收脚本，既不用安装文件，也不用改 profile。
+- bash 读取一个生成在 `%TEMP%\gui` 下的 `--rcfile`。登录 shell（`bash -l`）会忽略 `--rcfile`，WSL 启动器打不开 Windows 路径，这两种情况都不做注入。
+
+如果用的是受支持的 shell，但可执行文件名不同，可以用 `shell-integration` 配置强制指定：
+
+~~~ini
+shell-integration = bash
+~~~
+
+如果想关闭自动注入：
+
+~~~ini
+shell-integration = none
+~~~
+
+`zsh`、`fish`、`elvish`、`nushell` 这些名字可以写，但 Gui 在 Windows 上没有对应的集成脚本：shell 会不带集成启动，并在日志里留一条提示。
+
+### 注入的内容
+
+脚本会发出 OSC 133 语义提示符标记（提示符开始、命令开始、命令结束）和 OSC 7 工作目录上报。`shell-integration-features` 决定包含哪些可选部分，用逗号或空格分隔，加 `no-` 关闭某一项，`true` / `false` 则全部开启或关闭：
+
+- `cursor` —— shell 停在提示符上时使用竖线光标；`cursor:steady` 表示不闪烁。
+- `title` —— 把工作目录写进终端标题。
+
+默认开启光标与标题。
+
+### 验证 shell 集成
+
+没有日志行可看，两个简单的判断方法：shell 停在提示符时，光标是竖线；`Ctrl+Shift+↑` / `Ctrl+Shift+↓`（`jump_to_prompt`）能在提示符之间跳转。两者都不生效，说明集成没有注入——检查可执行文件名和 `shell-integration` 设置。
+
+## 切换 shell 时的集成
+
+自动集成只作用于 Gui 启动窗格时所用的那个 shell。
+
+如果在窗格里切换 shell——例如在 PowerShell 里运行 `bash`、启动 `nushell`，或进入 `wsl` 会话——这个新 shell 没有集成，提示符标记、工作目录上报以及依赖它们的功能在该窗格都会失效。退回 Gui 启动的那个 shell 即可恢复。

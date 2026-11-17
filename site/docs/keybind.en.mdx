@@ -1,0 +1,172 @@
+﻿---
+title: Custom Keybindings
+description: Associate a keypress with a specific action.
+---
+
+Gui supports flexible, custom keybindings through the
+[`keybind` configuration option](/docs/config/reference#keybind).
+The configuration reference has detailed reference documentation
+for the option, but this page will give a high-level overview
+of how to specify keybindings in Gui.
+
+<Note>
+The CLI command `list-keybinds` can be used to list all the available keybinds for Gui.
+You can run this to see the default ones:
+```sh
+gui +list-keybinds --default
+```
+</Note>
+
+The basic syntax of a keybinding configuration is:
+
+```ini
+keybind = trigger=action
+```
+
+## Trigger
+
+The `trigger` part of a keybinding specifies the keypress events
+that will trigger the action. Unlike Ghostty, a trigger here is always a
+single key, optionally with modifiers: `a`, `ctrl+a`, `ctrl+shift+a` and
+`ctrl+alt+a` are all valid triggers. Multi-key sequences (`ctrl+a>n`) are
+parsed but ignored; see [Trigger Sequences](/docs/config/keybind/sequence).
+
+Several chords can be joined with `>` into a trigger sequence, which waits for
+the first chord and then decides on the next one:
+
+```ini
+keybind = ctrl+a>n=new_window
+```
+
+See [Trigger Sequences](/docs/config/keybind/sequence) for how a waiting sequence
+behaves.
+
+The keys Gui understands are:
+
+- letters `a`–`z`, digits `0`–`9`, function keys `f1`–`f24`, keypad digits `kp_0`–`kp_9`;
+- the named keys `left` `right` `up` `down` `home` `end` `page_up` `page_down`
+  `insert` `delete` `backspace` `enter` `tab` `escape` `space`;
+- punctuation by name: `plus` `minus` `equal` `comma` `period` `slash`
+  `backslash` `backquote` `bracket_left` `bracket_right` `semicolon` `apostrophe`.
+
+Ghostty's spellings are accepted too: `esc`, `return`, `pgup`, `pgdn`, `del`,
+`ins`, `arrow_left` … `arrow_down`, `grave_accent`, plus the bare symbols for
+the punctuation keys. `plus` and `minus` also take the bare symbol, so `ctrl++`
+means Ctrl and the plus key.
+
+If a key is not in the list, **you can also specify a Unicode codepoint**. Any
+trigger text that is exactly one Unicode codepoint (other than ASCII letters and
+digits, which stay physical key names) is treated as a codepoint trigger. It
+matches any key that types that character under the active layout, and matching
+is case-insensitive, so `Ä` and `ä` are the same trigger.
+
+For example, on a German keyboard you could bind "ö" with:
+
+```ini
+keybind = ctrl+ö=action
+```
+
+This triggers when the key that types "ö" is pressed with Ctrl. A physical key
+name wins if both could match the same press.
+
+### Modifiers
+
+Valid modifiers are:
+
+- `shift`
+- `ctrl` (alias: `control`)
+- `alt` (alias: `opt`, `option`)
+- `super` (alias: `cmd`, `command`, `win`, `windows`) — the Windows key.
+
+Modifier order does not matter: `ctrl+shift+t` and `shift+ctrl+t` are the same
+trigger.
+
+<Note>
+The fn or "globe" key on keyboards are not supported as a
+modifier. This is a limitation of the operating systems and GUI toolkits
+that Gui uses.
+</Note>
+
+### Trigger Prefixes
+
+A trigger can also be prefixed with some special values
+to change the behavior of the keybind. These are listed below.
+
+Keybind triggers are not unique per prefix combination. For example,
+`ctrl+a` and `global:ctrl+a` are not two separate keybinds. The keybind
+set later will overwrite the keybind set earlier. In this case, the
+`global:` keybind will be used.
+
+Multiple prefixes can be specified. For example,
+`global:unconsumed:ctrl+a=reload_config` makes the binding global as well as
+trying to leave the key to the program — except that a global binding always
+consumes, so the `unconsumed:` part has no effect there.
+
+#### `all:`
+
+Run the action on every terminal surface, not just the focused one. Only actions
+that act on a surface are repeated (copy, scroll, search, selection, font size
+and so on); window- and app-level actions such as `new_tab` or `quit` run once.
+`global:` implies `all:`.
+
+#### `global:`
+
+Make the keybind global. By default, keybinds only work
+within Gui and under the right conditions (application focused,
+sometimes terminal focused, etc.). If you want a keybind to work
+globally across your system (i.e. even when Gui is not focused),
+specify this prefix.
+
+Every action can be global: the chord is registered with Windows as a
+system-wide hotkey and runs against the last activated window. No chord is global
+by default, so register one yourself, for example:
+
+```ini
+keybind = global:ctrl+backquote=toggle_quick_terminal
+```
+
+If another application already owns the chord, Gui only logs a warning and the
+binding still works while Gui has focus. A sequence cannot be global: a
+`global:` line containing `>` is rejected with a warning.
+
+#### `unconsumed:`
+
+Do not swallow the key. After the action runs, the key is also sent to the
+program in the terminal; a sequence sends its held prefix keys and then the
+completing key. This has no effect with `global:` or `all:`, which always consume
+the input.
+
+#### `physical:`
+
+Match a physical key name. The trigger must then be one of the key names above;
+a written character such as `ö` is treated as a config error instead of a
+codepoint trigger. Gui already matches keys by their physical name, so this
+mainly forces that reading.
+
+#### `performable:`
+
+Only run and consume the key if the action can actually do something right now.
+For example, `copy_to_clipboard` only fires when there is a selection, search
+navigation only while the find bar is open, and split actions only when the tab
+has more than one pane. When the action cannot run, Gui behaves as if the
+binding was not set and the key reaches the program. In a sequence, the
+sequence is reset instead of firing.
+
+## Action
+
+Action is what happens when the trigger is activated. It is
+in the format of `action` or `action:parameter` if the action
+requires a parameter.
+
+Here are some common actions that can be used in keybinds.
+Please view the
+[full list of actions](/docs/config/keybind/reference)
+for a complete list. Gui supports dozens of actions.
+
+| Action | Description |
+|--------|-------------|
+| `ignore` | Do nothing, ignore the key input. This can be used to black hole certain inputs to have no effect and no encoding. `unconsumed:ctrl+a=ignore` is the way to forward a key instead. |
+| `unbind` | Remove the binding. This makes it so the previous action is removed, and the key will be sent through to the child command if it is printable. |
+| `text:text` | Send a string. Uses Zig string literal syntax; escapes are decoded when the binding runs, and an invalid escape only logs a warning. i.e. `text:\x15` sends Ctrl-U. |
+| `csi:text` | Send a CSI sequence; the `ESC [` header is added. i.e. `csi:A` sends "cursor up". |
+| `esc:text` | Send an escape sequence; `ESC` is prepended and the value is literal. i.e. `esc:d` deletes to the end of the word to the right. |

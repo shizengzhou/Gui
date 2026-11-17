@@ -1,0 +1,1391 @@
+{
+  "source": "Gui/Gui/Term/ConfigSchema.cs",
+  "options": [
+    {
+      "name": "language",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "GUI language",
+      "own": false
+    },
+    {
+      "name": "font-family",
+      "kind": "List",
+      "platform": "All",
+      "summary": "font families, repeated for fallbacks",
+      "own": false
+    },
+    {
+      "name": "font-family-bold",
+      "kind": "List",
+      "platform": "All",
+      "summary": "bold font families",
+      "own": false
+    },
+    {
+      "name": "font-family-italic",
+      "kind": "List",
+      "platform": "All",
+      "summary": "italic font families",
+      "own": false
+    },
+    {
+      "name": "font-family-bold-italic",
+      "kind": "List",
+      "platform": "All",
+      "summary": "bold italic font families",
+      "own": false
+    },
+    {
+      "name": "font-style",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "font face style name",
+      "own": false
+    },
+    {
+      "name": "font-style-bold",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "bold face style name",
+      "own": false
+    },
+    {
+      "name": "font-style-italic",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "italic face style name",
+      "own": false
+    },
+    {
+      "name": "font-style-bold-italic",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "bold italic face style name",
+      "own": false
+    },
+    {
+      "name": "font-synthetic-style",
+      "kind": "List",
+      "platform": "All",
+      "summary": "synthesize missing bold/italic",
+      "own": false
+    },
+    {
+      "name": "font-feature",
+      "kind": "List",
+      "platform": "All",
+      "summary": "OpenType features",
+      "own": false
+    },
+    {
+      "name": "font-size",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "font size in points",
+      "own": false
+    },
+    {
+      "name": "font-variation",
+      "kind": "List",
+      "platform": "All",
+      "summary": "variable font axes",
+      "own": false
+    },
+    {
+      "name": "font-variation-bold",
+      "kind": "List",
+      "platform": "All",
+      "summary": "bold variable font axes",
+      "own": false
+    },
+    {
+      "name": "font-variation-italic",
+      "kind": "List",
+      "platform": "All",
+      "summary": "italic variable font axes",
+      "own": false
+    },
+    {
+      "name": "font-variation-bold-italic",
+      "kind": "List",
+      "platform": "All",
+      "summary": "bold italic variable font axes",
+      "own": false
+    },
+    {
+      "name": "font-codepoint-map",
+      "kind": "List",
+      "platform": "All",
+      "summary": "map codepoints to a font",
+      "own": false
+    },
+    {
+      "name": "clipboard-codepoint-map",
+      "kind": "List",
+      "platform": "All",
+      "summary": "rewrite codepoints on copy",
+      "own": false
+    },
+    {
+      "name": "clipboard-write-limit-bytes",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "OSC 52 write size limit",
+      "own": false
+    },
+    {
+      "name": "font-thicken",
+      "kind": "Bool",
+      "platform": "MacOS",
+      "summary": "thicken font strokes",
+      "own": false
+    },
+    {
+      "name": "font-thicken-strength",
+      "kind": "Integer",
+      "platform": "MacOS",
+      "summary": "thickening strength 0-255",
+      "own": false
+    },
+    {
+      "name": "font-shaping-break",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "where to break shaping runs",
+      "own": false
+    },
+    {
+      "name": "adjust-cell-width",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "cell width adjustment",
+      "own": false
+    },
+    {
+      "name": "adjust-cell-height",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "cell height adjustment",
+      "own": false
+    },
+    {
+      "name": "adjust-font-baseline",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "baseline adjustment",
+      "own": false
+    },
+    {
+      "name": "adjust-underline-position",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "underline position",
+      "own": false
+    },
+    {
+      "name": "adjust-underline-thickness",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "underline thickness",
+      "own": false
+    },
+    {
+      "name": "adjust-strikethrough-position",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "strikethrough position",
+      "own": false
+    },
+    {
+      "name": "adjust-strikethrough-thickness",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "strikethrough thickness",
+      "own": false
+    },
+    {
+      "name": "adjust-overline-position",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "overline position",
+      "own": false
+    },
+    {
+      "name": "adjust-overline-thickness",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "overline thickness",
+      "own": false
+    },
+    {
+      "name": "adjust-cursor-thickness",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "bar cursor thickness",
+      "own": false
+    },
+    {
+      "name": "adjust-cursor-height",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "cursor height",
+      "own": false
+    },
+    {
+      "name": "adjust-box-thickness",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "box drawing thickness",
+      "own": false
+    },
+    {
+      "name": "adjust-icon-height",
+      "kind": "Number",
+      "platform": "All",
+      "summary": "nerd font icon height",
+      "own": false
+    },
+    {
+      "name": "freetype-load-flags",
+      "kind": "Text",
+      "platform": "Linux",
+      "summary": "FreeType load flags",
+      "own": false
+    },
+    {
+      "name": "theme",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "theme name or path",
+      "own": false
+    },
+    {
+      "name": "background",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "background color",
+      "own": false
+    },
+    {
+      "name": "foreground",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "foreground color",
+      "own": false
+    },
+    {
+      "name": "background-image",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "background image path",
+      "own": false
+    },
+    {
+      "name": "background-image-opacity",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "background image opacity",
+      "own": false
+    },
+    {
+      "name": "background-image-position",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "background image position",
+      "own": false
+    },
+    {
+      "name": "background-image-fit",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "background image fit",
+      "own": false
+    },
+    {
+      "name": "background-image-repeat",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "repeat background image",
+      "own": false
+    },
+    {
+      "name": "selection-foreground",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "selection foreground",
+      "own": false
+    },
+    {
+      "name": "selection-background",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "selection background",
+      "own": false
+    },
+    {
+      "name": "selection-clear-on-typing",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "clear selection when typing",
+      "own": false
+    },
+    {
+      "name": "selection-clear-on-copy",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "clear selection after copy",
+      "own": false
+    },
+    {
+      "name": "selection-word-chars",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "word boundary characters",
+      "own": false
+    },
+    {
+      "name": "minimum-contrast",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "minimum contrast ratio 1-21",
+      "own": false
+    },
+    {
+      "name": "palette",
+      "kind": "List",
+      "platform": "All",
+      "summary": "256 color palette entries",
+      "own": false
+    },
+    {
+      "name": "palette-generate",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "generate extended palette",
+      "own": false
+    },
+    {
+      "name": "palette-harmonious",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "reverse generated palette",
+      "own": false
+    },
+    {
+      "name": "cursor-color",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "cursor color",
+      "own": false
+    },
+    {
+      "name": "cursor-opacity",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "cursor opacity",
+      "own": false
+    },
+    {
+      "name": "cursor-style",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "default cursor style",
+      "own": false
+    },
+    {
+      "name": "cursor-style-blink",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "cursor blink",
+      "own": false
+    },
+    {
+      "name": "cursor-text",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "text color under the cursor",
+      "own": false
+    },
+    {
+      "name": "mouse-hide-while-typing",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "hide pointer while typing",
+      "own": false
+    },
+    {
+      "name": "scroll-to-bottom",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "when to scroll to bottom",
+      "own": false
+    },
+    {
+      "name": "mouse-shift-capture",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "shift key with mouse reporting",
+      "own": false
+    },
+    {
+      "name": "mouse-reporting",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "report mouse events",
+      "own": false
+    },
+    {
+      "name": "mouse-scroll-multiplier",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "wheel scroll multiplier",
+      "own": false
+    },
+    {
+      "name": "background-opacity",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "background opacity",
+      "own": false
+    },
+    {
+      "name": "background-opacity-cells",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "opacity on colored cells",
+      "own": false
+    },
+    {
+      "name": "background-blur",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "background blur",
+      "own": false
+    },
+    {
+      "name": "unfocused-split-opacity",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "unfocused split opacity",
+      "own": false
+    },
+    {
+      "name": "unfocused-split-fill",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "unfocused split fill",
+      "own": false
+    },
+    {
+      "name": "split-divider-color",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "split divider color",
+      "own": false
+    },
+    {
+      "name": "drag-handle",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "split drag handle visibility",
+      "own": false
+    },
+    {
+      "name": "search-foreground",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "search match foreground",
+      "own": false
+    },
+    {
+      "name": "search-background",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "search match background",
+      "own": false
+    },
+    {
+      "name": "search-selected-foreground",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "current match foreground",
+      "own": false
+    },
+    {
+      "name": "search-selected-background",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "current match background",
+      "own": false
+    },
+    {
+      "name": "command",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "command to run",
+      "own": false
+    },
+    {
+      "name": "initial-command",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "command for the first surface",
+      "own": false
+    },
+    {
+      "name": "notify-on-command-finish",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "command finished notifications",
+      "own": false
+    },
+    {
+      "name": "notify-on-command-finish-action",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "notification action",
+      "own": false
+    },
+    {
+      "name": "notify-on-command-finish-after",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "notification delay",
+      "own": false
+    },
+    {
+      "name": "env",
+      "kind": "List",
+      "platform": "All",
+      "summary": "extra environment variables",
+      "own": false
+    },
+    {
+      "name": "input",
+      "kind": "List",
+      "platform": "All",
+      "summary": "input sent on startup",
+      "own": false
+    },
+    {
+      "name": "wait-after-command",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "keep the surface after exit",
+      "own": false
+    },
+    {
+      "name": "abnormal-command-exit-runtime",
+      "kind": "Integer",
+      "platform": "All",
+      "summary": "abnormal exit threshold",
+      "own": false
+    },
+    {
+      "name": "scrollback-limit-bytes",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "scrollback size in bytes",
+      "own": false
+    },
+    {
+      "name": "scrollback-limit-lines",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "scrollback row cap",
+      "own": false
+    },
+    {
+      "name": "scrollbar",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "scrollbar visibility",
+      "own": false
+    },
+    {
+      "name": "link-url",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "match URLs",
+      "own": false
+    },
+    {
+      "name": "link-osc8",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "OSC 8 hyperlinks",
+      "own": false
+    },
+    {
+      "name": "link-previews",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "show link previews (true/false/osc8)",
+      "own": false
+    },
+    {
+      "name": "maximize",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "start maximized",
+      "own": false
+    },
+    {
+      "name": "fullscreen",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "start fullscreen",
+      "own": false
+    },
+    {
+      "name": "title",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "window title",
+      "own": false
+    },
+    {
+      "name": "class",
+      "kind": "Text",
+      "platform": "Linux",
+      "summary": "X11 window class",
+      "own": false
+    },
+    {
+      "name": "x11-instance-name",
+      "kind": "Text",
+      "platform": "Linux",
+      "summary": "X11 instance name",
+      "own": false
+    },
+    {
+      "name": "working-directory",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "startup directory",
+      "own": false
+    },
+    {
+      "name": "keybind",
+      "kind": "List",
+      "platform": "All",
+      "summary": "key bindings",
+      "own": false
+    },
+    {
+      "name": "key-remap",
+      "kind": "List",
+      "platform": "All",
+      "summary": "modifier remapping",
+      "own": false
+    },
+    {
+      "name": "window-padding-x",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "horizontal padding (left,right)",
+      "own": false
+    },
+    {
+      "name": "window-padding-y",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "vertical padding (top,bottom)",
+      "own": false
+    },
+    {
+      "name": "window-padding-balance",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "balance leftover padding",
+      "own": false
+    },
+    {
+      "name": "window-inherit-working-directory",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "inherit cwd in new windows",
+      "own": false
+    },
+    {
+      "name": "tab-inherit-working-directory",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "inherit cwd in new tabs",
+      "own": false
+    },
+    {
+      "name": "split-inherit-working-directory",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "inherit cwd in new splits",
+      "own": false
+    },
+    {
+      "name": "window-inherit-font-size",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "inherit font size",
+      "own": false
+    },
+    {
+      "name": "window-title-font-family",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "title bar font",
+      "own": false
+    },
+    {
+      "name": "window-theme",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "window theme",
+      "own": false
+    },
+    {
+      "name": "window-height",
+      "kind": "Integer",
+      "platform": "All",
+      "summary": "initial height in cells",
+      "own": false
+    },
+    {
+      "name": "window-width",
+      "kind": "Integer",
+      "platform": "All",
+      "summary": "initial width in cells",
+      "own": false
+    },
+    {
+      "name": "window-position-x",
+      "kind": "Integer",
+      "platform": "All",
+      "summary": "initial X position",
+      "own": false
+    },
+    {
+      "name": "window-position-y",
+      "kind": "Integer",
+      "platform": "All",
+      "summary": "initial Y position",
+      "own": false
+    },
+    {
+      "name": "window-save-state",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "save and restore window state",
+      "own": false
+    },
+    {
+      "name": "window-new-tab-position",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "new tab position",
+      "own": false
+    },
+    {
+      "name": "window-show-tab-bar",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "tab bar visibility",
+      "own": false
+    },
+    {
+      "name": "window-titlebar-background",
+      "kind": "Color",
+      "platform": "Linux",
+      "summary": "titlebar background",
+      "own": false
+    },
+    {
+      "name": "window-titlebar-foreground",
+      "kind": "Color",
+      "platform": "Linux",
+      "summary": "titlebar foreground",
+      "own": false
+    },
+    {
+      "name": "focus-follows-mouse",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "focus follows the pointer",
+      "own": false
+    },
+    {
+      "name": "clipboard-read",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "OSC 52 clipboard reads",
+      "own": false
+    },
+    {
+      "name": "clipboard-write",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "OSC 52 clipboard writes",
+      "own": false
+    },
+    {
+      "name": "clipboard-trim-trailing-spaces",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "trim on copy",
+      "own": false
+    },
+    {
+      "name": "clipboard-paste-protection",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "confirm unsafe pastes",
+      "own": false
+    },
+    {
+      "name": "clipboard-paste-bracketed-safe",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "bracketed paste is safe",
+      "own": false
+    },
+    {
+      "name": "title-report",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "allow CSI 21 t title queries",
+      "own": false
+    },
+    {
+      "name": "image-storage-limit",
+      "kind": "Integer",
+      "platform": "All",
+      "summary": "image memory limit",
+      "own": false
+    },
+    {
+      "name": "copy-on-select",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "copy when selecting",
+      "own": false
+    },
+    {
+      "name": "right-click-action",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "right click action",
+      "own": false
+    },
+    {
+      "name": "middle-click-action",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "middle click action",
+      "own": false
+    },
+    {
+      "name": "click-repeat-interval",
+      "kind": "Integer",
+      "platform": "All",
+      "summary": "multi-click interval",
+      "own": false
+    },
+    {
+      "name": "config-file",
+      "kind": "List",
+      "platform": "All",
+      "summary": "extra config files",
+      "own": false
+    },
+    {
+      "name": "confirm-close-surface",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "confirm before closing",
+      "own": false
+    },
+    {
+      "name": "quit-after-last-window-closed-delay",
+      "kind": "Text",
+      "platform": "Linux",
+      "summary": "quit delay",
+      "own": false
+    },
+    {
+      "name": "initial-window",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "create an initial window",
+      "own": false
+    },
+    {
+      "name": "quick-terminal-position",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "quick terminal position",
+      "own": false
+    },
+    {
+      "name": "quick-terminal-size",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "quick terminal size",
+      "own": false
+    },
+    {
+      "name": "gtk-quick-terminal-layer",
+      "kind": "Enum",
+      "platform": "Linux",
+      "summary": "quick terminal layer",
+      "own": false
+    },
+    {
+      "name": "gtk-quick-terminal-namespace",
+      "kind": "Text",
+      "platform": "Linux",
+      "summary": "quick terminal namespace",
+      "own": false
+    },
+    {
+      "name": "quick-terminal-screen",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "quick terminal screen",
+      "own": false
+    },
+    {
+      "name": "quick-terminal-animation-duration",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "quick terminal animation",
+      "own": false
+    },
+    {
+      "name": "quick-terminal-autohide",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "hide quick terminal on blur",
+      "own": false
+    },
+    {
+      "name": "quick-terminal-space-behavior",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "quick terminal spaces",
+      "own": false
+    },
+    {
+      "name": "quick-terminal-keyboard-interactivity",
+      "kind": "Enum",
+      "platform": "Linux",
+      "summary": "quick terminal keyboard",
+      "own": false
+    },
+    {
+      "name": "shell-integration",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "shell integration injection",
+      "own": false
+    },
+    {
+      "name": "shell-integration-features",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "shell integration features",
+      "own": false
+    },
+    {
+      "name": "osc-color-report-format",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "OSC color report format",
+      "own": false
+    },
+    {
+      "name": "vt-kam-allowed",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "allow KAM mode",
+      "own": false
+    },
+    {
+      "name": "custom-shader",
+      "kind": "List",
+      "platform": "All",
+      "summary": "custom GLSL shaders",
+      "own": false
+    },
+    {
+      "name": "custom-shader-animation",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "shader animation loop",
+      "own": false
+    },
+    {
+      "name": "bell-features",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "bell features",
+      "own": false
+    },
+    {
+      "name": "bell-audio-path",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "bell audio file",
+      "own": false
+    },
+    {
+      "name": "bell-audio-volume",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "bell volume",
+      "own": false
+    },
+    {
+      "name": "macos-non-native-fullscreen",
+      "kind": "Text",
+      "platform": "MacOS",
+      "summary": "non-native fullscreen",
+      "own": false
+    },
+    {
+      "name": "macos-window-buttons",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "traffic light buttons",
+      "own": false
+    },
+    {
+      "name": "macos-titlebar-style",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "titlebar style",
+      "own": false
+    },
+    {
+      "name": "macos-titlebar-proxy-icon",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "proxy icon",
+      "own": false
+    },
+    {
+      "name": "macos-dock-drop-behavior",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "dock drop behavior",
+      "own": false
+    },
+    {
+      "name": "macos-option-as-alt",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "option key as alt",
+      "own": false
+    },
+    {
+      "name": "macos-window-shadow",
+      "kind": "Bool",
+      "platform": "MacOS",
+      "summary": "window shadow",
+      "own": false
+    },
+    {
+      "name": "macos-hidden",
+      "kind": "Bool",
+      "platform": "MacOS",
+      "summary": "hide dock icon",
+      "own": false
+    },
+    {
+      "name": "macos-auto-secure-input",
+      "kind": "Bool",
+      "platform": "MacOS",
+      "summary": "automatic secure input",
+      "own": false
+    },
+    {
+      "name": "macos-secure-input-indication",
+      "kind": "Bool",
+      "platform": "MacOS",
+      "summary": "secure input indicator",
+      "own": false
+    },
+    {
+      "name": "macos-applescript",
+      "kind": "Bool",
+      "platform": "MacOS",
+      "summary": "AppleScript dictionary",
+      "own": false
+    },
+    {
+      "name": "macos-icon",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "app icon style",
+      "own": false
+    },
+    {
+      "name": "macos-custom-icon",
+      "kind": "Text",
+      "platform": "MacOS",
+      "summary": "custom icon path",
+      "own": false
+    },
+    {
+      "name": "macos-icon-frame",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "icon frame material",
+      "own": false
+    },
+    {
+      "name": "macos-icon-ghost-color",
+      "kind": "Color",
+      "platform": "MacOS",
+      "summary": "icon ghost color",
+      "own": false
+    },
+    {
+      "name": "macos-icon-screen-color",
+      "kind": "List",
+      "platform": "MacOS",
+      "summary": "icon screen colors",
+      "own": false
+    },
+    {
+      "name": "macos-shortcuts",
+      "kind": "Bool",
+      "platform": "MacOS",
+      "summary": "Shortcuts control",
+      "own": false
+    },
+    {
+      "name": "linux-cgroup",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "per-surface systemd scope",
+      "own": false
+    },
+    {
+      "name": "linux-cgroup-memory-limit",
+      "kind": "Integer",
+      "platform": "Linux",
+      "summary": "memory limit",
+      "own": false
+    },
+    {
+      "name": "linux-cgroup-processes-limit",
+      "kind": "Integer",
+      "platform": "Linux",
+      "summary": "process limit",
+      "own": false
+    },
+    {
+      "name": "linux-cgroup-hard-fail",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "fail on cgroup error",
+      "own": false
+    },
+    {
+      "name": "gtk-opengl-debug",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "GTK OpenGL debug log",
+      "own": false
+    },
+    {
+      "name": "gtk-single-instance",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "single instance mode",
+      "own": false
+    },
+    {
+      "name": "gtk-titlebar",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "full GTK titlebar",
+      "own": false
+    },
+    {
+      "name": "gtk-tabs-location",
+      "kind": "Enum",
+      "platform": "Linux",
+      "summary": "tab bar location",
+      "own": false
+    },
+    {
+      "name": "gtk-horizontal-tab-scroll",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "scroll tabs horizontally",
+      "own": false
+    },
+    {
+      "name": "gtk-tabs-inverted",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "invert tab bar colors",
+      "own": false
+    },
+    {
+      "name": "gtk-titlebar-hide-when-maximized",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "hide titlebar when maximized",
+      "own": false
+    },
+    {
+      "name": "gtk-toolbar-style",
+      "kind": "Enum",
+      "platform": "Linux",
+      "summary": "toolbar style",
+      "own": false
+    },
+    {
+      "name": "gtk-titlebar-style",
+      "kind": "Enum",
+      "platform": "Linux",
+      "summary": "GTK titlebar style",
+      "own": false
+    },
+    {
+      "name": "gtk-wide-tabs",
+      "kind": "Bool",
+      "platform": "Linux",
+      "summary": "wide tabs",
+      "own": false
+    },
+    {
+      "name": "gtk-custom-css",
+      "kind": "Text",
+      "platform": "Linux",
+      "summary": "custom GTK CSS",
+      "own": false
+    },
+    {
+      "name": "desktop-notifications",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "OSC desktop notifications",
+      "own": false
+    },
+    {
+      "name": "progress-style",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "OSC 9;4 progress bars",
+      "own": false
+    },
+    {
+      "name": "bold-color",
+      "kind": "Color",
+      "platform": "All",
+      "summary": "bold text color",
+      "own": false
+    },
+    {
+      "name": "faint-opacity",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "faint text opacity",
+      "own": false
+    },
+    {
+      "name": "term",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "TERM environment value",
+      "own": false
+    },
+    {
+      "name": "enquiry-response",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "reply to ENQ",
+      "own": false
+    },
+    {
+      "name": "vt-window-resize-allowed",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "allow window resize sequences",
+      "own": false
+    },
+    {
+      "name": "vt-xt-checksum-extension",
+      "kind": "Text",
+      "platform": "All",
+      "summary": "XT checksum extension",
+      "own": false
+    },
+    {
+      "name": "vt-xt-checksum-report",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "report XT checksums",
+      "own": false
+    },
+    {
+      "name": "auto-update",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "auto update",
+      "own": false
+    },
+    {
+      "name": "auto-update-channel",
+      "kind": "Enum",
+      "platform": "MacOS",
+      "summary": "auto update channel",
+      "own": false
+    },
+    {
+      "name": "tab-position",
+      "kind": "Enum",
+      "platform": "All",
+      "summary": "tab strip position: top, left, right",
+      "own": true
+    },
+    {
+      "name": "compact",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "panes run edge to edge",
+      "own": true
+    },
+    {
+      "name": "sidebar-width-left",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "left rail width in DIPs",
+      "own": true
+    },
+    {
+      "name": "sidebar-width-right",
+      "kind": "Float",
+      "platform": "All",
+      "summary": "right rail width in DIPs",
+      "own": true
+    },
+    {
+      "name": "debug-tap",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "record the raw VT byte stream",
+      "own": true
+    },
+    {
+      "name": "crash-dumps",
+      "kind": "Bool",
+      "platform": "All",
+      "summary": "ask Windows for a full crash dump",
+      "own": true
+    }
+  ]
+}

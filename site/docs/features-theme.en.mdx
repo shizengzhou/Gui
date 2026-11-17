@@ -1,0 +1,85 @@
+﻿---
+title: Color Theme
+description: Gui ships with hundreds of built-in themes, supports separate light and dark themes, and lets you override any colour from the config.
+---
+
+## Built-in themes
+
+Gui ships with hundreds of built-in themes that can be selected with one line of configuration by using the [`theme` configuration option](/docs/config/reference). For example, to use the popular Catppuccin theme:
+
+~~~ini
+theme = Catppuccin Frappe
+~~~
+
+<Note>
+Reload your configuration (`Ctrl+Shift+,`) after changing the theme in the file. Picking a theme from the command palette or the settings page applies it immediately and writes the choice back to the config.
+</Note>
+
+The built-in themes are sourced from [iterm2-color-schemes](https://iterm2colorschemes.com) and bundled with the app. Gui also ships two design themes of its own — `Gui Light` and `Gui Dark` — which are not files and always match the window chrome.
+
+### Browsing available themes
+
+Run `gui +list-themes` to open an interactive browser: All/Light/Dark chips, the themes in a column with their brightness, and a preview of the highlighted theme — its 16 ANSI colours, a shell sample and a code sample. Enter writes the theme into the config, touching only the `light:` or `dark:` half it belongs to. When the output is redirected, the command prints one theme per line instead, so scripts can read it.
+
+You can also browse inside the app:
+
+- The settings page has a searchable light list and a searchable dark list; choosing one applies it and writes `theme` back to the config.
+- The command palette lists the same themes grouped by background brightness, so you can preview and switch them without opening settings.
+
+Every bundled theme is also previewed online at [iterm2-color-schemes](https://iterm2colorschemes.com).
+
+## Separate light and dark themes
+
+Gui supports specifying separate light and dark themes.
+
+~~~ini
+theme = dark:Catppuccin Frappe,light:Catppuccin Latte
+~~~
+
+When separate light and dark themes are specified, Gui switches between them based on the [`window-theme`](/docs/config/reference) setting: `system` (the default) follows the Windows light/dark setting, while `light` and `dark` pin one side.
+
+## Overriding colors
+
+A theme only supplies colours. The colour keys in your config are layered on top of it, so you can keep a theme and change a few entries:
+
+- [`background`](/docs/config/reference)
+- [`foreground`](/docs/config/reference)
+- [`cursor-color`](/docs/config/reference)
+- [`selection-foreground`](/docs/config/reference)
+- [`selection-background`](/docs/config/reference)
+- [`palette`](/docs/config/reference)
+
+`palette` is repeatable, one `index=#RRGGBB` per line. `palette-generate` fills entries 16–255 from the first 16, and `palette-harmonious` reverses that generated ramp.
+
+### Example
+
+Below is an example of a complete set of colour overrides:
+
+~~~ini
+palette = 0=#51576d
+palette = 1=#e78284
+palette = 2=#a6d189
+palette = 3=#e5c890
+palette = 4=#8caaee
+palette = 5=#f4b8e4
+palette = 6=#81c8be
+palette = 7=#a5adce
+palette = 8=#626880
+palette = 9=#e67172
+palette = 10=#8ec772
+palette = 11=#d9ba73
+palette = 12=#7b9ef0
+palette = 13=#f2a4db
+palette = 14=#5abfb5
+palette = 15=#b5bfe2
+background = #303446
+foreground = #c6d0f5
+cursor-color = #f2d5cf
+cursor-text = #c6d0f5
+selection-background = #626880
+selection-foreground = #c6d0f5
+~~~
+
+### File location
+
+Bundled themes are looked up by name in `Assets\Themes\light` and `Assets\Themes\dark`, next to the executable. Put your own theme files in the `themes` folder beside the config file: a theme there shadows a bundled one with the same name, and its light or dark side comes from the background colour it sets. `theme` takes a name rather than a path; to change a bundled theme, override the colour keys above or add a same-named file to your `themes` folder.

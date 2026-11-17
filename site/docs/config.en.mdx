@@ -1,0 +1,104 @@
+﻿<DocHead title="Your Ghostty config just works" />
+
+## Zero configuration
+
+Like Ghostty, Gui works out of the box: the JetBrains Mono Nerd Font is bundled, themes ship with it, it follows the system light/dark setting, and every component has sensible defaults. Most people never need to write any config at all — just run it first and see.
+
+## Configuration format
+
+Gui's config is Ghostty's format: a plain text file with one `key = value` per line.
+
+### File location
+
+The config file is `%APPDATA%\gui\config`, usually `C:\Users\<you>\AppData\Roaming\gui\config`.
+
+- Unlike Ghostty, Gui reads this one file only: there are no XDG or macOS-style search paths.
+- The config is optional; if it can't be read, everything falls back to defaults.
+
+### Syntax
+
+The syntax is simple; this sample also documents the rules:
+
+~~~ini
+# One "key = value" per line; whitespace around the equals doesn't matter.
+font-family = JetBrainsMono Nerd Font
+font-size = 12
+
+# Comments start with # and must be on their own line; blank lines are ignored.
+
+theme = light:Gui Light,dark:Gui Dark
+window-theme = system
+
+# An empty value resets the key to its default; for repeatable keys such as
+# keybind, an empty value clears the whole list.
+font-family =
+~~~
+
+A few more notes:
+
+- Keys are **case-insensitive**: `Font-Size` and `font-size` are the same key (Ghostty is case-sensitive, so this differs).
+- Values may be quoted or unquoted: `font-family = JetBrainsMono Nerd Font` is the same as `font-family = "JetBrainsMono Nerd Font"`.
+- An unknown key produces a warning and is ignored; `+show-config` shows those warnings.
+- A line without an `=` is likewise warned about and skipped.
+
+### Splitting into multiple files
+
+`config-file` splits the config up, and may appear more than once:
+
+~~~ini
+config-file = ?C:\Users\me\.config\gui\local
+config-file = themes/extra
+~~~
+
+- A relative path is relative to **the file that contains it**, not the process working directory.
+- Prefixing the value with `?` makes the file optional: a missing file is skipped without an error.
+- Included files load **after** the including file, so their values win over same-named keys in it — even when the `config-file` line sits before those keys.
+- A cycle is detected, ignored and reported as a warning.
+
+### Themes and light/dark
+
+`theme` is a comma-separated list whose entries may carry a `light:` or `dark:` prefix, e.g. `light:Gui Light,dark:Gui Dark`; an unprefixed theme applies to both. `window-theme` picks which half is used: `system` (the default, follow the OS), `light` or `dark`.
+
+The bundled themes are grouped by background brightness and can be previewed and switched live from the command palette (`Ctrl+Shift+P`); the choice is written back to the config file.
+
+### Reloading
+
+`Ctrl+Shift+,` (`reload_config`) re-reads the whole config at runtime, and the command palette has a Reload Configuration row too.
+
+Some options only apply to **newly created** tabs or panes — `command` and `working-directory`, for example — so nothing already running is disturbed.
+
+### Gui-specific keys
+
+Beyond Ghostty's keys, Gui also understands:
+
+- `language`: UI language, e.g. `zh-CN`; unset follows the system.
+- `tab-position`: `top`, `left` or `right`.
+- `compact`: whether panes run edge to edge (default `true`).
+- `sidebar-width-left` / `sidebar-width-right`: the width of each tab rail, written back by the app when you drag it.
+- `debug-tap` / `crash-dumps`: debug switches, equivalent to `GUI_TAP=1` and registering crash dumps.
+
+### See every option
+
+The [option reference](/docs/config/reference) lists every key by group; the command line prints the same table (after installing, `gui` lives in the install's `bin` folder, which is on PATH):
+
+~~~bash
+gui +show-config                   # only the keys you changed
+gui +show-config --default --docs  # every option, one doc line per key
+gui +list-keybinds                 # the key bindings in effect
+~~~
+
+
+## Command-line overrides
+
+Every configuration key also works as a command-line flag for that one launch, the way Ghostty does it:
+
+~~~bash
+gui --background=282c34 --font-size=18
+gui --font-family="JetBrainsMono Nerd Font" --window-theme=dark
+~~~
+
+- Colours may leave out the `#`: `--background=282c34` is the same as `--background=#282c34`.
+- A repeatable key (`font-family`, `env`, `keybind` …) appends to what the file already set; an empty value clears the key.
+- An unknown key or a bad value fails in the shell (exit status 2) instead of starting anything.
+- The overrides belong to **the process they start**: the theme and palette are resolved once per process, so the command always opens a new instance, the running Gui is left alone, and that scratch instance never writes back your saved window layout.
+- `config-file` is not accepted as an ordinary key, but the command line has dedicated flags: `--config-file=PATH` adds a file to read (repeatable; relative paths are from the directory the command runs in), and `--config-default-files=false` skips `%APPDATA%\gui\config` so only the command-line files are read. Both belong to the process they start.

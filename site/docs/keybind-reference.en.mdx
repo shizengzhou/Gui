@@ -1,0 +1,438 @@
+﻿---
+title: Keybinding Action Reference
+description: Reference of every keybinding action Gui implements.
+---
+
+This is a reference of every keybinding action Gui implements. An action is
+written after the `=` in a `keybind` line, as `action` or `action:parameter`;
+the [keybind overview](/docs/config/keybind) covers the trigger half.
+
+Ghostty documents more actions than Gui implements. Actions missing from this
+page have no handler: a line that uses one leaves a warning in the debug log
+and does nothing.
+
+## `ignore`
+
+Ignore this key combination.
+
+Gui will not process this combination nor forward it to the child
+process within the terminal, but it may still be processed by the OS or
+other applications. Combine it with `unconsumed:` to run nothing but still send
+the key to the program.
+
+## `unbind`
+
+Unbind a previously bound key binding.
+
+This behaves like an empty action: the binding is removed and the key is sent to
+the program as if the line had never existed.
+
+## `csi`
+
+Send a CSI sequence.
+
+The value should be the CSI sequence without the CSI header (`ESC [` or
+`\x1b[`); it is decoded like `text:` and then prefixed with `ESC [`.
+
+For example, `csi:0m` can be sent to reset all styles of the current text.
+
+## `esc`
+
+Send an `ESC` sequence.
+
+The value is taken literally and `ESC` is prepended.
+
+## `text`
+
+Send the specified text.
+
+Uses Zig string literal syntax (`\n`, `\r`, `\t`, `\\`, `\'`, `\"`, `\xNN`,
+`\u{...}`), decoded when the binding runs. If the text is invalid (i.e. contains
+an invalid escape sequence), the error only shows up in the logs and nothing is
+sent.
+
+## `cursor_key`
+Send data to the pty depending on whether cursor key mode is enabled
+(`application`) or disabled (`normal`).
+
+## `reset`
+
+Reset the terminal.
+
+This can fix a lot of issues when a running program puts the terminal
+into a broken state, equivalent to running the `reset` command.
+
+If you do this while in a TUI program such as vim, this may break
+the program. If you do this while in a shell, you may have to press
+enter after to get a new prompt.
+
+## `copy_to_clipboard`
+
+Copy the selected text to the clipboard.
+
+Gui accepts a flavour parameter, the same ones the palette rows use:
+`copy_to_clipboard:plain`, `copy_to_clipboard:vt`, `copy_to_clipboard:html`
+and `copy_to_clipboard:mixed`.
+
+## `paste_from_clipboard`
+
+Paste the contents of the default clipboard.
+
+## `paste_from_selection`
+
+Paste the contents of the selection clipboard.
+
+## `copy_url_to_clipboard`
+
+If there is a URL under the cursor, copy it to the default clipboard.
+
+## `copy_title_to_clipboard`
+
+Copy the terminal title to the clipboard. If the terminal title is not
+set or is empty this has no effect.
+
+## `increase_font_size`
+
+Increase the font size. Gui implements `increase_font_size:1`, one point per
+press; it is the parameter the default binding uses.
+
+## `decrease_font_size`
+
+Decrease the font size. Gui implements `decrease_font_size:1`, one point per
+press.
+
+## `reset_font_size`
+
+Reset the font size to the original configured size.
+
+## `search_selection`
+
+Start a search for the current text selection. If there is no
+selection, this does nothing. If a search is already active, this
+changes the search terms.
+
+## `start_search`
+
+Start a search if it isn't started already. This doesn't set any
+search terms, but opens the UI for searching.
+
+## `end_search`
+
+End the current search if any and hide any GUI elements.
+
+## `navigate_search`
+
+Navigate the search results: `navigate_search:next` or
+`navigate_search:previous`. If there is no active search, this is not
+performed.
+
+## `clear_screen`
+
+Clear the screen and all scrollback.
+
+## `select_all`
+
+Select all text on the screen.
+
+## `scroll_to_top`
+
+Scroll to the top of the screen.
+
+## `scroll_to_bottom`
+
+Scroll to the bottom of the screen.
+
+## `scroll_to_selection`
+
+Scroll to the selected text.
+
+## `scroll_page_up`
+
+Scroll the screen up by one page.
+
+## `scroll_page_down`
+
+Scroll the screen down by one page.
+
+## `adjust_selection`
+
+Adjust the current selection relative to the cursor: `left`, `right`, `up`,
+`down`, one cell or one line at a time.
+
+WARNING: This does not create a new selection, and does nothing when
+there currently isn't one.
+
+## `jump_to_prompt`
+
+Jump the viewport forward or back by the given number of prompts:
+`jump_to_prompt:1` goes to the next prompt, `jump_to_prompt:-1` to the
+previous one.
+
+Requires shell integration.
+
+## `write_screen_file`
+
+Write the contents of the screen into a temporary file with the
+specified action. Valid actions are:
+
+- `copy`
+
+  Copy the file path into the clipboard.
+
+- `paste`
+
+  Paste the file path into the terminal.
+
+- `open`
+
+  Open the file in the default OS editor for text files.
+
+## `new_window`
+
+Open a new window.
+
+If the application isn't currently focused,
+this will bring it to the front.
+
+## `new_tab`
+
+Open a new tab.
+
+## `previous_tab`
+
+Go to the previous tab.
+
+## `next_tab`
+
+Go to the next tab.
+
+## `last_tab`
+
+Go back to the previously active tab.
+
+## `goto_tab`
+
+Go to the tab with the specific index, starting from 1. Gui implements
+`goto_tab:1` through `goto_tab:8`.
+
+A number past the tab count does nothing.
+
+## `move_tab`
+
+Moves a tab by a relative offset: `move_tab:1` moves the tab forwards,
+`move_tab:-1` backwards. At either end of the tab list nothing happens; the
+list does not wrap.
+
+## `move_tab_to_new_window`
+
+Move the current tab into a new window. This does nothing when it is the only
+tab, since that would just recreate the window.
+
+## `toggle_sidebar`
+
+Show or hide the tab rail.
+
+## `prompt_surface_title`
+
+Change the title of the current focused surface via a pop-up prompt.
+
+## `prompt_tab_title`
+
+Change the title of the current tab via a pop-up prompt. The
+title set via this prompt overrides any title set by the terminal
+and persists across focus changes within the tab.
+
+## `prompt_window_title`
+
+Change the title of the current window via a pop-up prompt.
+
+## `new_split`
+
+Create a new split in the specified direction: `right`, `down`, `left` or
+`up`.
+
+## `goto_split`
+
+Focus on a split either in the specified direction (`right`, `down`,
+`left` and `up`), or in the adjacent split in the order of creation
+(`previous` and `next`).
+
+## `toggle_split_zoom`
+
+Zoom in or out of the current split.
+
+When a split is zoomed into, it will take up the entire space in
+the current tab, hiding other splits. The tab or tab bar would also
+reflect this by displaying an icon indicating the zoomed state.
+
+## `toggle_readonly`
+
+Toggle read-only mode for the current surface.
+
+When a surface is in read-only mode:
+
+- Keyboard, IME and paste input are ignored, so nothing reaches the PTY.
+- Selection, copy and scrolling still work.
+- Only the focused pane is affected; toggle it again to type once more.
+
+## `equalize_splits`
+
+Equalize the size of all splits in the current window.
+
+## `resize_split`
+
+Resize the current split in the specified direction: `left`, `right`, `up` or
+`down`. Each invocation moves the boundary one step; repeat the binding to
+keep going.
+
+## `reset_window_size`
+
+Reset the window to the default size — the size a new window would be created
+with — and center it on the work area. A maximized or fullscreen window is
+restored first.
+
+## `show_on_screen_keyboard`
+
+Show the Windows on-screen keyboard, if one is available.
+
+## `open_config`
+
+Open Gui's settings page.
+
+## `open_config_file`
+
+Open the configuration file in the default OS editor.
+
+If your default OS editor isn't configured then this will fail.
+Currently, any failures to open the configuration will show up only in
+the logs.
+
+## `open_config:new_window`
+
+Open Gui's settings page in a new window.
+
+## `reload_config`
+
+Reload the configuration.
+
+This re-reads the configuration file and applies any changes. Not all changes
+can be applied at runtime: options such as `command` and `working-directory`
+only apply to newly created tabs and panes.
+
+## `close_surface`
+
+Close the current surface, whether that is a tab or a split.
+
+This might trigger a close confirmation popup when a program is still running
+in it.
+
+## `close_tab`
+
+Close the current tab and all splits therein, close all other tabs, or
+close every tab to the right of the current one depending on the mode:
+`close_tab:this`, `close_tab:other` or `close_tab:right`.
+
+This might trigger a close confirmation popup when a program is still running
+in it.
+
+## `close_window`
+
+Close the current window and all tabs and splits therein.
+
+This might trigger a close confirmation popup when a program is still running
+in it.
+
+## `close_all_windows`
+
+Close all windows.
+
+## `toggle_maximize`
+
+Maximize or unmaximize the current window.
+
+## `toggle_fullscreen`
+
+Fullscreen or unfullscreen the current window.
+
+## `toggle_window_float_on_top`
+
+Toggle whether the terminal window should always float on top of other
+windows even when unfocused.
+
+Terminal windows always start as normal (not float-on-top) windows.
+
+## `toggle_mouse_reporting`
+
+Toggle mouse reporting on or off.
+
+When mouse reporting is disabled, mouse events will not be reported to
+terminal applications even if they request it. This allows you to always
+use the mouse for selection and other terminal UI interactions without
+applications capturing mouse input.
+
+This can also be controlled via the `mouse-reporting` configuration
+option.
+
+## `toggle_background_opacity`
+
+Toggle the window background opacity between transparent and opaque.
+
+This does nothing when `background-opacity` is set to 1 or above.
+
+When `background-opacity` is less than 1, this action will either make
+the window transparent or not depending on its current transparency state.
+
+## `toggle_command_palette`
+
+Toggle the command palette.
+
+The command palette is a popup that lets you see what actions
+you can perform, their associated keybindings (if any), a search bar
+to filter the actions, and the ability to then execute the action.
+
+## `toggle_quick_terminal`
+
+Toggle the quick terminal.
+
+The quick terminal, also known as the "Quake-style" or drop-down
+terminal, is a terminal window that appears on demand from a keybinding,
+often sliding in from a screen edge such as the top. This is useful for
+quick access to a terminal without having to open a new window or tab.
+
+The terminal state is preserved between appearances, so showing the
+quick terminal after it was already hidden would display the same
+window instead of creating a new one.
+
+As quick terminals are often useful when other windows are currently
+focused, they are best used with `global:` keybinds:
+
+```ini
+keybind = global:ctrl+backquote=toggle_quick_terminal
+```
+
+Only one quick terminal instance can exist at a time, and no chord is global by
+default — the palette row works without one.
+
+## `activate_key_table`
+
+Push the named key table on the focused pane. Does nothing when the config never
+defined that table, when it is already the innermost table, or when eight tables
+are already active.
+
+## `activate_key_table_once`
+
+Same as `activate_key_table`, but the table is popped as soon as one of its
+bindings runs.
+
+## `deactivate_key_table`
+
+Pop the innermost key table, if any.
+
+## `deactivate_all_key_tables`
+
+Drop every active key table on the focused pane.
+
+## `quit`
+
+Quit Gui. When more than one window is open you are asked once, and every
+window closes with it.

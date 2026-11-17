@@ -1,0 +1,74 @@
+{
+ "language": {
+  "zh": "Gui 只接受 en 或 zh-CN；留空跟随系统语言。与 Ghostty 不同，这个值可以在运行时重载。",
+  "en": "Gui accepts en or zh-CN; leave it empty to follow the system language. Unlike Ghostty, the value can be reloaded at runtime."
+ },
+ "tab-position": {
+  "zh": "标签栏位置：top、left 或 right。",
+  "en": "Where the tab rail sits — top, left or right."
+ },
+ "compact": {
+  "zh": "true（默认）时窗格贴边铺满，只用 1 DIP 分隔线；false 时窗格是浮起的圆角卡片。",
+  "en": "true (default) runs panes edge to edge with 1 DIP dividers; false floats them as rounded cards."
+ },
+ "sidebar-width-left": {
+  "zh": "左侧标签栏宽度（DIP）。拖动边界时由应用写回配置文件。",
+  "en": "The left tab rail's width in DIPs, written back by the app when you drag its edge."
+ },
+ "sidebar-width-right": {
+  "zh": "右侧标签栏宽度（DIP）。拖动边界时由应用写回配置文件。",
+  "en": "The right tab rail's width in DIPs, written back by the app when you drag its edge."
+ },
+ "debug-tap": {
+  "zh": "把收发两个方向的原始 VT 字节流按十六进制写进日志。",
+  "en": "Record the raw VT byte stream in both directions as hex in the log."
+ },
+ "crash-dumps": {
+  "zh": "向 Windows 错误报告注册完整转储，崩溃时在 %TEMP%\\gui-dumps 留下 dump。",
+  "en": "Register with Windows Error Reporting for full dumps, left in %TEMP%\\gui-dumps on a crash."
+ },
+ "scrollback-limit-bytes": {
+  "zh": "Gui 把 Ghostty 的 scrollback-limit 拆成两个键：这个按字节，scrollback-limit-lines 按行。整数（支持 0x 写法）、unlimited 或 0（关闭回滚）。",
+  "en": "Gui splits Ghostty's scrollback-limit in two: this one caps bytes, scrollback-limit-lines caps rows. An integer (0x… works), unlimited, or 0 to disable scrollback."
+ },
+ "scrollback-limit-lines": {
+  "zh": "回滚行数上限，默认 unlimited。它与字节上限同时生效，谁先到就按谁裁剪历史。",
+  "en": "Row cap for the scrollback, unlimited by default. It applies together with the byte cap; whichever is reached first trims the history."
+ },
+ "window-theme": {
+  "zh": "Gui 只接受 system（默认）、light、dark。窗体是中性表面：不会采用终端背景色，终端主题也不会重绘窗体。",
+  "en": "Gui accepts system (default), light or dark only. The window chrome is a neutral surface: it never takes the terminal's background, and the terminal theme never repaints it."
+ },
+ "clipboard-read": {
+  "zh": "allow 或 deny。ask 在这个构建里没有阻塞式确认，按 deny 处理。",
+  "en": "allow or deny. ask has no blocking prompt in this build, so it behaves like deny."
+ },
+ "copy-on-select": {
+  "zh": "none / primary / clipboard / both。Windows 没有选区剪贴板，所以 primary 不起作用，both 等于复制到系统剪贴板。",
+  "en": "none, primary, clipboard or both. Windows has no selection clipboard, so primary does nothing and both copies to the system clipboard."
+ },
+ "background-opacity": {
+  "zh": "小于 1 时整个窗口（含窗体）一次着色，不会叠加在系统亚克力上；background-blur 决定背后是亚克力还是纯色。",
+  "en": "Below 1 the whole window, chrome included, is tinted once instead of stacking on the system acrylic; background-blur picks acrylic or a plain tint."
+ },
+ "background-blur": {
+  "zh": "true 用亚克力；false 在 Windows 11 上是不要模糊的纯色底色（Windows 10 仍是亚克力，和 Windows Terminal 一样）。",
+  "en": "true uses acrylic; false paints an unblurred tint on Windows 11 (Windows 10 keeps acrylic, as Windows Terminal does)."
+ },
+ "mouse-scroll-multiplier": {
+  "zh": "每格滚轮滚动多少行（默认 3）。precision 写法会被接受，但 Windows 滚轮是离散设备。",
+  "en": "Rows per wheel notch (default 3). The precision form is accepted, but the Windows wheel is a discrete device."
+ },
+ "keybind": {
+  "zh": "格式是 trigger=action；重复的触发器后者覆盖前者，空动作解绑，clear 清空全部默认绑定。`gui +list-keybinds` 列出当前生效的绑定，动作清单和默认值见「按键绑定」一页。",
+  "en": "The format is trigger=action; a duplicate trigger overwrites the earlier one, an empty action unbinds it, and clear drops every default. `gui +list-keybinds` prints the bindings in effect; the Keybinds page lists the actions and the defaults."
+ },
+ "theme": {
+  "zh": "一个主题名，或 light:X,dark:Y 分别指定明暗；Ghostty 主题随程序分发。只有 window-theme 选中的那一半会被绘制。",
+  "en": "A theme name, or light:X,dark:Y for separate appearances; Ghostty themes ship with the app. Only the half window-theme selects is painted."
+ },
+ "shell-integration": {
+  "zh": "Windows 上只注入 PowerShell 和 bash；其它 shell 会给出提示，但不会被改动。",
+  "en": "On Windows only PowerShell and bash are injected; other shells get a notice and are left alone."
+ }
+}

@@ -1,0 +1,61 @@
+﻿---
+title: Trigger Sequences
+description: |-
+  A trigger that requires a sequence of multiple keypress events.
+---
+
+Gui supports keybindings that require a sequence of triggers to activate the
+action. For example, you could require `ctrl+a` followed by `n` to open a new
+window. In other software, this is sometimes referred to as a "leader key", a
+"key chord", a "key table", etc.
+
+To specify a sequence of triggers, use the
+[normal trigger syntax](/docs/config/keybind#trigger) and
+separate the triggers in the sequence with a `>` character.
+An example is shown below:
+
+```ini
+keybind = ctrl+a>n=new_window
+```
+
+<Warning>
+If you define a sequence as a CLI argument to `gui`, quote the keybind since `>`
+is a special character in most shells. Example:
+`gui --keybind='ctrl+a>n=new_window'`
+</Warning>
+
+A trigger sequence has some special handling:
+
+- Gui waits an indefinite amount of time for the next key in the sequence; there
+  is no timeout. The keys that built the prefix are held and are not sent to the
+  program.
+
+- If a chord is both a plain binding and the start of a sequence, the sequence
+  wins: pressing `ctrl+a` waits instead of running the plain binding, and the
+  command palette no longer advertises that chord for it.
+
+- If the next key does not continue the sequence, the held prefix is replayed to
+  the program and the new key is handled normally. Pressing `ctrl+a` and then
+  `x` therefore sends `^A` and `x`, exactly as if no sequence existed.
+
+- If a previously bound sequence prefix is used in a new, non-sequence binding,
+  the entire previously bound sequence is unbound. For example, if you bind
+  `ctrl+a>n` and `ctrl+a>t`, and then bind `ctrl+a` directly, both `ctrl+a>n`
+  and `ctrl+a>t` become unbound.
+
+- An empty action unbinds one sequence, e.g. `keybind = ctrl+a>n=`, without
+  touching other sequences that share the same prefix.
+
+- Trigger sequences are not allowed for `global:`-prefixed triggers; such a line
+  is rejected with a warning in the log.
+
+- With `unconsumed:`, the action runs and the held prefix keys plus the key that
+  completed the sequence are then sent to the program.
+
+- With `performable:`, a sequence whose final action cannot run is reset instead
+  of firing: the held keys are replayed and the key reaches the program.
+
+A sequence may be any length, and its final action is any action from the
+[action reference](/docs/config/keybind/reference). In the command palette and
+tooltips the chords are shown in order, separated by a space (`Ctrl+A N`); in a
+config file they are written with `>`.

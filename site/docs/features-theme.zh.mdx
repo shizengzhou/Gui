@@ -1,0 +1,85 @@
+﻿---
+title: 配色主题
+description: Gui 内置数百套主题，支持亮暗分别指定，也可以直接在配置里覆盖任意颜色。
+---
+
+## 内置主题
+
+Gui 内置数百套主题，用一行 [`theme`](/docs/config/reference) 配置就能选用。例如使用流行的 Catppuccin：
+
+~~~ini
+theme = Catppuccin Frappe
+~~~
+
+<Note>
+在配置文件里改完主题后，记得重新读取配置（`Ctrl+Shift+,`）。从命令面板或设置页选主题则会立即生效，并把选择写回配置。
+</Note>
+
+内置主题来自 [iterm2-color-schemes](https://iterm2colorschemes.com)，随应用一起打包。Gui 另外自带两套设计主题 `Gui Light` 与 `Gui Dark`，它们不是文件，始终与窗口外观保持一致。
+
+### 浏览主题
+
+运行 `gui +list-themes` 会打开交互式浏览器：顶部是 All/Light/Dark 分类，中间按亮度列出主题，右侧预览高亮主题的 16 个 ANSI 颜色、shell 示例和代码示例。按 Enter 会把该主题写入配置，只改动它所属的 `light:` 或 `dark:` 那一半。输出被重定向时，命令改为每行打印一个主题，方便脚本读取。
+
+也可以在应用里浏览：
+
+- 设置页里有可搜索的亮色列表和暗色列表，选中即应用，并把 `theme` 写回配置。
+- 命令面板按背景亮度分组列出同一批主题，不用打开设置页也能预览和切换。
+
+每套内置主题都可以在 [iterm2-color-schemes](https://iterm2colorschemes.com) 在线预览。
+
+## 分离的亮色与暗色主题
+
+Gui 支持为亮色和暗色分别指定主题。
+
+~~~ini
+theme = dark:Catppuccin Frappe,light:Catppuccin Latte
+~~~
+
+分别指定之后，Gui 按 [`window-theme`](/docs/config/reference) 的选择切换：`system`（默认）跟随 Windows 的亮暗设置，`light` 和 `dark` 则固定使用其中一侧。
+
+## 覆盖颜色
+
+主题只负责提供颜色。配置里的颜色键会叠加在主题之上，因此可以保留主题、只改其中几项：
+
+- [`background`](/docs/config/reference)
+- [`foreground`](/docs/config/reference)
+- [`cursor-color`](/docs/config/reference)
+- [`selection-foreground`](/docs/config/reference)
+- [`selection-background`](/docs/config/reference)
+- [`palette`](/docs/config/reference)
+
+`palette` 可以重复多行，每行一个 `序号=#RRGGBB`。`palette-generate` 用前 16 色生成 16–255 色，`palette-harmonious` 把生成结果反过来排。
+
+### 示例
+
+下面是一组完整的颜色覆盖写法：
+
+~~~ini
+palette = 0=#51576d
+palette = 1=#e78284
+palette = 2=#a6d189
+palette = 3=#e5c890
+palette = 4=#8caaee
+palette = 5=#f4b8e4
+palette = 6=#81c8be
+palette = 7=#a5adce
+palette = 8=#626880
+palette = 9=#e67172
+palette = 10=#8ec772
+palette = 11=#d9ba73
+palette = 12=#7b9ef0
+palette = 13=#f2a4db
+palette = 14=#5abfb5
+palette = 15=#b5bfe2
+background = #303446
+foreground = #c6d0f5
+cursor-color = #f2d5cf
+cursor-text = #c6d0f5
+selection-background = #626880
+selection-foreground = #c6d0f5
+~~~
+
+### 主题文件位置
+
+内置主题按名字在可执行文件旁的 `Assets\Themes\light` 与 `Assets\Themes\dark` 中查找。你自己的主题文件放在配置文件旁的 `themes` 文件夹里：同名主题会覆盖内置版本，亮/暗分类由文件里设置的背景色决定。`theme` 只接受名字而不是路径；要修改内置主题，可以用上面的颜色键覆盖，或在 `themes` 文件夹里放一个同名文件。

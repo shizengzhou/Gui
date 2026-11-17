@@ -1,0 +1,116 @@
+﻿---
+title: 自定义按键绑定
+description: 把按键与特定动作关联起来。
+---
+
+Gui 通过 [`keybind` 配置项](/docs/config/reference#keybind)支持灵活的自定义按键绑定。配置参考里有该选项的详细文档，本页则概述如何在 Gui 中书写按键绑定。
+
+<Note>
+命令行工具 `list-keybinds` 可以列出 Gui 的全部可用按键绑定。运行下面的命令可以看到默认绑定：
+```sh
+gui +list-keybinds --default
+```
+</Note>
+
+按键绑定的基本语法是：
+
+```ini
+keybind = trigger=action
+```
+
+## 触发器
+
+按键绑定中的 `trigger` 部分指定会触发该动作的按键事件。与 Ghostty 不同，这里的触发器始终是单个键，可以带修饰键：`a`、`ctrl+a`、`ctrl+shift+a`、`ctrl+alt+a` 都是合法的触发器。多键序列（`ctrl+a>n`）会被解析但不会生效，见[触发序列](/docs/config/keybind/sequence)。
+
+多个按键可以用 `>` 串成触发序列：先等第一个按键，再由下一个按键决定是否触发。
+
+```ini
+keybind = ctrl+a>n=new_window
+```
+
+等待中的序列如何表现，见[触发序列](/docs/config/keybind/sequence)。
+
+Gui 能识别的键有：
+
+- 字母 `a`–`z`、数字 `0`–`9`、功能键 `f1`–`f24`、小键盘数字 `kp_0`–`kp_9`；
+- 命名键 `left` `right` `up` `down` `home` `end` `page_up` `page_down`
+  `insert` `delete` `backspace` `enter` `tab` `escape` `space`；
+- 标点按名字写：`plus` `minus` `equal` `comma` `period` `slash`
+  `backslash` `backquote` `bracket_left` `bracket_right` `semicolon` `apostrophe`。
+
+Ghostty 的拼写也认：`esc`、`return`、`pgup`、`pgdn`、`del`、`ins`、`arrow_left` … `arrow_down`、`grave_accent`，标点也可以直接写符号。`plus` / `minus` 还可以写成裸符号，例如 `ctrl++` 就是 Ctrl 加号。
+
+如果某个键不在列表里，**你也可以直接指定 Unicode 码点**。只要触发器文本恰好是一个 Unicode 码点（ASCII 字母和数字除外，它们仍按物理键名处理），就会被当作码点触发器。它匹配当前布局下会输入该字符的按键，且大小写不敏感，因此 `Ä` 和 `ä` 是同一个触发器。
+
+例如，在德语键盘上可以这样绑定 “ö”：
+
+```ini
+keybind = ctrl+ö=action
+```
+
+按下会输入 “ö” 的键并同时按 Ctrl 时触发。如果同一个按键既匹配物理键名又匹配码点，物理键名优先。
+
+### 修饰键
+
+合法的修饰键有：
+
+- `shift`
+- `ctrl`（别名：`control`）
+- `alt`（别名：`opt`、`option`）
+- `super`（别名：`cmd`、`command`、`win`、`windows`）——就是 Windows 键。
+
+修饰键的顺序无关紧要：`ctrl+shift+t` 和 `shift+ctrl+t` 是同一个触发器。
+
+<Note>
+键盘上的 fn 或 “globe” 键不支持作为修饰键。这是 Gui 所使用的操作系统和 GUI 工具集的限制。
+</Note>
+
+### 触发器前缀
+
+触发器还可以加上一些特殊前缀，用来改变按键绑定的行为。下面逐一说明。
+
+按键绑定不会因前缀组合不同而被视为不同条目。例如 `ctrl+a` 和 `global:ctrl+a` 并不是两条独立的绑定：后设置的那条会覆盖先设置的，这里最终生效的是 `global:` 那条。
+
+也可以同时指定多个前缀，例如 `global:unconsumed:ctrl+a=reload_config` 会让绑定全局生效并尝试把按键也留给程序；不过全局绑定总是会吞掉输入，所以这里的 `unconsumed:` 不起作用。
+
+#### `all:`
+
+让动作作用于所有终端表面，而不只是当前焦点窗格。只有作用于终端的动作会被逐个执行（复制、滚动、查找、选区、字号等）；`new_tab`、`quit` 这类窗口级或应用级动作只执行一次。`global:` 隐含 `all:`。
+
+#### `global:`
+
+让按键绑定全局生效。默认情况下，按键绑定只在 Gui 内部、且满足相应条件时（应用有焦点，有时还要求终端有焦点等）才起作用。如果你希望按键在整个系统范围内生效（即 Gui 没有焦点时也能用），就加上这个前缀。
+
+任何动作都可以设为全局：组合会注册成 Windows 系统级热键，并对最后激活的窗口执行。默认没有任何全局键位，需要自己注册，例如：
+
+```ini
+keybind = global:ctrl+backquote=toggle_quick_terminal
+```
+
+如果该组合已被其它程序占用，Gui 只会在日志里警告，Gui 有焦点时绑定仍然可用。序列不能全局：带 `>` 的 `global:` 行会被拒绝并留下警告。
+
+#### `unconsumed:`
+
+不吞掉按键。动作执行后，按键仍会发送给终端里正在运行的程序；序列则会先发送暂存的前缀按键，再发送完成序列的那个键。与 `global:` 或 `all:` 一起使用时无效，因为它们始终会吞掉输入。
+
+#### `physical:`
+
+按物理键名匹配。此时触发器必须是上面列出的键名之一；写成 `ö` 这样的字符会被当作配置错误，而不是码点触发器。Gui 本来就按物理键名匹配，所以这个前缀主要用于强制这一解读。
+
+#### `performable:`
+
+只有动作当前确实能执行时，才运行并吞掉按键。例如 `copy_to_clipboard` 只在有选区时触发，查找导航只在查找栏打开时有效，分屏动作只在标签页里有多个窗格时执行。动作无法执行时，Gui 会表现得就像没有设置这条绑定，按键交给程序。用在序列里时，序列会被重置而不是触发。
+
+## 动作
+
+动作是触发器被激活时发生的事情，格式为 `action`；如果动作需要参数，则为 `action:parameter`。
+
+下面是一些可以在按键绑定里使用的常见动作。完整列表请查看[全部动作](/docs/config/keybind/reference)，Gui 实现了数十种动作。
+
+| 动作 | 说明 |
+|------|------|
+| `ignore` | 什么都不做，忽略这个按键输入。可以用它把某些输入丢进黑洞，既不产生效果也不产生编码。若要把键转发出去，用 `unconsumed:ctrl+a=ignore`。 |
+| `unbind` | 移除绑定。这会去掉之前的动作，如果该键是可打印字符，则会把按键透传给子命令。 |
+| `text:text` | 发送字符串。使用 Zig 字符串字面量语法，转义在绑定执行时解码，无效转义只会留下警告。例如 `text:\x15` 会发送 Ctrl-U。 |
+| `csi:text` | 发送 CSI 序列，会自动补上 `ESC [` 头。例如 `csi:A` 发送“光标上移”。 |
+| `esc:text` | 发送转义序列，会自动补上 `ESC`，值按字面处理。例如 `esc:d` 删除到右侧单词末尾。 |
