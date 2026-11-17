@@ -717,30 +717,146 @@ public sealed class Config
         Parse(data, includes);
         _configDirectory = previousDirectory;
 
+        string baseDirectory = Path.GetDirectoryName(full) ?? string.Empty;
         foreach (string raw in includes)
         {
             string entry = raw.Trim();
             bool optional = entry.StartsWith("?", StringComparison.Ordinal);
-            if (optional) entry = entry[1..];
+            if (optional) entry = entry[1..].Trim();
             if (entry.Length == 0) continue;
 
-            string path = ResolvePath(entry, Path.GetDirectoryName(full) ?? string.Empty);
-            if (path.Length == 0) continue;
-            if (!File.Exists(path))
+            foreach (string path in Expand(ResolvePath(entry, baseDirectory), optional))
             {
-                if (!optional)
-                {
-                    _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, "config-file",
-                        "file not found: " + path));
-                }
-                continue;
+                ConfigFiles.Add(path);
+                LoadFile(path, seen, depth + 1);
             }
-
-            ConfigFiles.Add(path);
-            LoadFile(path, seen, depth + 1);
         }
 
         seen.Remove(full);
+    }
+
+    /// <summary>
+    /// The files one "config-file" value names, in load order. A value without wildcards names a
+    /// single file; one with "*" or "?" names every match under its directory, in name order, the
+    /// way Ghostty expands the glob. Matching nothing is only a diagnostic when the entry was not
+    /// marked optional with a leading "?".
+    /// </summary>
+    private List<string> Expand(string path, bool optional)
+    {
+        var found = new List<string>();
+        if (path.Length == 0) return found;
+
+        if (!HasWildcard(path))
+        {
+            if (File.Exists(path)) found.Add(path);
+            else if (!optional) Warn("file not found: " + path);
+            return found;
+        }
+
+        try
+        {
+            Glob(path, found);
+        }
+        catch (Exception)
+        {
+            // An unreadable directory contributes nothing, the same as no match.
+            found.Clear();
+        }
+
+        if (found.Count == 0)
+        {
+            if (!optional) Warn("no file matches: " + path);
+            return found;
+        }
+
+        found.Sort(StringComparer.OrdinalIgnoreCase);
+        return found;
+    }
+
+    private void Warn(string message) =>
+        _diagnostics.Add(new ConfigDiagnostic(0, ConfigSeverity.Warning, "config-file", message));
+
+    /// <summary>
+    /// Walks a pattern one path segment at a time: a segment with wildcards matches directory
+    /// names on the way down and file names at the end, so "conf.d/*" and "*/gui.conf" both work.
+    /// </summary>
+    private static void Glob(string pattern, List<string> found)
+    {
+        string root = Path.GetPathRoot(pattern) ?? string.Empty;
+        string[] segments = pattern[root.Length..].Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0) return;
+
+        WalkGlob(root, segments, 0, found);
+    }
+
+    private static void WalkGlob(string directory, string[] segments, int index, List<string> found)
+    {
+        string segment = segments[index];
+        bool last = index == segments.Length - 1;
+
+        if (!HasWildcard(segment))
+        {
+            string path = Path.Combine(directory, segment);
+            if (last)
+            {
+                if (File.Exists(path)) found.Add(path);
+            }
+            else if (Directory.Exists(path))
+            {
+                WalkGlob(path, segments, index + 1, found);
+            }
+            return;
+        }
+
+        if (last)
+        {
+            foreach (string file in Directory.EnumerateFiles(directory, "*"))
+                if (Wildcard(segment, Path.GetFileName(file))) found.Add(file);
+        }
+        else
+        {
+            foreach (string child in Directory.EnumerateDirectories(directory, "*"))
+                if (Wildcard(segment, Path.GetFileName(child))) WalkGlob(child, segments, index + 1, found);
+        }
+    }
+
+    private static bool HasWildcard(string text) => text.IndexOfAny(new[] { '*', '?' }) >= 0;
+
+    /// <summary>
+    /// "*" for any run of characters and "?" for exactly one — the two wildcards Ghostty's config
+    /// paths use — matched the way a Windows file name compares, without regard to case.
+    /// </summary>
+    private static bool Wildcard(string pattern, string text)
+    {
+        int p = 0, t = 0, star = -1, resume = 0;
+        while (t < text.Length)
+        {
+            if (p < pattern.Length && (pattern[p] == '?' ||
+                    char.ToUpperInvariant(pattern[p]) == char.ToUpperInvariant(text[t])))
+            {
+                p++;
+                t++;
+            }
+            else if (p < pattern.Length && pattern[p] == '*')
+            {
+                star = p++;
+                resume = t;
+            }
+            else if (star >= 0)
+            {
+                p = star + 1;
+                t = ++resume;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        while (p < pattern.Length && pattern[p] == '*') p++;
+        return p == pattern.Length;
     }
 
     // ---------------- parsing ----------------

@@ -574,6 +574,38 @@ public class ConfigSurfaceTests : IDisposable
         Assert.Equal(12f, config.FontSize);
     }
 
+
+    [Fact]
+    public void ConfigFileGlobsLoadEveryMatchInNameOrder()
+    {
+        string extra = Path.Combine(_dir, "conf.d");
+        Directory.CreateDirectory(extra);
+        File.WriteAllText(Path.Combine(extra, "10-size.conf"), "font-size = 16\n", new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(extra, "20-size.conf"), "font-size = 18\n", new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(extra, "notes.txt"), "font-size = 30\n", new UTF8Encoding(false));
+
+        Config config = Config.Load(Write("config-file = conf.d/*.conf\n"));
+
+        // Both .conf files load in name order, so the later one wins; the .txt stays out.
+        Assert.Equal(18f, config.FontSize);
+        Assert.Equal(new[]
+        {
+            Path.Combine(extra, "10-size.conf"),
+            Path.Combine(extra, "20-size.conf"),
+        }, config.ConfigFiles.ToArray());
+    }
+
+    [Fact]
+    public void AConfigFileGlobWithoutMatchesWarnsUnlessOptional()
+    {
+        Config missing = Config.Load(Write("config-file = conf.d/*.conf\n"));
+        Assert.Contains(missing.Diagnostics, d => d.Key == "config-file");
+
+        Config optional = Config.Load(Write("config-file = ?conf.d/*.conf\n"));
+        Assert.DoesNotContain(optional.Diagnostics, d => d.Key == "config-file");
+        Assert.Empty(optional.ConfigFiles);
+    }
+
     [Fact]
     public void TheSchemaHasNoDuplicateOrShadowedNames()
     {
