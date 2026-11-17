@@ -1,4 +1,10 @@
-﻿export type DocsNavChild = { href: string; zh: string; en: string; children?: DocsNavChild[] };
+﻿export type DocsNavChild = {
+  href: string;
+  zh: string;
+  en: string;
+  external?: boolean;
+  children?: DocsNavChild[];
+};
 export type DocsNavItem = DocsNavChild;
 
 // The documentation tree, in sidebar order, nested the way ghostty.org nests it:
@@ -8,6 +14,12 @@ export type DocsNavItem = DocsNavChild;
 export const docsNav: DocsNavItem[] = [
   { href: '/docs', zh: '关于', en: 'About' },
   { href: '/docs/download', zh: '下载', en: 'Download' },
+  {
+    href: 'https://github.com/shizengzhou/Gui/releases',
+    zh: '发布说明',
+    en: 'Release Notes',
+    external: true,
+  },
   {
     href: '/docs/config',
     zh: '配置',

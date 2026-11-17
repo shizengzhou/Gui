@@ -40,6 +40,10 @@ export default function DocsSidebar() {
               </svg>
             </button>
           </div>
+        ) : item.external ? (
+          <a href={item.href} className={labelClass} target="_blank" rel="noreferrer">
+            <T zh={item.zh} en={item.en} />
+          </a>
         ) : (
           <Link href={item.href} className={labelClass}>
             <T zh={item.zh} en={item.en} />
