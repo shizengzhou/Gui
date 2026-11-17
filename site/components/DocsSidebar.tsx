@@ -5,9 +5,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { T } from '@/components/T';
 import { docsNav, type DocsNavChild } from '@/lib/docs-nav';
+import { currentPath } from '@/lib/current-path';
 
 export default function DocsSidebar() {
-  const pathname = usePathname();
+  const pathname = currentPath(usePathname());
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   // Nested the way ghostty.org draws the tree: folders keep a caret, their

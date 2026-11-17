@@ -6,17 +6,21 @@ import { T } from '@/components/T';
 import { Icon } from '@/components/Icons';
 import LangToggle from '@/components/LangToggle';
 import DocsSearch from '@/components/DocsSearch';
+import { currentPath } from '@/lib/current-path';
+
+// Plain <img> src is not rewritten by basePath the way next/link and next/image are.
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 
 export default function Nav() {
-  const pathname = usePathname();
-  const inDocs = pathname?.startsWith('/docs');
+  const pathname = currentPath(usePathname());
+  const inDocs = pathname.startsWith('/docs');
   const onDownload = pathname === '/docs/download';
 
   return (
     <header className="nav">
       <div className={'wrap nav-inner' + (inDocs ? ' docs' : '')}>
         <Link className="brand" href="/" aria-label="Gui home">
-          <img className="brand-mark" src="/app-icon.png" alt="" width={30} height={30} aria-hidden="true" />
+          <img className="brand-mark" src={`${basePath}/app-icon.png`} alt="" width={30} height={30} aria-hidden="true" />
           <span className="brand-name">Gui</span>
         </Link>
         <nav className="nav-links" aria-label="Primary">

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { T } from '@/components/T';
 import { docsNav, type DocsNavChild } from '@/lib/docs-nav';
+import { currentPath } from '@/lib/current-path';
 
 // The trail down the tree: every folder on the way to the page, then the page.
 function trailFor(items: DocsNavChild[], pathname: string): DocsNavChild[] | null {
@@ -21,7 +22,7 @@ function trailFor(items: DocsNavChild[], pathname: string): DocsNavChild[] | nul
 // Action Reference. The last entry is the current page and is not a link, and
 // the docs landing page is the trail's own start.
 export default function DocsCrumbs() {
-  const pathname = usePathname();
+  const pathname = currentPath(usePathname());
   const trail = (trailFor(docsNav, pathname) ?? []).filter((item) => item.href !== '/docs');
 
   if (trail.length === 0) return null;

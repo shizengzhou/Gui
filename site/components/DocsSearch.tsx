@@ -4,6 +4,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon } from '@/components/Icons';
+import { currentPath } from '@/lib/current-path';
 
 type Lang = 'zh' | 'en';
 type PageLabel = { zh: string; en: string };
@@ -17,6 +18,7 @@ type Entry = {
 };
 
 const MAX_RESULTS = 12;
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 
 function currentLang(): Lang {
   return document.documentElement.dataset.lang === 'en' ? 'en' : 'zh';
@@ -139,14 +141,17 @@ export default function DocsSearch() {
   }, [results]);
 
   function go(entry: Entry) {
-    const url = entry.id ? `${entry.href}#${entry.id}` : entry.href;
+    const hash = entry.id ? `#${entry.id}` : '';
     closeDialog();
-    if (window.location.pathname === entry.href) {
+    if (currentPath(window.location.pathname) === entry.href) {
       if (entry.id) document.getElementById(entry.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       else window.scrollTo({ top: 0, behavior: 'smooth' });
-      window.history.replaceState(null, '', url);
+      // The exported site serves each page as a directory index, so keep the
+      // trailing slash that trailingSlash produced.
+      const dir = entry.href === '/' ? '/' : `${entry.href}/`;
+      window.history.replaceState(null, '', `${basePath}${dir}${hash}`);
     } else {
-      router.push(url);
+      router.push(`${entry.href}${hash}`);
     }
   }
 
