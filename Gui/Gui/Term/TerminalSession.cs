@@ -986,6 +986,61 @@ public sealed unsafe class TerminalSession : IDisposable
     }
 
     /// <summary>
+    /// One viewport row's cell widths, one entry per cell: Ghostty's GhosttyCellWide value
+    /// (narrow, wide, spacer tail, spacer head). The library owns this classification, so a
+    /// selection measures the cells the terminal actually draws instead of guessing at widths
+    /// from the text. Null when the terminal or the render state is not ready.
+    /// </summary>
+    public int[]? RowCellKinds(int viewportY)
+    {
+        IntPtr state = _renderState;
+        if (_terminal == IntPtr.Zero || state == IntPtr.Zero) return null;
+        if (_rowIterator == IntPtr.Zero || _cells == IntPtr.Zero) return null;
+
+        IntPtr rows = _rowIterator;
+        GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &rows);
+
+        while (rows != IntPtr.Zero && GhosttyNative.ghostty_render_state_row_iterator_next(rows))
+        {
+            int y = 0;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_VIEWPORT_Y, &y) != GhosttyNative.SUCCESS)
+                continue;
+            if (y != viewportY) continue;
+
+            IntPtr cells = _cells;
+            if (GhosttyNative.ghostty_render_state_row_get(rows, GhosttyNative.ROW_DATA_CELLS, &cells) != GhosttyNative.SUCCESS)
+                return null;
+
+            var result = new List<int>();
+            while (GhosttyNative.ghostty_render_state_row_cells_next(cells))
+            {
+                ulong raw = 0;
+                int kind = -1;
+                if (GhosttyNative.ghostty_render_state_row_cells_get(cells, GhosttyNative.CELL_RAW, &raw) == GhosttyNative.SUCCESS)
+                    GhosttyNative.ghostty_cell_get(raw, GhosttyNative.CD_WIDE, &kind);
+                result.Add(kind);
+            }
+            return result.ToArray();
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The inclusive cell span of the glyph at viewport (x, y). A double-width glyph owns its
+    /// second cell too, so a selection ending on either half covers the whole glyph.
+    /// </summary>
+    public bool WideSpan(int viewportY, int x, out int start, out int end)
+    {
+        start = end = x;
+        int[]? kinds = RowCellKinds(viewportY);
+        if (kinds is null || x < 0 || x >= kinds.Length) return false;
+
+        (start, end) = WideText.SpanOf(kinds[x], x);
+        return true;
+    }
+
+    /// <summary>
     /// The viewport rows that make up the soft-wrapped logical line containing
     /// <paramref name="viewportY"/>, top to bottom, with each row's cell text. A URL or a
     /// path that wraps across rows has to be matched as one string, which is what this

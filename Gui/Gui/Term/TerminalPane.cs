@@ -3556,6 +3556,30 @@ public sealed class TerminalPane
         ExtendSelectionToPointer();
     }
 
+    /// <summary>
+    /// Snaps mouse-selection endpoints out to the edges of a wide glyph: a CJK character owns
+    /// both of its cells, so selecting either half has to select the whole glyph. The earlier
+    /// endpoint takes the glyph's first cell and the later one its second.
+    /// </summary>
+    private void SnapWideSelection(ulong offset, uint anchorScreenY, uint cursorScreenY,
+        ref ushort anchorX, ref ushort cursorX)
+    {
+        bool anchorLater = anchorScreenY > cursorScreenY ||
+            (anchorScreenY == cursorScreenY && anchorX > cursorX);
+        anchorX = SnapWideX(anchorX, anchorScreenY, offset, later: anchorLater);
+        cursorX = SnapWideX(cursorX, cursorScreenY, offset, later: !anchorLater);
+    }
+
+    private ushort SnapWideX(ushort x, uint screenY, ulong offset, bool later)
+    {
+        // A scrolled-off anchor has no visible cells to measure; it keeps the column it was
+        // clicked at. While it is on screen both endpoints get snapped on every move.
+        long viewportY = (long)screenY - (long)offset;
+        if (viewportY < 0 || viewportY >= _rows) return x;
+        if (!_session.WideSpan((int)viewportY, x, out int start, out int end)) return x;
+        return (ushort)(later ? end : start);
+    }
+
     /// <summary>Extends the selection to the edge cell under the last pointer position.</summary>
     private void ExtendSelectionToPointer()
     {
@@ -3570,7 +3594,11 @@ public sealed class TerminalPane
             : _selectPointerY >= _canvas.ActualHeight ? Math.Max(0, _rows - 1)
             : Math.Clamp((int)(_selectPointerY / metrics.Height), 0, Math.Max(0, _rows - 1));
 
-        if (_session.SetSelectionScreen(_anchorX, _anchorScreenY, (ushort)x, (uint)(offset + (ulong)y)))
+        uint cursorScreenY = (uint)(offset + (ulong)y);
+        ushort anchor = _anchorX;
+        ushort cursor = (ushort)x;
+        SnapWideSelection(offset, _anchorScreenY, cursorScreenY, ref anchor, ref cursor);
+        if (_session.SetSelectionScreen(anchor, _anchorScreenY, cursor, cursorScreenY))
             Redraw();
     }
 
@@ -3578,11 +3606,18 @@ public sealed class TerminalPane
     {
         if (!_session.Scrollbar(out _, out ulong offset, out _))
         {
-            if (_session.SetSelection(_anchorX, _anchorY, x, y)) Redraw();
+            ushort anchor = _anchorX;
+            ushort cursor = x;
+            SnapWideSelection(0, _anchorY, y, ref anchor, ref cursor);
+            if (_session.SetSelection(anchor, _anchorY, cursor, y)) Redraw();
             return;
         }
 
-        if (_session.SetSelectionScreen(_anchorX, _anchorScreenY, x, (uint)(offset + y)))
+        uint cursorScreenY = (uint)(offset + y);
+        ushort start = _anchorX;
+        ushort end = x;
+        SnapWideSelection(offset, _anchorScreenY, cursorScreenY, ref start, ref end);
+        if (_session.SetSelectionScreen(start, _anchorScreenY, end, cursorScreenY))
             Redraw();
     }
 
@@ -4118,12 +4153,25 @@ public sealed class TerminalPane
         string[]? row = _session.RowCells(y);
         if (row is null) return;
 
-        if (!WordSelection.TryExpand(row, x, _config.SelectionWordChars, out int start, out int end))
+        // Ghostty's own cell widths, so a click on the empty second cell of a wide glyph is
+        // treated as a click on the glyph and a word ending on one keeps its second cell.
+        int[]? kinds = _session.RowCellKinds(y);
+        bool IsHead(int cell) => kinds is not null && cell >= 0 && cell < kinds.Length &&
+            kinds[cell] is GhosttyNative.WIDE_WIDE or GhosttyNative.WIDE_SPACER_HEAD;
+        bool IsTail(int cell) => kinds is not null && cell >= 0 && cell < kinds.Length &&
+            kinds[cell] == GhosttyNative.WIDE_SPACER_TAIL;
+
+        int click = x;
+        if (IsTail(click)) click--;
+
+        if (!WordSelection.TryExpand(row, click, _config.SelectionWordChars, out int start, out int end))
         {
             _session.ClearSelection();
             Redraw();
             return;
         }
+
+        if (end + 1 < row.Length && IsHead(end)) end++;
 
         _anchorX = (ushort)start;
         _anchorY = y;
@@ -4150,6 +4198,11 @@ public sealed class TerminalPane
             Redraw();
             return;
         }
+
+        // Trailing blank detection stops on a wide glyph's head; add its second cell back.
+        int[]? kinds = _session.RowCellKinds(y);
+        if (end + 1 < row.Length && kinds is not null && end < kinds.Length &&
+            kinds[end] is GhosttyNative.WIDE_WIDE or GhosttyNative.WIDE_SPACER_HEAD) end++;
 
         _anchorX = 0;
         _anchorY = y;

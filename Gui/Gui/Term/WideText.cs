@@ -36,4 +36,16 @@ internal static class WideText
             or (>= 0x1F900 and <= 0x1F9FF)         // Supplemental emoji
             or (>= 0x20000 and <= 0x3FFFD);        // CJK extensions B and beyond
     }
+
+    /// <summary>
+    /// The inclusive cell span of one cell, from Ghostty's own cell width: a wide cell and the
+    /// head of a spacer own the cell after them, a spacer tail belongs to the cell before it.
+    /// Narrow cells are a span of one, so nothing about ordinary text moves.
+    /// </summary>
+    public static (int Start, int End) SpanOf(int kind, int x)
+    {
+        if (kind is GhosttyNative.WIDE_WIDE or GhosttyNative.WIDE_SPACER_HEAD) return (x, x + 1);
+        if (kind == GhosttyNative.WIDE_SPACER_TAIL && x > 0) return (x - 1, x);
+        return (x, x);
+    }
 }

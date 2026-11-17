@@ -57,4 +57,22 @@ public class WideTextTests
         // "e" plus a combining acute is one cell, not two.
         Assert.False(WideText.IsWide("e\u0301"));
     }
+
+    [Theory]
+    [InlineData(GhosttyNative.WIDE_NARROW, 3, 3, 3)]
+    [InlineData(GhosttyNative.WIDE_WIDE, 3, 3, 4)]
+    [InlineData(GhosttyNative.WIDE_SPACER_TAIL, 3, 2, 3)]
+    [InlineData(GhosttyNative.WIDE_SPACER_HEAD, 3, 3, 4)]
+    public void SpanOfFollowsTheCellsWidth(int kind, int x, int start, int end)
+    {
+        // Only a wide cell and its spacer take two cells; narrow cells never move, so a
+        // selection over plain text keeps one cell per character.
+        Assert.Equal((start, end), WideText.SpanOf(kind, x));
+    }
+
+    [Fact]
+    public void ASpacerTailInTheFirstColumnStaysOneCell()
+    {
+        Assert.Equal((0, 0), WideText.SpanOf(GhosttyNative.WIDE_SPACER_TAIL, 0));
+    }
 }
