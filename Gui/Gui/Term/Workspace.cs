@@ -248,6 +248,15 @@ public sealed partial class Workspace
     private bool _allowClose;
     private bool _closePromptOpen;
 
+    // A modal text prompt (e.g. "Change Window Title") owns the keyboard. The window-level
+    // preview handler would otherwise send Delete/Backspace to the terminal and mark them
+    // handled, so the dialog's TextBox could never delete anything.
+    private bool _textPromptOpen;
+
+    // "Change Window Title" pins the title for this window. Without it, the next title
+    // refresh (e.g. a newly focused pane after another window opens) would overwrite it.
+    private string? _windowTitleOverride;
+
     private Grid _paletteLayer = null!;
     private Border _palettePanel = null!;
     private TextBlock? _paletteBackRow;
@@ -1430,6 +1439,7 @@ public sealed partial class Workspace
     /// </summary>
     private void SendKeyUp(KeyRoutedEventArgs args)
     {
+        if (_textPromptOpen) return;
         if (_composing || _tabs.Count == 0) return;
         if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible) return;
         if (_settingsLayer is not null && _settingsLayer.Visibility == Visibility.Visible) return;

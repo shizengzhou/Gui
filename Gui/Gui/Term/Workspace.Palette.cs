@@ -2159,7 +2159,12 @@ public sealed partial class Workspace
         {
             if (_appWindow is null) return;
             string? value = await PromptTextAsync(Strings.ChangeWindowTitle, _appWindow.Title);
-            if (value is not null) _appWindow.Title = value;
+            if (value is not null)
+            {
+                _windowTitleOverride = value.Length > 0 ? value : null;
+                _appWindow.Title = value;
+                if (_windowTitleOverride is null) UpdateStatus();
+            }
         }
         catch (Exception error)
         {
@@ -2182,7 +2187,15 @@ public sealed partial class Workspace
             CloseButtonText = Strings.Cancel,
             DefaultButton = ContentDialogButton.Primary,
         };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary ? box.Text : null;
+        _textPromptOpen = true;
+        try
+        {
+            return await dialog.ShowAsync() == ContentDialogResult.Primary ? box.Text : null;
+        }
+        finally
+        {
+            _textPromptOpen = false;
+        }
     }
 
     /// <summary>

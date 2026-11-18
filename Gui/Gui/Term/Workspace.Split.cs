@@ -879,8 +879,9 @@ public sealed partial class Workspace
     {
         if (_window is null) return;
 
-        // "title" pins the window title; otherwise it follows the focused surface.
-        string title = _config.WindowTitle;
+        // A title set through "Change Window Title" wins; "title" pins it from config;
+        // otherwise it follows the focused surface.
+        string title = _windowTitleOverride ?? _config.WindowTitle;
         if (title.Length == 0)
         {
             title = "Terminal";

@@ -656,6 +656,10 @@ public sealed partial class Workspace
         // Modifier changes affect the link under a stationary pointer.
         if (IsModifierKey(args.Key)) RefreshLinkHovers();
 
+        // A modal text prompt owns the keyboard: Delete/Backspace and the arrow keys must
+        // reach its TextBox, not be consumed here as terminal input.
+        if (_textPromptOpen) return false;
+
         // Esc aborts a split drag before any other shortcut or the shell sees the key.
         if (_dragPane is not null && args.Key == VirtualKey.Escape)
         {
