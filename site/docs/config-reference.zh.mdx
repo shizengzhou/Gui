@@ -2001,3 +2001,13 @@ XT 校验和扩展
 ## `vt-xt-checksum-report`
 
 报告 XT 校验和
+
+## `auto-update`
+
+`check`（默认）会在启动时于后台检查 GitHub 上是否有更新的版本，最多每 24 小时
+一次，发现新版本时显示提示气泡。`off` 关闭这一启动检查；命令面板中的
+“检查更新”仍然可用。
+
+## `auto-update-channel`
+
+`stable`（默认）只读取最新的正式版本；`tip` 也会包含预发布版本。

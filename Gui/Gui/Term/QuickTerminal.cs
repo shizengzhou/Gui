@@ -248,6 +248,16 @@ internal sealed class QuickTerminal
 
         _window.Activated += OnActivated;
         _window.Closed += (_, _) => OnClosed();
+
+        // Unlike the main window, this one is built imperatively, so the workspace is
+        // attached before its subtree is loaded. The first FocusTerminal() in ShowCore
+        // therefore runs while the IME sink is not in a loaded tree and Focus() is a
+        // no-op — nothing can be typed until the user hides and shows the drop-down
+        // again. Focus once the root actually loads, which is the first show.
+        _root.Loaded += (_, _) =>
+        {
+            if (_visible) FocusTerminal();
+        };
     }
 
     private void OnClosed()

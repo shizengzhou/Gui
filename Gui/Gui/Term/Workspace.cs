@@ -457,6 +457,7 @@ public sealed partial class Workspace
             : 0);
         UpdateStatus();
         ApplyTabBarVisibility();
+        ScheduleStartupUpdateCheck();
     }
 
     /// <summary>
@@ -986,6 +987,14 @@ public sealed partial class Workspace
         };
     }
 
+    /// <summary>True only for the primary button, so a right-click never fires an icon button.</summary>
+    private static bool IsPrimaryPress(PointerRoutedEventArgs args, UIElement element) =>
+        args.GetCurrentPoint(element).Properties.IsLeftButtonPressed;
+
+    /// <summary>True only for a primary-button release; used where a button acts on release.</summary>
+    private static bool IsPrimaryRelease(PointerRoutedEventArgs args, UIElement element) =>
+        args.GetCurrentPoint(element).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonReleased;
+
     /// <summary>
     /// "window-title-font-family" applies to the tab titles this app draws in place of a
     /// native title bar. An unset value keeps the system UI font.
@@ -1359,6 +1368,8 @@ public sealed partial class Workspace
 
         EnsureTimers();
 
+        BuildUpdatePill();
+
         BuildPalette();
 
         // The settings page is a layer over the body. It is built on first open (ShowSettings
@@ -1611,6 +1622,7 @@ public sealed partial class Workspace
             add.PointerPressed += (_, args) =>
             {
                 args.Handled = true;
+                if (!IsPrimaryPress(args, add)) return;
                 RequestNewTab();
             };
             topTools.Children.Add(add);
@@ -1625,6 +1637,7 @@ public sealed partial class Workspace
             mainMenu.PointerReleased += (_, args) =>
             {
                 args.Handled = true;
+                if (!IsPrimaryRelease(args, mainMenu)) return;
                 BuildMainMenu().ShowAt(mainMenu);
             };
             topTools.Children.Add(mainMenu);
@@ -1661,6 +1674,7 @@ public sealed partial class Workspace
             sideToggle.PointerPressed += (_, args) =>
             {
                 args.Handled = true;
+                if (!IsPrimaryPress(args, sideToggle)) return;
                 SetSidebarCollapsed(false);
             };
             _headerSideTools.Children.Add(sideToggle);
@@ -1710,16 +1724,19 @@ public sealed partial class Workspace
         minimize.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, minimize)) return;
             MinimizeWindow();
         };
         maximize.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, maximize)) return;
             ToggleMaximize();
         };
         close.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, close)) return;
             // Window.Close() does not raise AppWindow.Closing (that is only for system
             // affordances like Alt+F4), so the confirmation is requested from here. Posting
             // keeps the dialog out of the pointer dispatch.
@@ -1800,6 +1817,7 @@ public sealed partial class Workspace
         collapse.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, collapse)) return;
             SetSidebarCollapsed(true);
         };
         tools.Children.Add(collapse);
@@ -1810,6 +1828,7 @@ public sealed partial class Workspace
         add.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, add)) return;
             Activate(IndexOf(NewTab()));
         };
         tools.Children.Add(add);
@@ -1822,6 +1841,7 @@ public sealed partial class Workspace
         mainMenu.PointerReleased += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryRelease(args, mainMenu)) return;
             BuildMainMenu().ShowAt(mainMenu);
         };
         tools.Children.Add(mainMenu);
@@ -1836,6 +1856,7 @@ public sealed partial class Workspace
         menu.PointerReleased += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryRelease(args, menu)) return;
             BuildMainMenu().ShowAt(menu);
         };
         tools.Children.Add(menu);
@@ -2460,7 +2481,10 @@ public sealed partial class Workspace
     /// Opens a tab on behalf of the CLI's "+new-tab": the caller may pin the directory, the
     /// command and the title; everything else follows this window's config.
     /// </summary>
-    internal void OpenTab(string? workingDirectory, string? command, string? title)
+    internal void OpenTab(string? workingDirectory, string? command, string? title) =>
+        OpenTabCore(workingDirectory, command, title);
+
+    private Tab OpenTabCore(string? workingDirectory, string? command, string? title)
     {
         Config config = NewTabConfig(ActivePane());
         if (ReferenceEquals(config, _config))
@@ -2480,7 +2504,7 @@ public sealed partial class Workspace
         bool named = !string.IsNullOrWhiteSpace(title);
         if (named) pane.SetTitleOverride(title);
 
-        AddTab(named ? title! : ShellDisplayName(config.Command), named ? title : null, pane,
+        return AddTab(named ? title! : ShellDisplayName(config.Command), named ? title : null, pane,
             new SplitNode { Pane = pane });
     }
 

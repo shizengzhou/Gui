@@ -38,6 +38,11 @@ public sealed partial class Workspace
     /// </summary>
     private const double ListMaxHeight = 8 * RowHeight + 7 * RowSpacing + 12;
 
+    // ---- help menu links ----
+    private const string ReleaseNotesUrl = "https://github.com/shizengzhou/Gui/releases";
+    private const string DocumentationUrl = "https://shizengzhou.github.io/Gui/docs/";
+    private const string FeedbackUrl = "https://github.com/shizengzhou/Gui/issues";
+
     // ---------------- theme switching ----------------
 
     /// <summary>
@@ -130,6 +135,7 @@ public sealed partial class Workspace
             });
 
         UpdateHeaders();
+        RenderUpdatePill();
         UpdateInputAnchor();
     }
 
@@ -343,6 +349,7 @@ public sealed partial class Workspace
         row.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, row)) return;
             if (!ReferenceEquals(owner, ActivePaletteItems())) return;
             int index = owner.IndexOf(item);
             if (index >= 0) RunPaletteItem(owner, index);
@@ -683,6 +690,8 @@ public sealed partial class Workspace
         MakeRow(Strings.ToggleQuickTerminal, _keybinds.Label("toggle_quick_terminal", string.Empty),
             _paletteItems, QuickTerminal.Toggle);
         MakeRow(Strings.NewTab, "Ctrl+Shift+T", _paletteItems, () => Activate(IndexOf(NewTab())));
+        MakeRow(Strings.HelpCheckForUpdates, string.Empty, _paletteItems,
+            () => _ = RunUpdateCheckAsync(userInitiated: true));
         MakeRow(Strings.Settings, "Ctrl+,", _paletteItems, ShowSettings);
         MakeRow(Strings.MoveTabLeft, "Ctrl+Shift+PageUp", _paletteItems, () => MoveTab(_active, _active - 1));
         MakeRow(Strings.MoveTabRight, "Ctrl+Shift+PageDown", _paletteItems, () => MoveTab(_active, _active + 1));
@@ -878,6 +887,7 @@ public sealed partial class Workspace
         _paletteBackRow.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, _paletteBackRow)) return;
             LeavePaletteSubmenu();
         };
         hints.Children.Add(_paletteBackRow);
@@ -1347,10 +1357,328 @@ public sealed partial class Workspace
         file.Items.Add(openDirectory);
         file.Items.Add(new MenuFlyoutSeparator());
 
+        var fileCloseTab = new MenuFlyoutItem
+        {
+            Text = Strings.CloseTab,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("close_tab:this", string.Empty),
+        };
+        fileCloseTab.Click += (_, _) =>
+        {
+            if (_tabs.Count > 0) CloseTab(_active);
+        };
+        file.Items.Add(fileCloseTab);
+
+        var fileCloseWindow = new MenuFlyoutItem
+        {
+            Text = Strings.CloseWindowCommand,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("close_window", "Alt+F4"),
+        };
+        fileCloseWindow.Click += (_, _) => CloseWindow();
+        file.Items.Add(fileCloseWindow);
+        file.Items.Add(new MenuFlyoutSeparator());
+
+        var fileSettings = new MenuFlyoutItem
+        {
+            Text = Strings.Settings,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("open_config", "Ctrl+,"),
+        };
+        fileSettings.Click += (_, _) => ShowSettings();
+        file.Items.Add(fileSettings);
+        file.Items.Add(new MenuFlyoutSeparator());
+
         var exit = new MenuFlyoutItem { Text = Strings.Exit };
         exit.Click += (_, _) => QuitApplication();
         file.Items.Add(exit);
         menu.Items.Add(file);
+
+        var edit = new MenuFlyoutSubItem { Text = Strings.EditMenu };
+
+        var copy = new MenuFlyoutItem
+        {
+            Text = Strings.Copy,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("copy_to_clipboard:plain", "Ctrl+Shift+C"),
+        };
+        copy.Click += (_, _) => ActivePane()?.CopySelection();
+        edit.Items.Add(copy);
+
+        var paste = new MenuFlyoutItem
+        {
+            Text = Strings.Paste,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("paste_from_clipboard", "Ctrl+Shift+V"),
+        };
+        paste.Click += (_, _) => ActivePane()?.PasteFromClipboard();
+        edit.Items.Add(paste);
+
+        var selectAll = new MenuFlyoutItem
+        {
+            Text = Strings.SelectAll,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("select_all", "Ctrl+Shift+A"),
+        };
+        selectAll.Click += (_, _) => ActivePane()?.SelectAll();
+        edit.Items.Add(selectAll);
+        edit.Items.Add(new MenuFlyoutSeparator());
+
+        var find = new MenuFlyoutItem
+        {
+            Text = Strings.EditFind,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("start_search", "Ctrl+Shift+F"),
+        };
+        find.Click += (_, _) => ActivePane()?.ShowSearch();
+        edit.Items.Add(find);
+
+        menu.Items.Add(edit);
+
+        var view = new MenuFlyoutSubItem { Text = Strings.ViewMenu };
+
+        // Split commands lead the menu, in the order of the reference layout.
+        var splitRight = new MenuFlyoutItem
+        {
+            Text = Strings.SplitRight,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("new_split:right", "Ctrl+Shift+O"),
+        };
+        splitRight.Click += (_, _) => SplitFocused(SplitDirection.Right);
+        view.Items.Add(splitRight);
+
+        var splitLeft = new MenuFlyoutItem
+        {
+            Text = Strings.SplitLeft,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("new_split:left", string.Empty),
+        };
+        splitLeft.Click += (_, _) => SplitFocused(SplitDirection.Left);
+        view.Items.Add(splitLeft);
+
+        var splitDown = new MenuFlyoutItem
+        {
+            Text = Strings.SplitDown,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("new_split:down", "Ctrl+Shift+E"),
+        };
+        splitDown.Click += (_, _) => SplitFocused(SplitDirection.Down);
+        view.Items.Add(splitDown);
+
+        var splitUp = new MenuFlyoutItem
+        {
+            Text = Strings.SplitUp,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("new_split:up", string.Empty),
+        };
+        splitUp.Click += (_, _) => SplitFocused(SplitDirection.Up);
+        view.Items.Add(splitUp);
+
+        var zoomSplit = new MenuFlyoutItem
+        {
+            Text = Strings.ViewZoomSplit,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("toggle_split_zoom", "Ctrl+Shift+Enter"),
+        };
+        zoomSplit.Click += (_, _) => TogglePaneZoom();
+        view.Items.Add(zoomSplit);
+
+        var resizeSplit = new MenuFlyoutSubItem { Text = Strings.ViewResizeSplit };
+        var resizeLeft = new MenuFlyoutItem
+        {
+            Text = Strings.ResizeSplitLeft,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("resize_split:left", "Win+Ctrl+Shift+\u2190"),
+        };
+        resizeLeft.Click += (_, _) => ResizeSplit(-1, 0);
+        resizeSplit.Items.Add(resizeLeft);
+        var resizeRight = new MenuFlyoutItem
+        {
+            Text = Strings.ResizeSplitRight,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("resize_split:right", "Win+Ctrl+Shift+\u2192"),
+        };
+        resizeRight.Click += (_, _) => ResizeSplit(1, 0);
+        resizeSplit.Items.Add(resizeRight);
+        var resizeUp = new MenuFlyoutItem
+        {
+            Text = Strings.ResizeSplitUp,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("resize_split:up", "Win+Ctrl+Shift+\u2191"),
+        };
+        resizeUp.Click += (_, _) => ResizeSplit(0, -1);
+        resizeSplit.Items.Add(resizeUp);
+        var resizeDown = new MenuFlyoutItem
+        {
+            Text = Strings.ResizeSplitDown,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("resize_split:down", "Win+Ctrl+Shift+\u2193"),
+        };
+        resizeDown.Click += (_, _) => ResizeSplit(0, 1);
+        resizeSplit.Items.Add(resizeDown);
+        view.Items.Add(resizeSplit);
+
+        var focusToPane = new MenuFlyoutSubItem { Text = Strings.ViewFocusSplit };
+        var focusPrevious = new MenuFlyoutItem
+        {
+            Text = Strings.FocusSplitPrevious,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("goto_split:previous", "Ctrl+Win+["),
+        };
+        focusPrevious.Click += (_, _) => CyclePane(-1);
+        focusToPane.Items.Add(focusPrevious);
+        var focusNext = new MenuFlyoutItem
+        {
+            Text = Strings.FocusSplitNext,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("goto_split:next", "Ctrl+Win+]"),
+        };
+        focusNext.Click += (_, _) => CyclePane(1);
+        focusToPane.Items.Add(focusNext);
+        var focusLeft = new MenuFlyoutItem
+        {
+            Text = Strings.FocusSplitLeft,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("goto_split:left", "Ctrl+Alt+\u2190"),
+        };
+        focusLeft.Click += (_, _) => FocusPaneTowards(-1, 0);
+        focusToPane.Items.Add(focusLeft);
+        var focusRight = new MenuFlyoutItem
+        {
+            Text = Strings.FocusSplitRight,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("goto_split:right", "Ctrl+Alt+\u2192"),
+        };
+        focusRight.Click += (_, _) => FocusPaneTowards(1, 0);
+        focusToPane.Items.Add(focusRight);
+        var focusUp = new MenuFlyoutItem
+        {
+            Text = Strings.FocusSplitUp,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("goto_split:up", "Ctrl+Alt+\u2191"),
+        };
+        focusUp.Click += (_, _) => FocusPaneTowards(0, -1);
+        focusToPane.Items.Add(focusUp);
+        var focusDown = new MenuFlyoutItem
+        {
+            Text = Strings.FocusSplitDown,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("goto_split:down", "Ctrl+Alt+\u2193"),
+        };
+        focusDown.Click += (_, _) => FocusPaneTowards(0, 1);
+        focusToPane.Items.Add(focusDown);
+        view.Items.Add(focusToPane);
+        view.Items.Add(new MenuFlyoutSeparator());
+
+        var increaseFont = new MenuFlyoutItem
+        {
+            Text = Strings.IncreaseFontSize,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("increase_font_size:1", "Ctrl+Plus"),
+        };
+        increaseFont.Click += (_, _) => ActivePane()?.AdjustFontSize(1.0f);
+        view.Items.Add(increaseFont);
+
+        var decreaseFont = new MenuFlyoutItem
+        {
+            Text = Strings.DecreaseFontSize,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("decrease_font_size:1", "Ctrl+-"),
+        };
+        decreaseFont.Click += (_, _) => ActivePane()?.AdjustFontSize(-1.0f);
+        view.Items.Add(decreaseFont);
+
+        var resetFont = new MenuFlyoutItem
+        {
+            Text = Strings.ResetFontSize,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("reset_font_size", "Ctrl+0"),
+        };
+        resetFont.Click += (_, _) => ActivePane()?.ResetFontSize();
+        view.Items.Add(resetFont);
+        view.Items.Add(new MenuFlyoutSeparator());
+
+        var layout = new MenuFlyoutSubItem { Text = Strings.ViewLayout };
+        var tabsTop = new ToggleMenuFlyoutItem
+        {
+            Text = Strings.TabBarTop,
+            IsChecked = _placement == TabPlacement.Top,
+        };
+        tabsTop.Click += (_, _) => SetTabPlacement("top");
+        layout.Items.Add(tabsTop);
+        var tabsLeft = new ToggleMenuFlyoutItem
+        {
+            Text = Strings.TabBarLeft,
+            IsChecked = _placement == TabPlacement.Left,
+        };
+        tabsLeft.Click += (_, _) => SetTabPlacement("left");
+        layout.Items.Add(tabsLeft);
+        var tabsRight = new ToggleMenuFlyoutItem
+        {
+            Text = Strings.TabBarRight,
+            IsChecked = _placement == TabPlacement.Right,
+        };
+        tabsRight.Click += (_, _) => SetTabPlacement("right");
+        layout.Items.Add(tabsRight);
+        view.Items.Add(layout);
+
+        var viewSidebar = new MenuFlyoutItem
+        {
+            Text = Strings.ToggleSidebar,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("toggle_sidebar", "Ctrl+Shift+B"),
+        };
+        viewSidebar.Click += (_, _) => ToggleSidebar();
+        view.Items.Add(viewSidebar);
+
+        var compact = new ToggleMenuFlyoutItem
+        {
+            Text = Strings.ViewCompact,
+            IsChecked = CompactDensity,
+        };
+        compact.Click += (_, _) => SetDensity(!CompactDensity);
+        view.Items.Add(compact);
+
+        var quickTerminal = new MenuFlyoutItem
+        {
+            Text = Strings.ToggleQuickTerminal,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("toggle_quick_terminal", string.Empty),
+        };
+        // The flyout is still dismissing on Click; toggling now makes the drop-down show and
+        // lose focus in the same dispatch, and autohide hides it again. Defer past the close.
+        quickTerminal.Click += (_, _) => _dispatcher?.TryEnqueue(QuickTerminal.Toggle);
+        view.Items.Add(quickTerminal);
+
+        var viewCommandPalette = new MenuFlyoutItem
+        {
+            Text = Strings.CommandPalette,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("toggle_command_palette", "Ctrl+Shift+P"),
+        };
+        viewCommandPalette.Click += (_, _) => ShowCommandPalette();
+        view.Items.Add(viewCommandPalette);
+
+        menu.Items.Add(view);
+
+        var window = new MenuFlyoutSubItem { Text = Strings.WindowMenu };
+
+        var previousTab = new MenuFlyoutItem
+        {
+            Text = Strings.PreviousTab,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("previous_tab", "Ctrl+Shift+Tab"),
+        };
+        previousTab.Click += (_, _) => CycleTab(-1);
+        window.Items.Add(previousTab);
+
+        var nextTab = new MenuFlyoutItem
+        {
+            Text = Strings.NextTab,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("next_tab", "Ctrl+Tab"),
+        };
+        nextTab.Click += (_, _) => CycleTab(1);
+        window.Items.Add(nextTab);
+
+        menu.Items.Add(window);
+
+        var help = new MenuFlyoutSubItem { Text = Strings.HelpMenu };
+
+        var documentation = new MenuFlyoutItem { Text = Strings.HelpDocumentation };
+        documentation.Click += (_, _) => LaunchUrl(DocumentationUrl);
+        help.Items.Add(documentation);
+
+        var feedback = new MenuFlyoutItem { Text = Strings.HelpFeedback };
+        feedback.Click += (_, _) => LaunchUrl(FeedbackUrl);
+        help.Items.Add(feedback);
+        help.Items.Add(new MenuFlyoutSeparator());
+
+        var releaseNotes = new MenuFlyoutItem { Text = Strings.HelpReleaseNotes };
+        releaseNotes.Click += (_, _) => LaunchUrl(ReleaseNotesUrl);
+        help.Items.Add(releaseNotes);
+
+        var checkUpdates = new MenuFlyoutItem { Text = Strings.HelpCheckForUpdates };
+        checkUpdates.Click += (_, _) => _ = RunUpdateCheckAsync(userInitiated: true);
+        help.Items.Add(checkUpdates);
+        help.Items.Add(new MenuFlyoutSeparator());
+
+        var about = new MenuFlyoutItem { Text = Strings.HelpAbout };
+        about.Click += (_, _) => ShowAbout();
+        help.Items.Add(about);
+
+        menu.Items.Add(help);
+        menu.Items.Add(new MenuFlyoutSeparator());
 
         var commandPalette = new MenuFlyoutItem
         {
@@ -1371,7 +1699,339 @@ public sealed partial class Workspace
         return menu;
     }
 
-    /// <summary>Lets the user pick a folder and moves the focused pane's shell into it.</summary>
+    /// <summary>Shows the app's identity and links in a standalone dialog.</summary>
+    private async void ShowAbout()
+    {
+        XamlRoot? root = _root.XamlRoot;
+        if (root is null) return;
+
+        try
+        {
+            var icon = new Image
+            {
+                Width = 48,
+                Height = 48,
+                Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
+                    new Uri(Path.Combine(AppContext.BaseDirectory, "Assets",
+                        "Square150x150Logo.scale-200.png"))),
+            };
+
+            var identity = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+            identity.Children.Add(new TextBlock
+            {
+                Text = "Gui",
+                FontSize = 18,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            });
+            identity.Children.Add(new TextBlock { Text = AppVersion(), FontSize = 12 });
+            identity.Children.Add(new TextBlock
+            {
+                Text = Strings.AboutCopyright(DateTime.Now.Year),
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+            header.Children.Add(icon);
+            header.Children.Add(identity);
+
+            var body = new StackPanel { Spacing = 14, Width = 380 };
+            body.Children.Add(header);
+            body.Children.Add(new HyperlinkButton
+            {
+                Content = RepositoryUrl,
+                NavigateUri = new Uri(RepositoryUrl),
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono"),
+                FontSize = 12,
+                Padding = new Thickness(0),
+                MinWidth = 0,
+            });
+            body.Children.Add(new TextBlock
+            {
+                Text = Strings.AboutLicense + ": MIT License",
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = root,
+                Title = Strings.HelpAbout,
+                Content = body,
+                PrimaryButtonText = Strings.Ok,
+                DefaultButton = ContentDialogButton.Primary,
+            };
+            await dialog.ShowAsync();
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("workspace.showAbout", error);
+        }
+    }
+
+    // ---- update check (Ghostty-style pill) ---------------------------------
+
+    // Ghostty checks in the background and reports through a small pill instead of a modal
+    // dialog: "Checking for Updates…", "Update Available: X", "No Updates Available". The pill
+    // appears only when there is something to say; an available update stays until clicked.
+    private Border? _updatePill;
+    private TextBlock? _updatePillText;
+    private FontIcon? _updatePillIcon;
+    private FontIcon? _updatePillCloseIcon;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _updatePillTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _updateDelayTimer;
+    private bool _updateCheckInFlight;
+    private bool _updatePillClickable;
+    private bool _updatePillVisible;
+    private string _updatePillUrl = string.Empty;
+    private string _updatePillMessage = string.Empty;
+    private char _updatePillGlyph;
+    private bool _updatePillWarning;
+    private static bool _startupUpdateChecked;
+
+    /// <summary>Builds the floating update pill. Called from BuildChrome, so a chrome rebuild recreates it.</summary>
+    private void BuildUpdatePill()
+    {
+        if (_quickTerminal) return;
+
+        _updatePillText = new TextBlock
+        {
+            FontSize = Theme.FontSmall,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 420,
+        };
+        _updatePillIcon = new FontIcon
+        {
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = Theme.FontSmall,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        // The close button stays available in every state, including a persistent
+        // "Update Available" pill, so the notice can be dismissed without downloading.
+        _updatePillCloseIcon = new FontIcon
+        {
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Glyph = "\uE711",
+            FontSize = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var close = new Border
+        {
+            Width = 18,
+            Height = 18,
+            CornerRadius = new CornerRadius(9),
+            Background = ClearBrush(),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(2, 0, -2, 0),
+            Child = _updatePillCloseIcon,
+        };
+        close.PointerEntered += (_, _) => close.Background = new SolidColorBrush(Theme.ChipHover());
+        close.PointerExited += (_, _) => close.Background = ClearBrush();
+        close.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            if (!IsPrimaryPress(args, close)) return;
+            HideUpdatePill();
+        };
+
+        row.Children.Add(_updatePillIcon);
+        row.Children.Add(_updatePillText);
+        row.Children.Add(close);
+
+        _updatePill = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(10, 4, 10, 4),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 16, 16),
+            Visibility = Visibility.Collapsed,
+            Child = row,
+            Shadow = new ThemeShadow(),
+            Translation = new System.Numerics.Vector3(0, 0, 32),
+        };
+        _updatePill.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            if (!IsPrimaryPress(args, _updatePill!)) return;
+            if (_updatePillClickable && !_updateCheckInFlight)
+            {
+                LaunchUrl(_updatePillUrl.Length > 0 ? _updatePillUrl : ReleaseNotesUrl);
+                HideUpdatePill();
+            }
+            else
+            {
+                HideUpdatePill();
+            }
+        };
+
+        Grid.SetColumn(_updatePill, 0);
+        Grid.SetColumnSpan(_updatePill, Math.Max(1, _body.ColumnDefinitions.Count));
+        _body.Children.Add(_updatePill);
+
+        // Re-apply the last state so a chrome rebuild (tab rail move, config reload) does not
+        // silently drop an "update available" notice.
+        RenderUpdatePill();
+    }
+
+    private void RenderUpdatePill()
+    {
+        if (_updatePill is null || _updatePillText is null || _updatePillIcon is null) return;
+
+        _updatePill.Visibility = _updatePillVisible ? Visibility.Visible : Visibility.Collapsed;
+        if (!_updatePillVisible) return;
+
+        Windows.UI.Color ink = _updatePillWarning ? Theme.Warning() : Theme.Accent();
+        _updatePillText.Text = _updatePillMessage;
+        _updatePillText.Foreground = new SolidColorBrush(ink);
+        _updatePillIcon.Glyph = _updatePillGlyph.ToString();
+        _updatePillIcon.Foreground = new SolidColorBrush(ink);
+        if (_updatePillCloseIcon is not null)
+            _updatePillCloseIcon.Foreground = new SolidColorBrush(Theme.TextFaint());
+        _updatePill.Background = new SolidColorBrush(Theme.PaletteBg());
+        _updatePill.BorderBrush = new SolidColorBrush(Theme.Stroke());
+        _updatePill.BorderThickness = new Thickness(1);
+    }
+
+    /// <summary>Shows the pill. A clickable pill (an available update) stays until clicked.</summary>
+    private void ShowUpdatePill(string message, char glyph, bool warning, bool clickable, bool autoHide)
+    {
+        _updatePillMessage = message;
+        _updatePillGlyph = glyph;
+        _updatePillWarning = warning;
+        _updatePillClickable = clickable;
+        _updatePillVisible = true;
+        RenderUpdatePill();
+
+        _updatePillTimer?.Stop();
+        if (!autoHide || _dispatcher is null) return;
+
+        if (_updatePillTimer is null)
+        {
+            _updatePillTimer = _dispatcher.CreateTimer();
+            _updatePillTimer.IsRepeating = false;
+            _updatePillTimer.Interval = TimeSpan.FromSeconds(5);
+            _updatePillTimer.Tick += OnUpdatePillTimerTick;
+        }
+        _updatePillTimer.Start();
+    }
+
+    private void OnUpdateDelayTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+        _ = RunUpdateCheckAsync(userInitiated: false);
+    }
+
+    private void OnUpdatePillTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+        if (!_updatePillClickable) HideUpdatePill();
+    }
+
+    private void HideUpdatePill()
+    {
+        _updatePillVisible = false;
+        _updatePillClickable = false;
+        _updatePillTimer?.Stop();
+        RenderUpdatePill();
+    }
+
+    /// <summary>
+    /// "Check for Updates" and the launch auto-check. The background check is silent unless a
+    /// newer release exists, like Ghostty's auto-update = check.
+    /// </summary>
+    private async Task RunUpdateCheckAsync(bool userInitiated)
+    {
+        if (_updateCheckInFlight) return;
+        _updateCheckInFlight = true;
+
+        if (userInitiated)
+            ShowUpdatePill(Strings.UpdateChecking, '\uE895', warning: false, clickable: false, autoHide: false);
+
+        try
+        {
+            UpdateCheck check = await Updater.CheckAsync(AppVersion(), _config.AutoUpdateChannel);
+            // A definitive answer resets the 24h clock; a failed attempt does not, so the
+            // next launch can retry when the network comes back.
+            if (check.Status != UpdateResult.Failed) Updater.RecordCheck();
+            _dispatcher?.TryEnqueue(() => ApplyUpdateCheck(check, userInitiated));
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("workspace.checkUpdates", error);
+            if (userInitiated)
+                _dispatcher?.TryEnqueue(() => ShowUpdatePill(
+                    Strings.UpdateFailed, '\uE711', warning: true, clickable: false, autoHide: true));
+        }
+        finally
+        {
+            _updateCheckInFlight = false;
+        }
+    }
+
+    private void ApplyUpdateCheck(UpdateCheck check, bool userInitiated)
+    {
+        switch (check.Status)
+        {
+            case UpdateResult.UpdateAvailable:
+                _updatePillUrl = check.Url;
+                ShowUpdatePill(Strings.UpdateAvailable(check.Version), '\uE896',
+                    warning: true, clickable: true, autoHide: false);
+                break;
+            case UpdateResult.UpToDate:
+                if (userInitiated)
+                    ShowUpdatePill(Strings.UpdateUpToDate, '\uE73E',
+                        warning: false, clickable: false, autoHide: true);
+                else
+                    HideUpdatePill();
+                break;
+            default:
+                if (userInitiated)
+                    ShowUpdatePill(Strings.UpdateFailed, '\uE711',
+                        warning: true, clickable: false, autoHide: true);
+                break;
+        }
+    }
+
+    /// <summary>Schedules the launch check once per process, a few seconds after the window settles.</summary>
+    private void ScheduleStartupUpdateCheck()
+    {
+        if (_quickTerminal || _startupUpdateChecked) return;
+        if (_config.AutoUpdate == "off") return;
+        if (!Updater.AutoCheckDue()) return;
+        _startupUpdateChecked = true;
+        if (_dispatcher is null) return;
+
+        // Delay on the UI dispatcher rather than Task.Run: the pill is XAML, so the check
+        // has to start on the UI thread and its own continuation stays there as well.
+        _updateDelayTimer ??= _dispatcher.CreateTimer();
+        _updateDelayTimer.IsRepeating = false;
+        _updateDelayTimer.Interval = TimeSpan.FromSeconds(4);
+        _updateDelayTimer.Tick += OnUpdateDelayTimerTick;
+        _updateDelayTimer.Start();
+    }
+
+    /// <summary>Opens a public link in the default browser.</summary>
+    private static void LaunchUrl(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("workspace.launchUrl", error);
+        }
+    }
+
+    /// <summary>Lets the user pick a folder and opens a new tab started in it.</summary>
     private async Task OpenDirectoryAsync()
     {
         try
@@ -1387,11 +2047,11 @@ public sealed partial class Workspace
             Windows.Storage.StorageFolder? folder = await picker.PickSingleFolderAsync();
             if (folder is null) return;
 
-            if (ActivePane() is { } pane)
-            {
-                pane.ChangeDirectory(folder.Path);
-                FocusKeyboardAnchor();
-            }
+            // Pin the directory onto a fresh shell instead of cd-ing the focused pane: the
+            // existing session keeps its own cwd and scrollback.
+            Tab tab = OpenTabCore(folder.Path, null, null);
+            Activate(IndexOf(tab));
+            FocusKeyboardAnchor();
         }
         catch (Exception error)
         {

@@ -212,6 +212,9 @@ public sealed class TerminalPane
     private FontIcon? _statusIcon;
     private TextBlock? _statusText;
 
+    // Read-only state: a lock badge in the header's right corner, shown while input is blocked.
+    private Border? _readOnlyBadge;
+
     public string Title = string.Empty;
 
     /// <summary>
@@ -271,7 +274,17 @@ public sealed class TerminalPane
     private char _pendingSurrogate;
 
     /// <summary>True blocks keyboard input, IME text and pasting ("Toggle Read-Only Mode").</summary>
-    public bool ReadOnly;
+    public bool ReadOnly
+    {
+        get => _readOnly;
+        set
+        {
+            if (_readOnly == value) return;
+            _readOnly = value;
+            UpdateReadOnlyBadge();
+        }
+    }
+    private bool _readOnly;
 
     /// <summary>False stops forwarding pointer input to a mouse-tracking program.</summary>
     public bool MouseReportingEnabled = true;
@@ -546,15 +559,15 @@ public sealed class TerminalPane
         Grid.SetColumn(_searchField, 0);
         searchRow.Children.Add(_searchField);
 
-        Border previous = SearchButton('\uE70E', Strings.SearchPrevious, () => NavigateSearch(false));
+        Border previous = SearchButton('\uE70E', () => NavigateSearch(false));
         Grid.SetColumn(previous, 1);
         searchRow.Children.Add(previous);
 
-        Border next = SearchButton('\uE70D', Strings.SearchNext, () => NavigateSearch(true));
+        Border next = SearchButton('\uE70D', () => NavigateSearch(true));
         Grid.SetColumn(next, 2);
         searchRow.Children.Add(next);
 
-        Border close = SearchButton('\uE711', Strings.SearchClose, HideSearch);
+        Border close = SearchButton('\uE711', HideSearch);
         Grid.SetColumn(close, 3);
         searchRow.Children.Add(close);
 
@@ -752,12 +765,51 @@ public sealed class TerminalPane
         statusBadge.Children.Add(_statusIcon);
         statusBadge.Children.Add(_statusText);
 
+        // Lock badge for read-only mode, at the very right edge of the header. The glyph and
+        // text carry the warning colour so a blocked-input pane reads at a glance; the plate
+        // stays neutral so it does not fight the terminal theme.
+        var readOnlyBadge = new Border
+        {
+            CornerRadius = new CornerRadius(Theme.RadiusChip),
+            Padding = new Thickness(6, 3, 6, 3),
+            Background = new SolidColorBrush(Theme.ChipHover()),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+        _readOnlyBadge = readOnlyBadge;
+        Tips.Set(readOnlyBadge, Strings.ReadOnlyStatus);
+        var readOnlyRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        readOnlyRow.Children.Add(new FontIcon
+        {
+            Glyph = "\uE72E",  // Lock
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = Theme.FontSmall,
+            Foreground = new SolidColorBrush(Theme.Warning()),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        readOnlyRow.Children.Add(new TextBlock
+        {
+            Text = Strings.ReadOnlyStatus,
+            FontSize = Theme.FontSmall,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Theme.Warning()),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        readOnlyBadge.Child = readOnlyRow;
+
         var rightHost = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
         };
         rightHost.Children.Add(statusBadge);
+        rightHost.Children.Add(readOnlyBadge);
         rightHost.Children.Add(actionHost);
         Grid.SetColumn(rightHost, 1);
         header.Children.Add(rightHost);
@@ -1058,6 +1110,10 @@ public sealed class TerminalPane
         }
     }
 
+    /// <summary>True only for the primary button, so a right-click never fires an icon button.</summary>
+    private static bool IsPrimaryPress(PointerRoutedEventArgs args, UIElement element) =>
+        args.GetCurrentPoint(element).Properties.IsLeftButtonPressed;
+
     private Border AddAction(Path icon, Func<string> tip, string actionId, string shortcut, Action handler)
     {
         var button = new Border
@@ -1087,6 +1143,7 @@ public sealed class TerminalPane
         button.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, button)) return;
             OnFocus?.Invoke(this);
             handler();
         };
@@ -1106,7 +1163,7 @@ public sealed class TerminalPane
     }
 
     /// <summary>Small icon button used by the find bar (previous, next, close).</summary>
-    private Border SearchButton(char glyph, string tip, Action handler)
+    private Border SearchButton(char glyph, Action handler)
     {
         // Shared brushes, so ApplyTheme can recolor every find-bar glyph in place: a new
         // brush captured here would keep the old theme's colour after a theme switch and
@@ -1131,7 +1188,6 @@ public sealed class TerminalPane
             Background = TransparentBrush(),
             Child = icon,
         };
-        Tips.Set(button, tip);
 
         button.PointerEntered += (_, _) =>
         {
@@ -1146,6 +1202,7 @@ public sealed class TerminalPane
         button.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, button)) return;
             handler();
         };
         return button;
@@ -1534,6 +1591,23 @@ public sealed class TerminalPane
         _statusText.Text = text;
         _statusText.Foreground = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
         _statusText.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void UpdateReadOnlyBadge()
+    {
+        if (_readOnlyBadge is null) return;
+
+        _readOnlyBadge.Visibility = _readOnly ? Visibility.Visible : Visibility.Collapsed;
+        _readOnlyBadge.Background = new SolidColorBrush(Theme.ChipHover());
+        if (_readOnlyBadge.Child is StackPanel row)
+        {
+            Brush brush = new SolidColorBrush(Theme.Warning());
+            foreach (UIElement child in row.Children)
+            {
+                if (child is FontIcon icon) icon.Foreground = brush;
+                else if (child is TextBlock text) text.Foreground = brush;
+            }
+        }
     }
 
     private static string StatusGlyph(ProgramState state) => state switch
@@ -2443,6 +2517,7 @@ public sealed class TerminalPane
         _progressBar.Foreground = new SolidColorBrush(Theme.Accent());
         UpdateProgressBar();
         UpdateStatusBadge();
+        UpdateReadOnlyBadge();
         _dim.Background = new SolidColorBrush(DimFillColor());
         _canvas.ClearColor = CanvasClearColor();
         if (_linkPreview is not null)

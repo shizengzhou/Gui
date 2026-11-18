@@ -269,12 +269,14 @@ public sealed partial class Workspace
         back.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, back)) return;
             back.CapturePointer(args.Pointer);
         };
         back.PointerReleased += (_, args) =>
         {
             args.Handled = true;
             back.ReleasePointerCapture(args.Pointer);
+            if (!IsPrimaryRelease(args, back)) return;
             var point = args.GetCurrentPoint(back).Position;
             if (point.X < 0 || point.Y < 0 ||
                 point.X > back.ActualWidth || point.Y > back.ActualHeight) return;
@@ -319,6 +321,7 @@ public sealed partial class Workspace
         foot.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, foot)) return;
             OpenConfig();
         };
 
@@ -381,6 +384,7 @@ public sealed partial class Workspace
         button.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, button)) return;
             // This press is swallowed here, so the layer handler cannot move focus; a field
             // on the page being left would otherwise keep it while its page goes collapsed.
             _settingsFocus?.Focus(FocusState.Programmatic);
@@ -1258,6 +1262,7 @@ public sealed partial class Workspace
         header.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, header)) return;
             bool open = content.Visibility != Visibility.Visible;
             content.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
             chevron.Glyph = open ? "\uE70D" : "\uE76C";
@@ -1309,6 +1314,7 @@ public sealed partial class Workspace
         copy.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, copy)) return;
             ClipboardAccess.TryWriteText(RepositoryUrl);
         };
 
@@ -1656,6 +1662,7 @@ public sealed partial class Workspace
             button.PointerPressed += (_, args) =>
             {
                 args.Handled = true;
+                if (!IsPrimaryPress(args, button)) return;
                 Apply(index);
                 changed(index);
             };
@@ -1799,6 +1806,7 @@ public sealed partial class Workspace
         track.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, track)) return;
             on = !on;
             track.Background = on ? AccentBrush() : ControlFillOffBrush();
             knob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
@@ -1959,6 +1967,7 @@ public sealed partial class Workspace
         button.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            if (!IsPrimaryPress(args, button)) return;
             clicked();
         };
         return button;

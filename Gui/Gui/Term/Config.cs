@@ -187,6 +187,15 @@ public sealed class Config
     public float BellAudioVolume = 0.5f;           // 0..1
     public bool DebugTap;                         // record the raw VT byte stream
     public bool CrashDumps;                        // ask WER for full crash dumps
+
+    /// <summary>
+    /// "auto-update": "off" disables the launch check; "check" (the default) checks in the
+    /// background at most once every 24 hours and shows a pill when a newer release exists.
+    /// </summary>
+    public string AutoUpdate = "check";
+
+    /// <summary>"auto-update-channel": "stable" reads the latest release; "tip" includes pre-releases.</summary>
+    public string AutoUpdateChannel = "stable";
     public TerminalTheme TerminalTheme = new();    // resolved terminal palette
     public bool LightTheme;                        // resolved from theme only
     public bool WindowLight;                       // resolved from window-theme
@@ -570,6 +579,8 @@ public sealed class Config
         BellAudioVolume = other.BellAudioVolume;
         DebugTap = other.DebugTap;
         CrashDumps = other.CrashDumps;
+        AutoUpdate = other.AutoUpdate;
+        AutoUpdateChannel = other.AutoUpdateChannel;
         TerminalTheme = other.TerminalTheme;
         LightTheme = other.LightTheme;
         WindowLight = other.WindowLight;
@@ -1435,6 +1446,13 @@ public sealed class Config
             : "system";
         DebugTap = GetBool("debug-tap", false);
         CrashDumps = GetBool("crash-dumps", false);
+        AutoUpdate = (Last("auto-update") ?? string.Empty).Trim().ToLowerInvariant() == "off"
+            ? "off"
+            : "check";
+        AutoUpdateChannel =
+            (Last("auto-update-channel") ?? string.Empty).Trim().ToLowerInvariant() == "tip"
+                ? "tip"
+                : "stable";
 
         if (WorkingDirectory.Length == 0)
             WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

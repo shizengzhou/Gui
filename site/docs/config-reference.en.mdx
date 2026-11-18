@@ -2277,3 +2277,15 @@ XT checksum extension
 ## `vt-xt-checksum-report`
 
 report XT checksums
+
+## `auto-update`
+
+`check` (the default) looks for a newer release on GitHub in the background when
+the app launches, at most once every 24 hours, and shows a pill when one exists.
+`off` disables that launch check; "Check for Updates" in the command palette
+still works.
+
+## `auto-update-channel`
+
+`stable` (the default) reads the latest public release; `tip` also considers
+pre-releases.

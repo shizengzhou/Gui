@@ -229,8 +229,8 @@ public static class ConfigSchema
         new("vt-window-resize-allowed", ConfigKind.Bool, ConfigPlatform.All, "allow window resize sequences"),
         new("vt-xt-checksum-extension", ConfigKind.Text, ConfigPlatform.All, "XT checksum extension"),
         new("vt-xt-checksum-report", ConfigKind.Bool, ConfigPlatform.All, "report XT checksums"),
-        new("auto-update", ConfigKind.Enum, ConfigPlatform.MacOS, "auto update"),
-        new("auto-update-channel", ConfigKind.Enum, ConfigPlatform.MacOS, "auto update channel"),
+        new("auto-update", ConfigKind.Enum, ConfigPlatform.All, "update check on launch: off, check"),
+        new("auto-update-channel", ConfigKind.Enum, ConfigPlatform.All, "update channel: stable, tip"),
     };
 
     /// <summary>Options this app adds on top of Ghostty's surface.</summary>

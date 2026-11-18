@@ -694,7 +694,7 @@ public class ConfigSurfaceTests : IDisposable
         try
         {
             Strings.Use(Language.English);
-            Assert.Equal("Split right", Strings.SplitRight);
+            Assert.Equal("Split Right", Strings.SplitRight);
             Assert.Equal("Tab: x", Strings.TabName("x"));
 
             Strings.Use(Language.Chinese);

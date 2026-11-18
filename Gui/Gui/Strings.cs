@@ -33,13 +33,13 @@ public static class Strings
 
     // ---- terminal pane ----------------------------------------------------
 
-    public static string SplitRight => Pick("Split right", "向右拆分");
-    public static string SplitDown => Pick("Split down", "向下拆分");
-    public static string SplitLeft => Pick("Split left", "向左拆分");
-    public static string SplitUp => Pick("Split up", "向上拆分");
+    public static string SplitRight => Pick("Split Right", "向右拆分");
+    public static string SplitDown => Pick("Split Down", "向下拆分");
+    public static string SplitLeft => Pick("Split Left", "向左拆分");
+    public static string SplitUp => Pick("Split Up", "向上拆分");
     public static string ToggleZoom => Pick("Toggle Split Zoom", "切换分屏缩放");
-    public static string ClosePane => Pick("Close pane", "关闭窗格");
-    public static string CloseSplit => Pick("Close split", "关闭拆分");
+    public static string ClosePane => Pick("Close Pane", "关闭窗格");
+    public static string CloseSplit => Pick("Close Split", "关闭拆分");
 
     /// <summary>
     /// Printed into a surface whose process died too quickly ("abnormal-command-exit-runtime").
@@ -51,32 +51,29 @@ public static class Strings
 
     // ---- tab context menu -------------------------------------------------
 
-    public static string RenameTab => Pick("Rename tab", "重命名标签页");
-    public static string CloseOtherTabs => Pick("Close other tabs", "关闭其他标签页");
-    public static string CloseTabsToTheRight => Pick("Close tabs to the right", "关闭右侧标签页");
-    public static string MoveTabToNewWindow => Pick("Move tab to new window", "将标签页移到新窗口");
+    public static string RenameTab => Pick("Rename Tab", "重命名标签页");
+    public static string CloseOtherTabs => Pick("Close Other Tabs", "关闭其他标签页");
+    public static string CloseTabsToTheRight => Pick("Close Tabs to the Right", "关闭右侧标签页");
+    public static string MoveTabToNewWindow => Pick("Move Tab to New Window", "将标签页移到新窗口");
 
     // ---- search -----------------------------------------------------------
 
     public static string FindPlaceholder => Pick("Search", "搜索");
-    public static string SearchPrevious => Pick("Previous match (Shift+Enter)", "上一个匹配（Shift+Enter）");
-    public static string SearchNext => Pick("Next match (Enter)", "下一个匹配（Enter）");
-    public static string SearchClose => Pick("Close search (Esc)", "关闭查找（Esc）");
 
     // ---- command palette --------------------------------------------------
 
     public static string PalettePlaceholder =>
         Pick("Search commands, tabs or settings\u2026", "搜索命令、标签页或设置\u2026");
 
-    public static string NewTab => Pick("New tab", "新建标签页");
-    public static string NewWindow => Pick("New window", "新建窗口");
-    public static string ToggleQuickTerminal => Pick("Quick terminal", "快速终端");
-    public static string CloseFocusedPane => Pick("Close focused pane", "关闭当前窗格");
+    public static string NewTab => Pick("New Tab", "新建标签页");
+    public static string NewWindow => Pick("New Window", "新建窗口");
+    public static string ToggleQuickTerminal => Pick("Quick Terminal", "快速终端");
+    public static string CloseFocusedPane => Pick("Close Focused Pane", "关闭当前窗格");
     public static string CloseTerminal => Pick("Close Terminal", "关闭终端");
-    public static string NextTab => Pick("Next tab", "下一个标签页");
-    public static string PreviousTab => Pick("Previous tab", "上一个标签页");
-    public static string LastTab => Pick("Go to last tab", "切回上次使用的标签页");
-    public static string ToggleSidebar => Pick("Toggle tab sidebar", "显示/隐藏标签侧栏");
+    public static string NextTab => Pick("Next Tab", "下一个标签页");
+    public static string PreviousTab => Pick("Previous Tab", "上一个标签页");
+    public static string LastTab => Pick("Go to Last Tab", "切回上次使用的标签页");
+    public static string ToggleSidebar => Pick("Toggle Sidebar", "显示/隐藏侧栏");
     public static string IncreaseFontSize => Pick("Increase Font Size", "增大字号");
     public static string DecreaseFontSize => Pick("Decrease Font Size", "减小字号");
     public static string ResetFontSize => Pick("Reset Font Size", "恢复默认字号");
@@ -99,10 +96,31 @@ public static class Strings
 
     // ---- main menu ----
     public static string FileMenu => Pick("File", "文件");
+    public static string EditMenu => Pick("Edit", "编辑");
+    public static string ViewMenu => Pick("View", "视图");
+    public static string WindowMenu => Pick("Window", "窗口");
+    public static string ViewLayout => Pick("Tabs Position", "标签栏位置");
+    public static string ViewZoomSplit => Pick("Zoom Split", "缩放分屏");
+    public static string ViewResizeSplit => Pick("Resize Split", "调整分屏");
+    public static string ViewFocusSplit => Pick("Focus Split", "聚焦分屏");
+    public static string EditFind => Pick("Find", "查找");
     public static string OpenDirectory => Pick("Open Directory…", "打开目录…");
     public static string CommandPalette => Pick("Command Palette", "命令面板");
     public static string Settings => Pick("Settings", "设置");
     public static string Exit => Pick("Exit", "退出");
+
+    public static string HelpMenu => Pick("Help", "帮助");
+    public static string HelpAbout => Pick("About", "关于");
+    public static string HelpCheckForUpdates => Pick("Check for Updates", "检查更新");
+    public static string UpdateChecking => Pick("Checking for Updates\u2026", "正在检查更新\u2026");
+    public static string UpdateUpToDate => Pick("No Updates Available", "没有可用更新");
+    public static string UpdateAvailable(string version) =>
+        Pick($"Update Available: {version}", $"有可用更新：{version}");
+    public static string UpdateFailed =>
+        Pick("Update Check Failed, Please Try Again Later", "检查更新失败，请稍后重试");
+    public static string HelpReleaseNotes => Pick("Release Notes", "发布说明");
+    public static string HelpDocumentation => Pick("Documentation", "文档");
+    public static string HelpFeedback => Pick("Feedback", "反馈");
 
     // ---- settings ----
     public static string SettingsTitle => Pick("Settings", "设置");
@@ -113,11 +131,12 @@ public static class Strings
     public static string SettingsNavNotifications => Pick("Notifications", "通知");
     public static string SettingsLanguage => Pick("Language", "语言");
     public static string SettingsWindowAppearance => Pick("Window theme", "窗口外观");
-    public static string SettingsTabPosition => Pick("Tab bar position", "标签栏位置");
+    public static string SettingsTabPosition => Pick("Tabs position", "标签栏位置");
     public static string SettingsTabTop => Pick("Top", "顶部");
     public static string SettingsTabLeft => Pick("Left", "左侧");
     public static string SettingsTabRight => Pick("Right", "右侧");
     public static string SettingsCompact => Pick("Compact mode", "紧凑模式");
+    public static string ViewCompact => Pick("Compact Mode", "紧凑模式");
 
     public static string SettingsCompactDescription => Pick(
         "Drop the pane gaps and rounded corners so the terminal fills the window edges.",
@@ -261,6 +280,7 @@ public static class Strings
     public static string FocusSplitUp => Pick("Focus Split: Up", "聚焦分屏：向上");
     public static string FocusSplitDown => Pick("Focus Split: Down", "聚焦分屏：向下");
     public static string ToggleReadOnly => Pick("Toggle Read-Only Mode", "切换只读模式");
+    public static string ReadOnlyStatus => Pick("Read-Only", "只读");
     public static string EqualizeSplits => Pick("Equalize Splits", "均分分屏");
     public static string ResizeSplitLeft => Pick("Resize Split Left", "调整分屏：向左");
     public static string ResizeSplitRight => Pick("Resize Split Right", "调整分屏：向右");
@@ -270,7 +290,7 @@ public static class Strings
     // ---- debug & config ----
     public static string ResetWindowSize => Pick("Reset Window Size", "重置窗口大小");
     public static string ShowOnScreenKeyboard => Pick("Show On-Screen Keyboard", "显示屏幕键盘");
-    public static string OpenConfigOs => Pick("Open Config Using OS editor", "用系统编辑器打开配置");
+    public static string OpenConfigOs => Pick("Open Config Using OS Editor", "用系统编辑器打开配置");
     public static string OpenConfigNewWindow =>
         Pick("Open Config in New Terminal Window", "在新终端窗口中打开配置");
 
@@ -317,20 +337,20 @@ public static class Strings
             ? $"{name} 中的命令已完成（退出码 {exitCode}）"
             : $"Command finished in {name} (exit {exitCode})";
     }
-    public static string ReloadConfig => Pick("Reload configuration", "重新加载配置");
-    public static string OpenConfig => Pick("Open configuration file", "打开配置文件");
-    public static string OpenDiagnosticsLog => Pick("Open diagnostics log", "打开调试日志");
-    public static string CopyDiagnosticsLog => Pick("Copy diagnostics log", "复制调试日志");
-    public static string EnableCrashDumps => Pick("Enable crash dumps", "启用崩溃转储");
+    public static string ReloadConfig => Pick("Reload Configuration", "重新加载配置");
+    public static string OpenConfig => Pick("Open Configuration File", "打开配置文件");
+    public static string OpenDiagnosticsLog => Pick("Open Diagnostics Log", "打开调试日志");
+    public static string CopyDiagnosticsLog => Pick("Copy Diagnostics Log", "复制调试日志");
+    public static string EnableCrashDumps => Pick("Enable Crash Dumps", "启用崩溃转储");
 
-    public static string ChooseWindowTheme => Pick("Choose window theme\u2026", "选择窗口主题\u2026");
-    public static string WindowTheme => Pick("Window theme", "窗口主题");
-    public static string ChooseTheme => Pick("Choose theme\u2026", "选择主题\u2026");
+    public static string ChooseWindowTheme => Pick("Choose Window Theme\u2026", "选择窗口主题\u2026");
+    public static string WindowTheme => Pick("Window Theme", "窗口主题");
+    public static string ChooseTheme => Pick("Choose Theme\u2026", "选择主题\u2026");
     public static string Theme => Pick("Theme", "主题");
 
-    public static string TabBarTop => Pick("Move tab bar to top", "标签栏移到顶部");
-    public static string TabBarLeft => Pick("Move tab bar to left", "标签栏移到左侧");
-    public static string TabBarRight => Pick("Move tab bar to right", "标签栏移到右侧");
+    public static string TabBarTop => Pick("Tabs on Top", "标签栏在顶部");
+    public static string TabBarLeft => Pick("Tabs on Left", "标签栏在左侧");
+    public static string TabBarRight => Pick("Tabs on Right", "标签栏在右侧");
 
     public static string FollowSystem => Pick("System", "系统");
     public static string Light => Pick("Light", "浅色");
@@ -346,10 +366,10 @@ public static class Strings
     public static string HintBack => Pick("Backspace back", "Backspace 返回");
 
     public static string TapOn =>
-        Pick("Debug tap: on (records VT bytes)", "调试 tap：开（记录 VT 收发字节）");
+        Pick("Debug Tap: On (Records VT Bytes)", "调试 tap：开（记录 VT 收发字节）");
 
     public static string TapOff =>
-        Pick("Debug tap: off (records VT bytes)", "调试 tap：关（记录 VT 收发字节）");
+        Pick("Debug Tap: Off (Records VT Bytes)", "调试 tap：关（记录 VT 收发字节）");
 
     // ---- window buttons ----------------------------------------------------
 
@@ -359,12 +379,12 @@ public static class Strings
     public static string CloseWindow => Pick("Close", "关闭");
 
     /// <summary>The palette row that switches the pane layout.</summary>
-    public static string CompactOn => Pick("Compact mode: on", "紧凑模式：开");
-    public static string CompactOff => Pick("Compact mode: off", "紧凑模式：关");
+    public static string CompactOn => Pick("Compact Mode: On", "紧凑模式：开");
+    public static string CompactOff => Pick("Compact Mode: Off", "紧凑模式：关");
 
     // ---- automation names -------------------------------------------------
 
-    public static string CloseTab => Pick("Close tab", "关闭标签页");
+    public static string CloseTab => Pick("Close Tab", "关闭标签页");
 
     public static string TabName(string title) => Pick("Tab: ", "标签页: ") + title;
 }
