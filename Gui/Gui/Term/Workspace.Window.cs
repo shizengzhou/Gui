@@ -36,6 +36,13 @@ public sealed partial class Workspace
 
     private void OnHeaderPointerPressed(object sender, PointerRoutedEventArgs args)
     {
+        // Only a primary press moves the window. A right press on the strip belongs to
+        // whatever menu it shows and a middle press to nothing, so neither may capture the
+        // pointer or start the island moving; touch and pen report no button and still drag.
+        if (sender is not UIElement strip) return;
+        PointerPoint point = args.GetCurrentPoint(strip);
+        if (point.Properties.IsRightButtonPressed || point.Properties.IsMiddleButtonPressed) return;
+
         args.Handled = true;
         // The drop-down stays where its edge put it; dragging it would leave a gap behind.
         if (_quickTerminal) return;
@@ -49,7 +56,7 @@ public sealed partial class Workspace
         _lastHeaderPress = now;
         // The side layouts lift the island over the header strip, which stays click-through
         // there; the drag then starts on the sidebar instead.
-        (sender as UIElement)?.CapturePointer(args.Pointer);
+        strip.CapturePointer(args.Pointer);
         BeginDrag();
     }
 
