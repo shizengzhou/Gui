@@ -75,6 +75,18 @@ public sealed unsafe class TerminalRenderer
     private readonly Dictionary<(string Family, ushort Weight, bool Italic, int Codepoint), bool> _coverage = new();
 
     /// <summary>
+    /// Size factors for fallback families, from matching their ideograph to two cells. Cached
+    /// per family and face because measuring a layout is not free.
+    /// </summary>
+    private readonly Dictionary<(string Family, ushort Weight, bool Italic), float> _scales = new();
+
+    /// <summary>
+    /// Ink height of printable ASCII in the primary face, in DIPs. It stands in for the
+    /// ideograph width when the primary font has no ideograph, the way Ghostty estimates it.
+    /// </summary>
+    private float _asciiHeight;
+
+    /// <summary>
     /// Configured family chains per face (0 regular, 1 bold, 2 italic, 3 bold italic), primary
     /// first. Ghostty lets "font-family" repeat and uses the later entries as fallbacks.
     /// </summary>
@@ -226,6 +238,35 @@ public sealed unsafe class TerminalRenderer
 
     private static bool _fontsRegistered;
 
+    /// <summary>The ideograph Ghostty measures a fallback face against (CJK water, U+6C34).</summary>
+    private const int IdeographCodepoint = 0x6C34;
+
+    /// <summary>Guards a measurement gone wrong: a fallback may not shrink or grow without bound.</summary>
+    private const float MinScale = 0.5f;
+    private const float MaxScale = 2.5f;
+
+    /// <summary>
+    /// The locale every format carries. It decides which face DirectWrite falls back to for a
+    /// glyph the configured families lack: with an English locale a Han character comes back
+    /// from a Japanese face, which draws 门 with the stroke crossing the top bar.
+    /// </summary>
+    private static readonly string _glyphLocale = ResolveGlyphLocale();
+
+    private static string ResolveGlyphLocale()
+    {
+        string systemDefault = CultureInfo.CurrentUICulture.Name;
+        try
+        {
+            return FontLocale.ForGlyphFallback(
+                Windows.System.UserProfile.GlobalizationPreferences.Languages, systemDefault);
+        }
+        catch
+        {
+            // Without the language list the process locale is the best answer there is.
+            return systemDefault;
+        }
+    }
+
     public TerminalRenderer()
     {
         RegisterBundledFonts();
@@ -314,6 +355,8 @@ public sealed unsafe class TerminalRenderer
         {
             FontFamily = family,
             FontSize = size,
+            // See _glyphLocale: this is the only lever that reaches DirectWrite's fallback.
+            LocaleName = _glyphLocale,
             WordWrapping = CanvasWordWrapping.NoWrap,
             FontWeight = new Windows.UI.Text.FontWeight { Weight = weight },
             FontStyle = italic ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal,
@@ -447,6 +490,7 @@ public sealed unsafe class TerminalRenderer
         _segments.Clear();
         _coverage.Clear();
         _faces.Clear();
+        _scales.Clear();
 
         _resolvedFamily = FirstMonospace(_familyChains[0]) ??
                           FirstMonospace(DefaultFamilyCandidates) ?? "Consolas";
@@ -531,7 +575,18 @@ public sealed unsafe class TerminalRenderer
         if (_config is not null) offset -= _config.FontBaselineAdjust.Delta(_metrics.Height, _rasterizationScale);
         _textOffsetY = offset;
         _primaryBaseline = BaselineOf(layout);
+
+        // The primary font's ideograph width, which a fallback is scaled to. A programming
+        // font has no ideograph, so Ghostty estimates it from the printable ASCII ink height;
+        // measure that once per size change rather than per fallback family.
+        using var ascii = new CanvasTextLayout(CanvasDevice.GetSharedDevice(), PrintableAscii, _baseFormat, 0, 0);
+        _asciiHeight = (float)ascii.DrawBounds.Height;
+        if (_asciiHeight < 0.1f) _asciiHeight = _fontSize * 1.2f;
     }
+
+    /// <summary>The printable ASCII Ghostty measures the fallback scale against.</summary>
+    private const string PrintableAscii =
+        " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
     /// <summary>The distance from a layout's top to its first baseline, in DIPs.</summary>
     private static float BaselineOf(CanvasTextLayout layout)
@@ -554,9 +609,50 @@ public sealed unsafe class TerminalRenderer
         if (_formats.TryGetValue(cacheKey, out CanvasTextFormat? cached)) return cached;
 
         (ushort weight, bool slant, Windows.UI.Text.FontStretch stretch) = ResolveFace(key, resolved);
-        var format = CreateFormat(resolved, _fontSize, slant, weight, stretch);
+        float size = _fontSize * ScaleFor(resolved, weight, slant);
+        var format = CreateFormat(resolved, size, slant, weight, stretch);
         _formats[cacheKey] = format;
         return format;
+    }
+
+    /// <summary>
+    /// How much a fallback family is scaled so its ideograph fills the two cells a wide glyph
+    /// owns. Ghostty normalizes every fallback face by the same metric (its "ic", measured from
+    /// 水) against the primary face; a family without an ideograph, such as an emoji or symbol
+    /// font, keeps its own size.
+    /// </summary>
+    private float ScaleFor(string family, ushort weight, bool italic)
+    {
+        if (string.Equals(family, _resolvedFamily, StringComparison.Ordinal)) return 1f;
+
+        var key = (family, weight, italic);
+        if (_scales.TryGetValue(key, out float cached)) return cached;
+
+        float scale = 1f;
+        if (HasGlyph(family, weight, italic, IdeographCodepoint) == true)
+        {
+            try
+            {
+                using CanvasTextFormat format = CreateFormat(family, _fontSize, italic, weight);
+                using var layout = new CanvasTextLayout(CanvasDevice.GetSharedDevice(), "\u6C34", format, 0f, 0f);
+                double width = layout.LayoutBounds.Width;
+                if (width > 0.1)
+                {
+                    // The primary face has no ideograph of its own, so the target is Ghostty's
+                    // estimate for it: the smaller of the ASCII ink height and two cell widths.
+                    float target = MathF.Min(_asciiHeight, 2f * _cellAdvanceX);
+                    scale = Math.Clamp((float)(target / width), MinScale, MaxScale);
+                }
+            }
+            catch
+            {
+                // A face that cannot be measured keeps its own size; the glyph still draws.
+                scale = 1f;
+            }
+        }
+
+        _scales[key] = scale;
+        return scale;
     }
 
     private string FamilyFor(int key) => key == 0 ? _resolvedFamily : _familyChains[key][0];
@@ -762,6 +858,13 @@ public sealed unsafe class TerminalRenderer
         // path: DirectWrite's own fallback is better than probing every glyph.
         if (!CoversGrapheme(primary, face, grapheme, assumeWhenUnknown: true))
         {
+            // "❤️" asks for the emoji drawing, and the configured families are text faces: a
+            // CJK fallback's heart is monochrome, so taking it there would answer the wrong
+            // request. The system fallback knows the emoji font, so the grapheme is left to it.
+            // (Ghostty picks among its candidates by glyph presentation; Win2D has no way to
+            // ask a face whether its glyph for a codepoint is a colour one.)
+            if (EmojiPresentation.Asks(grapheme)) return primary;
+
             foreach (string family in fallbacks)
             {
                 if (CoversGrapheme(family, face, grapheme, assumeWhenUnknown: false)) return family;
@@ -780,7 +883,13 @@ public sealed unsafe class TerminalRenderer
         {
             int codepoint = CodepointAt(grapheme, i);
             if (IsIgnorableForCoverage(codepoint)) continue;
-            if (!HasGlyph(family, weight, italic, codepoint)) return false;
+
+            // A probe that threw says nothing about the glyph: fall back to the caller's
+            // policy (the primary keeps the glyph, a fallback is skipped) instead of
+            // pretending the frame covered it.
+            bool? covered = HasGlyph(family, weight, italic, codepoint);
+            if (covered is null) return assumeWhenUnknown;
+            if (!covered.Value) return false;
         }
         return true;
     }
@@ -791,29 +900,27 @@ public sealed unsafe class TerminalRenderer
         codepoint is >= 0xFE00 and <= 0xFE0F ||
         codepoint is >= 0xE0100 and <= 0xE01EF;
 
-    private bool HasGlyph(string family, ushort weight, bool italic, int codepoint)
+    private bool? HasGlyph(string family, ushort weight, bool italic, int codepoint)
     {
         var key = (family, weight, italic, codepoint);
         if (_coverage.TryGetValue(key, out bool cached)) return cached;
 
         if (_coverage.Count >= LayoutCacheCapacity) _coverage.Clear();
 
-        bool covered;
         CanvasFontFace? face = FindFace(family, weight, italic);
-        if (face is null)
+        if (face is null) return false;
+
+        bool covered;
+        try
         {
-            covered = false;
+            covered = face.HasCharacter((uint)codepoint);
         }
-        else
+        catch
         {
-            try
-            {
-                covered = face.HasCharacter((uint)codepoint);
-            }
-            catch
-            {
-                covered = true;
-            }
+            // DirectWrite could not answer. Remembering that as "has the glyph" would pin
+            // the codepoint to this family for the life of the window, so the answer is
+            // left uncached and asked again next time.
+            return null;
         }
 
         _coverage[key] = covered;
@@ -836,8 +943,9 @@ public sealed unsafe class TerminalRenderer
         }
         catch
         {
-            // Without the system collection every glyph is assumed covered.
-            face = null;
+            // The system collection could not be reached, so nothing was learned about this
+            // family: leave it uncached and ask again rather than pinning the answer.
+            return null;
         }
 
         _faces[key] = face;
@@ -1264,6 +1372,13 @@ public sealed unsafe class TerminalRenderer
         public required List<Run> Runs;
         public required List<ShapeCell> Shapes;
         public required List<BoxCell> Boxes;
+
+        /// <summary>
+        /// Cells each column of this row spans, from the library's own width (2 for a wide
+        /// glyph, 1 for its tail and for narrow text). Null while the row has no wide cell,
+        /// which is the case for every row of Latin text.
+        /// </summary>
+        public byte[]? Widths;
         public bool HasSelection;
         public GhosttyNative.GhosttyRenderStateRowSelection Selection;
     }
@@ -1376,6 +1491,10 @@ public sealed unsafe class TerminalRenderer
         // The iterator is only usable once it is bound to a render state.
         GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_ROW_ITERATOR, &rows);
 
+        // The viewport width in cells, which sizes the per-row width arrays below.
+        ushort viewportCols = 0;
+        GhosttyNative.ghostty_render_state_get(state, GhosttyNative.RS_COLS, &viewportCols);
+
         var rowRuns = new List<RowRuns>(64);
         string cursorText = string.Empty;
         Color cursorFg = defaultFg;
@@ -1423,6 +1542,7 @@ public sealed unsafe class TerminalRenderer
                 var boxes = new List<BoxCell>(0);
                 int col = 0;
                 bool spacer = false;
+                byte[]? widths = null;
 
                 while (GhosttyNative.ghostty_render_state_row_cells_next(cells))
                 {
@@ -1453,17 +1573,38 @@ public sealed unsafe class TerminalRenderer
 
                     // A double-width glyph sits in the first of its two cells and libghostty-vt
                     // leaves the second one empty. That empty cell must not turn into a space
-                    // inside the run, or the glyph after it drifts off the grid.
+                    // inside the run, or the glyph after it drifts off the grid. The library's
+                    // own width decides: a table kept here would miss emoji it calls wide (a
+                    // rocket, a mahjong tile) and the rest of the row would shift a cell left.
+                    // ASCII is never double width, so a row of Latin text pays nothing here.
+                    int kind = IsAsciiCell(text) ? -1 : CellWide(cells);
                     bool wide = false;
+                    int advance = 1;
                     if (spacer)
                     {
                         spacer = false;
                         text = string.Empty;
                     }
-                    else if (text.Length > 0 && WideText.IsWide(text))
+                    else if (kind is GhosttyNative.WIDE_WIDE or GhosttyNative.WIDE_SPACER_HEAD ||
+                             (kind < 0 && text.Length > 0 && WideText.IsWide(text)))
                     {
                         wide = true;
                         spacer = true;
+                        advance = 2;
+                    }
+                    else if (kind == GhosttyNative.WIDE_SPACER_TAIL)
+                    {
+                        // The trailing half of a wide glyph; its head carries the text.
+                        text = string.Empty;
+                    }
+
+                    // The wide run is drawn a grapheme at a time, so it needs the same widths.
+                    if (advance > 1 && widths is null)
+                        widths = new byte[Math.Max((int)viewportCols, col + 2)];
+                    if (widths is not null)
+                    {
+                        if (col >= widths.Length) Array.Resize(ref widths, Math.Max(col + 1, widths.Length * 2));
+                        widths[col] = (byte)advance;
                     }
 
                     Color textFg = DefaultFgFor(style, fg, bg, hasFg);
@@ -1578,6 +1719,7 @@ public sealed unsafe class TerminalRenderer
                     Runs = runs,
                     Shapes = shapes,
                     Boxes = boxes,
+                    Widths = widths,
                     HasSelection = hasSelection,
                     Selection = selection,
                 });
@@ -2162,19 +2304,21 @@ public sealed unsafe class TerminalRenderer
                     signature = (signature ^ (uint)run.Text.Length) * 16777619u;
 
                     int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
+                    // "font-shaping-break = cursor" (the default) draws the cells on either
+                    // side of the cursor as two layouts so a ligature cannot form across it.
+                    (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, row.ViewportY);
+
                     RunSegment[]? segments = SegmentsFor(run.Text, face);
                     if (segments is not null)
                     {
                         // Some graphemes need a fallback family, so each segment is
                         // placed on the grid instead of relying on the font advance.
-                        DrawSegmentRun(ds, run, segments, cellW, textY);
+                        // A segment is already a shaping break of its own; the one the
+                        // cursor falls inside is split again.
+                        DrawSegmentRun(ds, run, segments, split, splitCell, cellW, textY);
                     }
                     else
                     {
-                        // "font-shaping-break = cursor" (the default) draws the cells on
-                        // either side of the cursor as two layouts so a ligature cannot
-                        // form across it.
-                        (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, row.ViewportY);
                         if (split > 0 && split < run.Text.Length)
                         {
                             DrawTextRun(ds, run.Text[..split], run.Col * cellW, textY,
@@ -2191,7 +2335,7 @@ public sealed unsafe class TerminalRenderer
                 }
                 else
                 {
-                    DrawWideRun(ds, run, cellW, textY);
+                    DrawWideRun(ds, run, row.Widths, cellW, textY);
                 }
             }
 
@@ -3200,10 +3344,23 @@ public sealed unsafe class TerminalRenderer
     /// first grapheme occupies, so a fallback font's advance cannot shift the rest of the run.
     /// </summary>
     private void DrawSegmentRun(CanvasDrawingSession ds, Run run, RunSegment[] segments,
-        float cellW, float textY)
+        int split, int splitCell, float cellW, float textY)
     {
         foreach (RunSegment segment in segments)
         {
+            int end = segment.Index + segment.Length;
+
+            // The cursor falls inside this segment, so it is drawn as two layouts: the
+            // shaper must not join the cells on either side of it.
+            if (split > segment.Index && split < end)
+            {
+                DrawTextRun(ds, run.Text.Substring(segment.Index, split - segment.Index),
+                    (run.Col + segment.Cell) * cellW, textY, run.Fg, run.Bold, run.Italic, segment.Family);
+                DrawTextRun(ds, run.Text.Substring(split, end - split),
+                    (run.Col + splitCell) * cellW, textY, run.Fg, run.Bold, run.Italic, segment.Family);
+                continue;
+            }
+
             DrawTextRun(ds, run.Text.Substring(segment.Index, segment.Length),
                 (run.Col + segment.Cell) * cellW, textY, run.Fg, run.Bold, run.Italic, segment.Family);
         }
@@ -3211,9 +3368,11 @@ public sealed unsafe class TerminalRenderer
 
     /// <summary>
     /// Draws a run that contains double-width glyphs, placing every grapheme on its own cell
-    /// so a fallback font's advance cannot push the rest of the line off the grid.
+    /// so a fallback font's advance cannot push the rest of the line off the grid. Each
+    /// grapheme moves by the width the library gave its column; the table here is only the
+    /// answer when that column is not in the run's record.
     /// </summary>
-    private void DrawWideRun(CanvasDrawingSession ds, Run run, float cellW, float rowTop)
+    private void DrawWideRun(CanvasDrawingSession ds, Run run, byte[]? widths, float cellW, float rowTop)
     {
         int col = run.Col;
         int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
@@ -3226,8 +3385,37 @@ public sealed unsafe class TerminalRenderer
 
             DrawTextRun(ds, grapheme, col * cellW, rowTop, run.Fg, run.Bold, run.Italic,
                 FamilyForGrapheme(grapheme, face));
-            col += WideText.IsWide(grapheme) ? 2 : 1;
+
+            int advance = widths is not null && col >= 0 && col < widths.Length ? widths[col] : 0;
+            col += advance > 0 ? advance : WideText.IsWide(grapheme) ? 2 : 1;
         }
+    }
+
+    /// <summary>Whether a cell's text is plain ASCII, which is never double width.</summary>
+    private static bool IsAsciiCell(string text)
+    {
+        foreach (char ch in text)
+        {
+            if (ch >= 0x80) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The library's width for one render-state cell: narrow, wide, or one half of a wide
+    /// glyph. Returns -1 when it cannot answer, so the caller falls back to its own table.
+    /// </summary>
+    private static int CellWide(IntPtr cells)
+    {
+        ulong raw = 0;
+        if (GhosttyNative.ghostty_render_state_row_cells_get(cells, GhosttyNative.CELL_RAW, &raw) != GhosttyNative.SUCCESS)
+            return -1;
+
+        int kind = -1;
+        if (GhosttyNative.ghostty_cell_get(raw, GhosttyNative.CD_WIDE, &kind) != GhosttyNative.SUCCESS)
+            return -1;
+
+        return kind;
     }
 
     private static bool HasInk(string text)

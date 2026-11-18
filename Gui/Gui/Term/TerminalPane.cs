@@ -263,6 +263,13 @@ public sealed class TerminalPane
         public bool ReleasePending;
     }
 
+    /// <summary>
+    /// A high surrogate whose low half has not arrived yet. WinUI hands a character outside the
+    /// BMP (an emoji, a rare CJK ideograph) to the text box as two edits, so the halves reach
+    /// this pane as two commits; the first one is held here until the second completes it.
+    /// </summary>
+    private char _pendingSurrogate;
+
     /// <summary>True blocks keyboard input, IME text and pasting ("Toggle Read-Only Mode").</summary>
     public bool ReadOnly;
 
@@ -2824,6 +2831,7 @@ public sealed class TerminalPane
     {
         _sentKeys.Clear();
         _pendingText = null;
+        _pendingSurrogate = '\0';
     }
 
     private void RememberKey(VirtualKey pressed, int key, int mods, uint unshifted)
@@ -2833,10 +2841,16 @@ public sealed class TerminalPane
 
     public void CommitText(string text)
     {
-        if (!_ready || _session is null || text.Length == 0) return;
+        if (!_ready || _session is null) return;
         if (ReadOnly) return;
         // IME commits are keyboard input too ("vt-kam-allowed").
         if (KamBlocksKeyboard()) return;
+
+        // The two halves of a surrogate pair arrive as two commits; joining them here keeps
+        // the shell from seeing U+FFFD where the pair should have been.
+        text = Surrogates.Join(text, ref _pendingSurrogate);
+        if (text.Length == 0) return;
+
         HidePointer();
         ClearBellState();
         ClearSelectionOnTyping();
