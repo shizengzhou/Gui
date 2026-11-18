@@ -2228,7 +2228,7 @@ public sealed class Config
     /// "notify-on-command-finish-after" durations: numbers with unit suffixes, added
     /// together ("1h30m", "45s", "500ms"). An unparsable value keeps the default.
     /// </summary>
-    private static TimeSpan ParseDuration(string? value, TimeSpan fallback)
+    internal static TimeSpan ParseDuration(string? value, TimeSpan fallback)
     {
         if (string.IsNullOrWhiteSpace(value)) return fallback;
 

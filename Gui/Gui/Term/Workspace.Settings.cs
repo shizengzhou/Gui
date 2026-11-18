@@ -931,6 +931,8 @@ public sealed partial class Workspace
     {
         var page = SettingsPageStack();
 
+        Config stored = Config.Load();
+
         int mode = _config.NotifyOnCommandFinish switch
         {
             "always" => 2,
@@ -946,12 +948,15 @@ public sealed partial class Workspace
                 _ => "unfocused",
             }));
 
-        NumberBox after = SettingsNumber(
-            Math.Round(_config.NotifyOnCommandFinishAfter.TotalSeconds), 0, 3600,
+        TextBox after = SettingsText(
+            StoredValue(stored, "notify-on-command-finish-after"), "5s", 100,
             ApplyNotifyAfterChoice);
 
         page.Children.Add(SettingsGroup(Strings.SettingsNotifyCommand, SettingsCard(
             SettingsRow(Strings.SettingsNotifyOnFinish, Strings.SettingsNotifyOnFinishDescription, when),
+            SettingsRow(Strings.SettingsNotifyAfter, null, after))));
+
+        page.Children.Add(SettingsGroup(Strings.SettingsNotifyAction, SettingsCard(
             SettingsRow(Strings.SettingsNotifyBell, null,
                 SettingsSwitch(_config.NotifyOnCommandFinishBell, on =>
                 {
@@ -963,29 +968,40 @@ public sealed partial class Workspace
                 {
                     _config.NotifyOnCommandFinishToast = on;
                     SaveNotifyAction();
-                })),
-            SettingsRow(Strings.SettingsNotifyAfter, null, SettingsUnit(after, "s")))));
+                })))));
 
         page.Children.Add(SettingsGroup(Strings.SettingsDesktopNotifications, SettingsCard(
             SettingsRow(Strings.SettingsDesktopNotificationsAllow,
                 Strings.SettingsDesktopNotificationsDescription,
                 SettingsSwitch(_config.DesktopNotifications, ApplyDesktopNotificationsChoice)))));
 
-        NumberBox volume = SettingsNumber(
-            Math.Round(_config.BellAudioVolume * 100), 0, 100, ApplyBellVolumeChoice);
+        // The path and volume are only meaningful with "bell-features = audio", so the whole
+        // group follows that switch (the switch flips its Visibility below). Declared first so
+        // the audio switch's handler can capture it.
+        FrameworkElement bellAudioGroup = SettingsGroup(Strings.SettingsBellAudioGroup, SettingsCard(
+            SettingsRow(Strings.SettingsBellAudioPath, null, BellAudioPathRow()),
+            SettingsRow(Strings.SettingsBellVolume, null,
+                SettingsUnit(SettingsNumber(
+                    Math.Round(_config.BellAudioVolume * 100), 0, 100, ApplyBellVolumeChoice), "%"))));
+        bellAudioGroup.Visibility = _config.BellAudio ? Visibility.Visible : Visibility.Collapsed;
 
         page.Children.Add(SettingsGroup(Strings.SettingsBell, SettingsCard(
             SettingsRow(Strings.SettingsBellSystem, null,
                 BellFeatureSwitch(_config.BellSystem, on => _config.BellSystem = on)),
             SettingsRow(Strings.SettingsBellAudio, null,
-                BellFeatureSwitch(_config.BellAudio, on => _config.BellAudio = on)),
+                BellFeatureSwitch(_config.BellAudio, on =>
+                {
+                    _config.BellAudio = on;
+                    bellAudioGroup.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+                })),
             SettingsRow(Strings.SettingsBellAttention, null,
                 BellFeatureSwitch(_config.BellAttention, on => _config.BellAttention = on)),
             SettingsRow(Strings.SettingsBellTitle, null,
                 BellFeatureSwitch(_config.BellTitle, on => _config.BellTitle = on)),
             SettingsRow(Strings.SettingsBellBorder, null,
-                BellFeatureSwitch(_config.BellBorder, on => _config.BellBorder = on)),
-            SettingsRow(Strings.SettingsBellVolume, null, SettingsUnit(volume, "%")))));
+                BellFeatureSwitch(_config.BellBorder, on => _config.BellBorder = on)))));
+
+        page.Children.Add(bellAudioGroup);
 
         return page;
     }
@@ -996,6 +1012,75 @@ public sealed partial class Workspace
             set(on);
             SaveBellFeatures();
         });
+
+    /// <summary>Path display with Browse/Remove, like the background image field.</summary>
+    private FrameworkElement BellAudioPathRow()
+    {
+        TextBlock path = Label(
+            _config.BellAudioPath.Length > 0 ? _config.BellAudioPath : "—", 10.5, TextFaintBrush());
+        path.MaxWidth = 150;
+        path.TextTrimming = TextTrimming.CharacterEllipsis;
+
+        Border remove = SettingsTextButton(Strings.SettingsRemove, () =>
+        {
+            path.Text = "—";
+            ApplyBellAudioPathChoice(string.Empty);
+        });
+        remove.Visibility = _config.BellAudioPath.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        Border browse = SettingsTextButton(Strings.SettingsBrowse, async () =>
+        {
+            string? picked = await PickBellAudioAsync();
+            if (picked is null) return;
+            path.Text = picked;
+            remove.Visibility = Visibility.Visible;
+            ApplyBellAudioPathChoice(picked);
+        });
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        actions.Children.Add(path);
+        actions.Children.Add(browse);
+        actions.Children.Add(remove);
+        return actions;
+    }
+
+    private async System.Threading.Tasks.Task<string?> PickBellAudioAsync()
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker
+            {
+                SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.MusicLibrary,
+            };
+            picker.FileTypeFilter.Add(".wav");
+            picker.FileTypeFilter.Add(".mp3");
+            picker.FileTypeFilter.Add(".m4a");
+            picker.FileTypeFilter.Add(".ogg");
+            picker.FileTypeFilter.Add(".flac");
+            if (_hwnd != IntPtr.Zero) WinRT.Interop.InitializeWithWindow.Initialize(picker, _hwnd);
+
+            Windows.Storage.StorageFile? file = await picker.PickSingleFileAsync();
+            return file?.Path;
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.PickBellAudio", error);
+            return null;
+        }
+    }
+
+    private void ApplyBellAudioPathChoice(string path)
+    {
+        _config.BellAudioPath = path;
+        Config.SaveValue("bell-audio-path", path);
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane => pane.SyncConfig(_config));
+    }
 
     private void ApplyNotifyMode(string mode)
     {
@@ -1014,11 +1099,11 @@ public sealed partial class Workspace
         Config.SaveValue("notify-on-command-finish-action", action);
     }
 
-    private void ApplyNotifyAfterChoice(double seconds)
+    private void ApplyNotifyAfterChoice(string value)
     {
-        _config.NotifyOnCommandFinishAfter = TimeSpan.FromSeconds(seconds);
-        Config.SaveValue("notify-on-command-finish-after",
-            seconds.ToString("0.##", CultureInfo.InvariantCulture) + "s");
+        Config.SaveValue("notify-on-command-finish-after", value);
+        _config.NotifyOnCommandFinishAfter =
+            Config.ParseDuration(value, TimeSpan.FromSeconds(5));
     }
 
     private void ApplyDesktopNotificationsChoice(bool enabled)

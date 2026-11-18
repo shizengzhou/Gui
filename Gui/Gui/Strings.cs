@@ -186,8 +186,9 @@ public static class Strings
     public static string SettingsSelection => Pick("Selection", "选择");
     public static string SettingsCopyOnSelect => Pick("Copy on select", "选中即复制");
 
-    public static string SettingsNotifyCommand => Pick("Command notifications", "命令通知");
-    public static string SettingsNotifyOnFinish => Pick("Notify when a command finishes", "命令结束时通知");
+    public static string SettingsNotifyCommand => Pick("Notify", "命令通知");
+    public static string SettingsNotifyAction => Pick("Notify on command finish action", "命令结束时通知动作");
+    public static string SettingsNotifyOnFinish => Pick("Notify on command finish", "命令结束时通知");
     public static string SettingsNotifyOnFinishDescription => Pick(
         "Reads the OSC 133 D report from the shell integration. \"Unfocused\" only fires while the pane or the window is in the background.",
         "依赖 shell 集成上报的 OSC 133 D。选择“未聚焦时”只在窗格或窗口处于后台时通知。");
@@ -195,20 +196,22 @@ public static class Strings
     public static string SettingsNotifyUnfocused => Pick("Unfocused", "未聚焦时");
     public static string SettingsNotifyAlways => Pick("Always", "总是");
     public static string SettingsNotifyBell => Pick("Bell", "响铃");
-    public static string SettingsNotifyToast => Pick("System notification", "系统通知");
-    public static string SettingsNotifyAfter => Pick("Minimum runtime", "最短运行时长");
+    public static string SettingsNotifyToast => Pick("System", "系统通知");
+    public static string SettingsNotifyAfter => Pick("Notify on command finish after", "命令运行多长时间后才通知");
     public static string SettingsDesktopNotifications => Pick("Desktop notifications", "桌面通知");
     public static string SettingsDesktopNotificationsAllow => Pick(
         "Allow programs to send notifications", "允许程序发送通知");
     public static string SettingsDesktopNotificationsDescription => Pick(
         "Allow programs to raise a notification with OSC 9 or OSC 777.",
         "允许程序通过 OSC 9 / OSC 777 发起通知。");
-    public static string SettingsBell => Pick("Bell", "提示音");
-    public static string SettingsBellSystem => Pick("System beep", "系统提示音");
+    public static string SettingsBell => Pick("Bell features", "提示音");
+    public static string SettingsBellSystem => Pick("System", "系统提示音");
     public static string SettingsBellAudio => Pick("Custom audio file", "自定义音频");
     public static string SettingsBellAttention => Pick("Flash the taskbar", "任务栏闪烁");
     public static string SettingsBellTitle => Pick("Mark the title", "标题标记");
     public static string SettingsBellBorder => Pick("Highlight the pane border", "高亮窗格边框");
+    public static string SettingsBellAudioGroup => Pick("Bell audio", "响铃音频");
+    public static string SettingsBellAudioPath => Pick("Audio file", "音频文件");
     public static string SettingsBellVolume => Pick("Volume", "音量");
 
     public static string SettingsKeysUnbound => Pick("None", "未绑定");
