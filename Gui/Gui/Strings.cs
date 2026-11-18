@@ -95,6 +95,7 @@ public static class Strings
     public static string Paste => Pick("Paste", "粘贴");
 
     // ---- main menu ----
+    public static string MainMenu => Pick("Main Menu", "主菜单");
     public static string FileMenu => Pick("File", "文件");
     public static string EditMenu => Pick("Edit", "编辑");
     public static string ViewMenu => Pick("View", "视图");
@@ -219,6 +220,9 @@ public static class Strings
     // ---- search ----
     public static string StartSearch => Pick("Start Search", "开始搜索");
     public static string SearchSelection => Pick("Search Selection", "搜索选中内容");
+    public static string SearchPrevious => Pick("Previous Match", "上一个匹配");
+    public static string SearchNext => Pick("Next Match", "下一个匹配");
+    public static string SearchClose => Pick("Close Search", "关闭搜索");
     public static string EndSearch => Pick("End Search", "结束搜索");
     public static string NextSearchResult => Pick("Next Search Result", "下一个搜索结果");
     public static string PreviousSearchResult => Pick("Previous Search Result", "上一个搜索结果");

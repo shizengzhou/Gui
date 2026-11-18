@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
@@ -774,6 +775,9 @@ public sealed partial class Workspace
             if (tab.ChipText.Text != tab.Title)
             {
                 tab.ChipText.Text = tab.Title;
+                // The chip is drawn on a Border, so its title has to be given to the shell
+                // that can take focus for it.
+                AutomationProperties.SetName(tab.ChipFocus, tab.Title);
                 PinChipTitleWidth(tab);
             }
             // Active chips merge into the content island (app theme); inactive ones sit on
@@ -835,6 +839,17 @@ public sealed partial class Workspace
 
             tab.Chip.Background = active ? TermBgBrush()
                 : tab.Hovered ? ChromeChipHoverBrush() : ClearBrush();
+
+            // The × sits on the chip's own fill, so its grey has to follow that fill: the
+            // terminal surface while the tab is active, the window strip otherwise. Reading
+            // it from the window alone left a dark × on a dark chip as soon as the window
+            // and the terminal theme disagreed.
+            tab.ChipClose.SetColors(
+                active ? Theme.PaneIconFaint : Theme.ChromeIconFaint,
+                active ? Theme.PaneIconStrong : Theme.ChromeIconBody,
+                // A neutral hover, like the chip's own: red belongs to the window's close
+                // caption, not to closing a tab.
+                hoverFill: active ? Theme.CloseButtonHover : Theme.ChromeCloseButtonHover);
 
             // Keep the button in the layout so hovering never changes the tab width; only
             // its opacity and hit testing follow the hover state.

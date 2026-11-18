@@ -82,7 +82,7 @@ public sealed partial class Workspace
 
         /// <summary>OSC 7501 status dot on the shell icon (blocked, failed, done, working).</summary>
         public Ellipse ChipStatusDot = null!;
-        public Border ChipClose = null!;
+        public ChromeButton ChipClose = null!;
         public Border ChipDivider = null!;
         public ContentControl ChipFocus = null!;
         public TextBlock ChipTipText = null!;
@@ -223,7 +223,8 @@ public sealed partial class Workspace
     private Border _contentCard = null!;
     private Grid _contentStack = null!;
     private FontIcon? _maximizeIcon;
-    private Border? _closeCaption;
+    private ChromeButton? _closeCaption;
+    private ChromeButton? _maximizeCaption;
     private TextBlock? _minimizeTip;
     private TextBlock? _maximizeTip;
     private TextBlock? _closeTip;
@@ -293,6 +294,9 @@ public sealed partial class Workspace
     // update the Color of these instances, and every element that captured a brush
     // repaints with the new palette.
     private readonly List<(Func<Color> Color, SolidColorBrush Brush)> _themedBrushes = new();
+
+    /// <summary>Chrome buttons, so a theme change repaints their hover and pressed fills.</summary>
+    private readonly List<ChromeButton> _chromeButtons = new();
     private FontFamily? _defaultTitleFont;
 
     private readonly List<ChipSpring> _chipSprings = new();
@@ -916,6 +920,18 @@ public sealed partial class Workspace
         foreach (var entry in _themedBrushes)
             entry.Brush.Color = entry.Color();
 
+        // A rebuilt page leaves its old buttons behind; drop them as they go.
+        for (int i = _chromeButtons.Count - 1; i >= 0; i--)
+        {
+            ChromeButton button = _chromeButtons[i];
+            if (button.Parent is null && button.XamlRoot is null)
+            {
+                _chromeButtons.RemoveAt(i);
+                continue;
+            }
+            button.ApplyTheme();
+        }
+
         // Tooltips own shared brushes too; recolor them with the same pass.
         Tips.RefreshBrushes();
     }
@@ -951,7 +967,6 @@ public sealed partial class Workspace
     /// </summary>
     private Brush SurfaceIconFaintBrush() => ThemedBrush(Theme.PaneIconFaint);
     private Brush ChromeChipHoverBrush() => ThemedBrush(Theme.ChromeChipHover);
-    private Brush ChromeCloseButtonHoverBrush() => ThemedBrush(Theme.ChromeCloseButtonHover);
     private Brush ChromeStrokeBrush() => ThemedBrush(Theme.ChromeStroke);
     private Brush ChromeHeaderFillBrush() => ThemedBrush(Theme.ChromeHeaderFill);
     private Brush CloseHoverBrush() => ThemedBrush(Theme.CloseHover);
@@ -1037,8 +1052,12 @@ public sealed partial class Workspace
     /// chrome reads consistently. Returns the label so the maximize button can follow the
     /// window state.
     /// </summary>
-    private static TextBlock CaptionTip(Border button, string text) =>
-        Tips.Set(button, text).Title;
+    private static TextBlock CaptionTip(ChromeButton button, string text)
+    {
+        TextBlock title = Tips.Set(button, text).Title;
+        button.SetAccessibleName(text);
+        return title;
+    }
 
     /// <summary>
     /// Labels the three window buttons; the middle one says "maximize" or "restore"
@@ -1054,6 +1073,7 @@ public sealed partial class Workspace
                          _window.AppWindow.Presenter is OverlappedPresenter presenter &&
                          presenter.State == OverlappedPresenterState.Maximized;
         _maximizeTip.Text = maximized ? Strings.Restore : Strings.Maximize;
+        _maximizeCaption?.SetAccessibleName(_maximizeTip.Text);
     }
 
     private void UpdateCloseCorner()
@@ -1071,52 +1091,41 @@ public sealed partial class Workspace
             : new CornerRadius(0);
     }
 
-    private Border CaptionButton(char code, double width, double height, Brush glyphBrush)
+    private ChromeButton CaptionButton(char code, double width, double height, Func<Color> icon)
     {
-        return new Border
-        {
-            Width = width,
-            Height = height,
-            CornerRadius = new CornerRadius(0),
-            // A null background is not hit-testable, so hover would only fire on the small
-            // glyph in the middle. A transparent brush keeps the whole button hoverable.
-            Background = ClearBrush(),
-            Child = Glyph(code, 10, glyphBrush),
-        };
+        var button = new ChromeButton(Glyph(code, 10, ThemedBrush(icon)), width, height, new CornerRadius(0));
+        button.SetColors(icon, Theme.ChromeIconStrong, hoverFill: Theme.ChromeChipHover);
+        _chromeButtons.Add(button);
+        return button;
     }
 
-    private Border ToolButton(char code, Brush foreground)
+    private ChromeButton ToolButton(char code, Func<Color> icon, Func<Color> hoverFill)
     {
-        return new Border
+        var button = new ChromeButton(Glyph(code, 13, ThemedBrush(icon)), ToolButtonWidth, ToolButtonHeight,
+            new CornerRadius(Theme.RadiusField))
         {
-            Width = ToolButtonWidth,
-            Height = ToolButtonHeight,
-            CornerRadius = new CornerRadius(Theme.RadiusField),
-            Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
-            Child = Glyph(code, 13, foreground),
         };
+        button.SetColors(icon, hoverFill: hoverFill);
+        _chromeButtons.Add(button);
+        return button;
     }
-
-    private Border ToolButton(char code) => ToolButton(code, ChromeIconFaintBrush());
 
     /// <summary>
     /// Hover label for a rail tool button: the action's name above its key chord.
     /// </summary>
-    private void RailTip(Border button, string title, string actionId, string fallback) =>
+    private void RailTip(ChromeButton button, string title, string actionId, string fallback) =>
         Tips.Set(button, title, _keybinds.Label(actionId, fallback));
 
-    private Border ToolButton(Path icon)
+    private ChromeButton ToolButton(Path icon, Func<Color> iconColor, Func<Color> hoverFill)
     {
-        return new Border
+        var button = new ChromeButton(icon, ToolButtonWidth, ToolButtonHeight, new CornerRadius(Theme.RadiusField))
         {
-            Width = ToolButtonWidth,
-            Height = ToolButtonHeight,
-            CornerRadius = new CornerRadius(Theme.RadiusField),
-            Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
-            Child = icon,
         };
+        button.SetColors(iconColor, hoverFill: hoverFill);
+        _chromeButtons.Add(button);
+        return button;
     }
 
     /// <summary>
@@ -1188,28 +1197,6 @@ public sealed partial class Workspace
             StrokeEndLineCap = PenLineCap.Round,
             IsHitTestVisible = false,
             Data = geometry,
-        };
-    }
-
-    /// <summary>Swaps the background on hover; the over-brush is resolved live from the theme.</summary>
-    private void Hoverable(Border element, Func<Brush> over)
-    {
-        element.PointerEntered += (_, _) => element.Background = over();
-        element.PointerExited += (_, _) => element.Background = ClearBrush();
-    }
-
-    private void CaptionHover(Border button, Func<Brush> overFill, Func<Brush> overIcon)
-    {
-        var icon = button.Child as FontIcon;
-        button.PointerEntered += (_, _) =>
-        {
-            button.Background = overFill();
-            if (icon is not null) icon.Foreground = overIcon();
-        };
-        button.PointerExited += (_, _) =>
-        {
-            button.Background = ClearBrush();
-            if (icon is not null) icon.Foreground = ChromeIconBodyBrush();
         };
     }
 
@@ -1615,31 +1602,20 @@ public sealed partial class Workspace
                 Margin = new Thickness(4, 0, 4, 4),
             };
 
-            Border add = ToolButton('\uE710', ChromeIconFaintBrush());
+            ChromeButton add = ToolButton('\uE710', Theme.ChromeIconFaint, Theme.ChromeChipHover);
             add.Width = 28;
-            Hoverable(add, ChromeChipHoverBrush);
             RailTip(add, Strings.NewTab, "new_tab", "Ctrl+Shift+T");
-            add.PointerPressed += (_, args) =>
-            {
-                args.Handled = true;
-                if (!IsPrimaryPress(args, add)) return;
-                RequestNewTab();
-            };
+            add.SetAccessibleName(Strings.NewTab);
+            add.Click += (_, _) => RequestNewTab();
             topTools.Children.Add(add);
 
             // The hamburger holds the window's main menu (File, command palette, settings,
-            // exit). It opens on release: a flyout shown while the button is still down is
-            // dismissed by the same press.
-            Border mainMenu = ToolButton('\uE712', ChromeIconFaintBrush());
+            // exit). A button raises Click on release, which is what a flyout needs: one shown
+            // while the button is still down is dismissed by the same press.
+            ChromeButton mainMenu = ToolButton('\uE712', Theme.ChromeIconFaint, Theme.ChromeChipHover);
             mainMenu.Width = 28;
-            Hoverable(mainMenu, ChromeChipHoverBrush);
-            mainMenu.PointerPressed += (_, args) => args.Handled = true;
-            mainMenu.PointerReleased += (_, args) =>
-            {
-                args.Handled = true;
-                if (!IsPrimaryRelease(args, mainMenu)) return;
-                BuildMainMenu().ShowAt(mainMenu);
-            };
+            mainMenu.SetAccessibleName(Strings.MainMenu);
+            mainMenu.Click += (_, _) => BuildMainMenu().ShowAt(mainMenu);
             topTools.Children.Add(mainMenu);
 
             Grid.SetColumn(topTools, 1);
@@ -1669,14 +1645,10 @@ public sealed partial class Workspace
             };
 
             // The panel glyph shows the tab rail on the side it lives on.
-            Border sideToggle = ToolButton(PanelIcon(ChromeIconFaintBrush(), 14, !railRight));
-            Hoverable(sideToggle, ChromeChipHoverBrush);
-            sideToggle.PointerPressed += (_, args) =>
-            {
-                args.Handled = true;
-                if (!IsPrimaryPress(args, sideToggle)) return;
-                SetSidebarCollapsed(false);
-            };
+            ChromeButton sideToggle = ToolButton(PanelIcon(ChromeIconFaintBrush(), 14, !railRight),
+                Theme.ChromeIconFaint, Theme.ChromeChipHover);
+            sideToggle.SetAccessibleName(Strings.ToggleSidebar);
+            sideToggle.Click += (_, _) => SetSidebarCollapsed(false);
             _headerSideTools.Children.Add(sideToggle);
 
             Grid.SetColumn(_headerSideTools, 0);
@@ -1705,15 +1677,15 @@ public sealed partial class Workspace
             Margin = new Thickness(0),
         };
 
-        Border minimize = CaptionButton('\uE921', CaptionButtonWidth, headerHeight, ChromeIconBodyBrush());
-        Border maximize = CaptionButton('\uE922', CaptionButtonWidth, headerHeight, ChromeIconBodyBrush());
-        Border close = CaptionButton('\uE8BB', CaptionButtonWidth, headerHeight, ChromeIconBodyBrush());
-        _maximizeIcon = maximize.Child as FontIcon;
+        ChromeButton minimize = CaptionButton('\uE921', CaptionButtonWidth, headerHeight, Theme.ChromeIconBody);
+        ChromeButton maximize = CaptionButton('\uE922', CaptionButtonWidth, headerHeight, Theme.ChromeIconBody);
+        ChromeButton close = CaptionButton('\uE8BB', CaptionButtonWidth, headerHeight, Theme.ChromeIconBody);
+        // The close button is the one caption that goes white on its own hover fill.
+        close.SetColors(Theme.ChromeIconBody, () => Colors.White, hoverFill: Theme.CloseHover);
+        _maximizeIcon = maximize.Content as FontIcon;
+        _maximizeCaption = maximize;
         _closeCaption = close;
         UpdateCloseCorner();
-        CaptionHover(minimize, ChromeChipHoverBrush, ChromeIconStrongBrush);
-        CaptionHover(maximize, ChromeChipHoverBrush, ChromeIconStrongBrush);
-        CaptionHover(close, CloseHoverBrush, () => new SolidColorBrush(Colors.White));
 
         // The three window buttons carry the same one-line hover label the pane actions use.
         _minimizeTip = CaptionTip(minimize, Strings.Minimize);
@@ -1721,22 +1693,10 @@ public sealed partial class Workspace
         _closeTip = CaptionTip(close, Strings.CloseWindow);
         UpdateCaptionTips();
 
-        minimize.PointerPressed += (_, args) =>
+        minimize.Click += (_, _) => MinimizeWindow();
+        maximize.Click += (_, _) => ToggleMaximize();
+        close.Click += (_, _) =>
         {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, minimize)) return;
-            MinimizeWindow();
-        };
-        maximize.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, maximize)) return;
-            ToggleMaximize();
-        };
-        close.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, close)) return;
             // Window.Close() does not raise AppWindow.Closing (that is only for system
             // affordances like Alt+F4), so the confirmation is requested from here. Posting
             // keeps the dialog out of the pointer dispatch.
@@ -1811,54 +1771,31 @@ public sealed partial class Workspace
 
         // The sidebar toggle is always a button of its own: collapsing the rail should never
         // require opening a menu.
-        Border collapse = ToolButton(PanelIcon(ChromeIconFaintBrush(), 14, _placement != TabPlacement.Right));
-        Hoverable(collapse, ChipHoverBrush);
+        ChromeButton collapse = ToolButton(PanelIcon(ChromeIconFaintBrush(), 14, _placement != TabPlacement.Right),
+            Theme.ChromeIconFaint, Theme.ChipHover);
         RailTip(collapse, Strings.ToggleSidebar, "toggle_sidebar", "Ctrl+Shift+B");
-        collapse.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, collapse)) return;
-            SetSidebarCollapsed(true);
-        };
+        collapse.SetAccessibleName(Strings.ToggleSidebar);
+        collapse.Click += (_, _) => SetSidebarCollapsed(true);
         tools.Children.Add(collapse);
 
-        Border add = ToolButton('\uE710');
-        Hoverable(add, ChipHoverBrush);
+        ChromeButton add = ToolButton('\uE710', Theme.ChromeIconFaint, Theme.ChipHover);
         RailTip(add, Strings.NewTab, "new_tab", "Ctrl+Shift+T");
-        add.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, add)) return;
-            Activate(IndexOf(NewTab()));
-        };
+        add.SetAccessibleName(Strings.NewTab);
+        add.Click += (_, _) => Activate(IndexOf(NewTab()));
         tools.Children.Add(add);
 
         // The hamburger opens the main menu here too; the rail's own new-tab button stays
         // next to it, so the menu only carries the shared items while the row has room.
-        Border mainMenu = ToolButton('\uE712');
-        Hoverable(mainMenu, ChipHoverBrush);
-        mainMenu.PointerPressed += (_, args) => args.Handled = true;
-        mainMenu.PointerReleased += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryRelease(args, mainMenu)) return;
-            BuildMainMenu().ShowAt(mainMenu);
-        };
+        ChromeButton mainMenu = ToolButton('\uE712', Theme.ChromeIconFaint, Theme.ChipHover);
+        mainMenu.SetAccessibleName(Strings.MainMenu);
+        mainMenu.Click += (_, _) => BuildMainMenu().ShowAt(mainMenu);
         tools.Children.Add(mainMenu);
 
         // When the rail's top row cannot hold the buttons, the new-tab action folds into the
         // overflow menu, where File > New tab still reaches it.
-        Border menu = ToolButton('\uE712');
-        Hoverable(menu, ChipHoverBrush);
-        // Opening on release: a flyout shown while the button is still down is dismissed by
-        // the same press.
-        menu.PointerPressed += (_, args) => args.Handled = true;
-        menu.PointerReleased += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryRelease(args, menu)) return;
-            BuildMainMenu().ShowAt(menu);
-        };
+        ChromeButton menu = ToolButton('\uE712', Theme.ChromeIconFaint, Theme.ChipHover);
+        menu.SetAccessibleName(Strings.MainMenu);
+        menu.Click += (_, _) => BuildMainMenu().ShowAt(menu);
         tools.Children.Add(menu);
 
         void UpdateRailTools()
@@ -2870,23 +2807,22 @@ public sealed partial class Workspace
         Grid.SetColumn(tab.ChipEditor, 1);
         chipGrid.Children.Add(tab.ChipEditor);
 
-        tab.ChipClose = new Border
+        tab.ChipClose = new ChromeButton(Glyph('\uE711', 10, ChromeIconFaintBrush()), 16, 16,
+            new CornerRadius(Theme.RadiusChip))
         {
-            Width = 16,
-            Height = 16,
-            CornerRadius = new CornerRadius(Theme.RadiusChip),
-            Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Child = Glyph('\uE711', 10, ChromeIconFaintBrush()),
         };
-        Hoverable(tab.ChipClose, ChromeCloseButtonHoverBrush);
-        tab.ChipClose.PointerPressed += (_, args) =>
+        tab.ChipClose.SetColors(Theme.ChromeIconFaint, hoverFill: Theme.ChromeCloseButtonHover);
+        // Only a primary click closes; a right press belongs to the tab menu, which the chip
+        // no longer sees once the button has handled the press.
+        tab.ChipClose.RightTapped += (_, args) =>
         {
-            // Only the left button closes; a right-click falls through to the chip so the
-            // tab menu opens instead of the tab disappearing.
-            if (!args.GetCurrentPoint(tab.ChipClose).Properties.IsLeftButtonPressed) return;
             args.Handled = true;
+            ShowTabMenu(self, args.GetPosition(self.Chip));
+        };
+        tab.ChipClose.Click += (_, _) =>
+        {
             // Removing the pressed chip from its panel inside this handler crashes WinUI;
             // close after the pointer event unwinds.
             _dispatcher?.TryEnqueue(() =>
@@ -2948,7 +2884,7 @@ public sealed partial class Workspace
         };
         tab.ChipFocus.KeyDown += (_, args) => OnChipKeyDown(self, args);
 
-        AutomationProperties.SetName(tab.ChipClose, Strings.CloseTab);
+        AutomationProperties.SetName(tab.ChipFocus, tab.Title);
         int index = append ? _tabs.Count : TabInsertIndex();
         _chipHost.Children.Insert(index, tab.ChipFocus);
 

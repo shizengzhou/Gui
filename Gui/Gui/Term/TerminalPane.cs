@@ -58,8 +58,8 @@ public sealed class TerminalPane
     /// <summary>OSC 7501 status dot on the header's shell icon, matching the tab chip.</summary>
     private Ellipse? _iconStatusDot;
     private Path? _zoomIcon;
-    private Border? _zoomButton;
-    private Border? _closeButton;
+    private ChromeButton? _zoomButton;
+    private ChromeButton? _closeButton;
     private StackPanel? _actions;
     private double _actionsInset = -1;
     private Grid? _info;
@@ -143,8 +143,6 @@ public sealed class TerminalPane
     private Border? _searchField;
     private TextBox? _searchBox;
     private TextBlock? _searchCount;
-    private SolidColorBrush? _searchGlyphBrush;
-    private SolidColorBrush? _searchGlyphHoverBrush;
     private DispatcherQueueTimer? _searchTimer;
     private bool _searchActive;
     private bool _searchSelectPending;
@@ -318,8 +316,7 @@ public sealed class TerminalPane
 
     private sealed class ActionVisual
     {
-        public Path Icon = null!;
-        public Border Button = null!;
+        public ChromeButton Button = null!;
         public TextBlock TipTitle = null!;
         public TextBlock TipKey = null!;
         public Func<string> Tip = () => string.Empty;
@@ -559,15 +556,15 @@ public sealed class TerminalPane
         Grid.SetColumn(_searchField, 0);
         searchRow.Children.Add(_searchField);
 
-        Border previous = SearchButton('\uE70E', () => NavigateSearch(false));
+        ChromeButton previous = SearchButton('\uE70E', Strings.SearchPrevious, () => NavigateSearch(false));
         Grid.SetColumn(previous, 1);
         searchRow.Children.Add(previous);
 
-        Border next = SearchButton('\uE70D', () => NavigateSearch(true));
+        ChromeButton next = SearchButton('\uE70D', Strings.SearchNext, () => NavigateSearch(true));
         Grid.SetColumn(next, 2);
         searchRow.Children.Add(next);
 
-        Border close = SearchButton('\uE711', HideSearch);
+        ChromeButton close = SearchButton('\uE711', Strings.SearchClose, HideSearch);
         Grid.SetColumn(close, 3);
         searchRow.Children.Add(close);
 
@@ -1114,36 +1111,19 @@ public sealed class TerminalPane
     private static bool IsPrimaryPress(PointerRoutedEventArgs args, UIElement element) =>
         args.GetCurrentPoint(element).Properties.IsLeftButtonPressed;
 
-    private Border AddAction(Path icon, Func<string> tip, string actionId, string shortcut, Action handler)
+    private ChromeButton AddAction(Path icon, Func<string> tip, string actionId, string shortcut, Action handler)
     {
-        var button = new Border
-        {
-            Width = 24,
-            Height = 24,
-            CornerRadius = new CornerRadius(Theme.RadiusControl),
-            Background = TransparentBrush(),
-            Child = icon,
-        };
+        var button = new ChromeButton(icon, 24, 24, new CornerRadius(Theme.RadiusControl));
+        // The pane's own palette: hover lifts the icon, which follows the terminal surface
+        // rather than the window chrome.
+        button.SetColors(Theme.PaneIconFaint, Theme.PaneIconStrong, hoverFill: Theme.ChipHover);
 
         // Hover tooltip: the action and the keys it is bound to.
         var (tipTitle, tipKey) = Tips.Set(button, tip(), _keybinds.Label(actionId, shortcut));
+        button.SetAccessibleName(tip());
 
-        // Hover colors are resolved from the current theme instead of captured brushes,
-        // so a theme switch cannot leave stale colors behind.
-        button.PointerEntered += (_, _) =>
+        button.Click += (_, _) =>
         {
-            button.Background = new SolidColorBrush(Theme.ChipHover());
-            icon.Stroke = new SolidColorBrush(Theme.PaneIconStrong());
-        };
-        button.PointerExited += (_, _) =>
-        {
-            button.Background = TransparentBrush();
-            icon.Stroke = new SolidColorBrush(Theme.PaneIconFaint());
-        };
-        button.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, button)) return;
             OnFocus?.Invoke(this);
             handler();
         };
@@ -1151,7 +1131,6 @@ public sealed class TerminalPane
         _actions!.Children.Add(button);
         _actionVisuals.Add(new ActionVisual
         {
-            Icon = icon,
             Button = button,
             TipTitle = tipTitle,
             TipKey = tipKey,
@@ -1163,48 +1142,19 @@ public sealed class TerminalPane
     }
 
     /// <summary>Small icon button used by the find bar (previous, next, close).</summary>
-    private Border SearchButton(char glyph, Action handler)
+    private ChromeButton SearchButton(char glyph, string name, Action handler)
     {
-        // Shared brushes, so ApplyTheme can recolor every find-bar glyph in place: a new
-        // brush captured here would keep the old theme's colour after a theme switch and
-        // could disappear against the new field.
-        _searchGlyphBrush ??= new SolidColorBrush(Theme.TextFaint());
-        _searchGlyphHoverBrush ??= new SolidColorBrush(Theme.TextStrong());
-
         var icon = new FontIcon
         {
             Glyph = glyph.ToString(),
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
             FontSize = Theme.FontSmall,
-            Foreground = _searchGlyphBrush,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
         };
-        var button = new Border
-        {
-            Width = 24,
-            Height = 24,
-            CornerRadius = new CornerRadius(Theme.RadiusChip),
-            Background = TransparentBrush(),
-            Child = icon,
-        };
-
-        button.PointerEntered += (_, _) =>
-        {
-            button.Background = new SolidColorBrush(Theme.ChipHover());
-            icon.Foreground = _searchGlyphHoverBrush;
-        };
-        button.PointerExited += (_, _) =>
-        {
-            button.Background = TransparentBrush();
-            icon.Foreground = _searchGlyphBrush;
-        };
-        button.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, button)) return;
-            handler();
-        };
+        var button = new ChromeButton(icon, 24, 24, new CornerRadius(Theme.RadiusChip));
+        // The find bar sits on the terminal surface, so its hover follows that palette.
+        button.SetColors(Theme.TextFaint, Theme.TextStrong, hoverFill: Theme.ChipHover);
+        button.SetAccessibleName(name);
+        button.Click += (_, _) => handler();
         return button;
     }
 
@@ -1452,7 +1402,11 @@ public sealed class TerminalPane
     public void ApplyLanguage()
     {
         foreach (ActionVisual action in _actionVisuals)
-            action.TipTitle.Text = action.Tip();
+        {
+            string title = action.Tip();
+            action.TipTitle.Text = title;
+            action.Button.SetAccessibleName(title);
+        }
     }
 
     private void OnFramePointerEntered(object sender, PointerRoutedEventArgs e) => SetHover(true);
@@ -2337,7 +2291,7 @@ public sealed class TerminalPane
     /// <summary>Zoom and close are disabled while the tab has a single pane.</summary>
     public void SetSinglePane(bool single)
     {
-        foreach (Border? button in new[] { _zoomButton, _closeButton })
+        foreach (ChromeButton? button in new[] { _zoomButton, _closeButton })
         {
             if (button is null) continue;
             button.Opacity = single ? 0.28 : 1.0;
@@ -2546,14 +2500,8 @@ public sealed class TerminalPane
 
         // The find-bar glyphs own shared brushes created when the bar was built; recolor
         // them here or they keep the previous theme's colour and vanish on a theme switch.
-        if (_searchGlyphBrush is not null) _searchGlyphBrush.Color = Theme.TextFaint();
-        if (_searchGlyphHoverBrush is not null) _searchGlyphHoverBrush.Color = Theme.TextStrong();
-
         foreach (ActionVisual action in _actionVisuals)
-        {
-            action.Icon.Stroke = new SolidColorBrush(Theme.PaneIconFaint());
-            action.Button.Background = TransparentBrush();
-        }
+            action.Button.ApplyTheme();
 
         ApplyFocusState();
 

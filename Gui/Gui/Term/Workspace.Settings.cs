@@ -242,14 +242,6 @@ public sealed partial class Workspace
 
         var panel = new StackPanel { Spacing = 2 };
 
-        var back = new Border
-        {
-            Height = 32,
-            CornerRadius = new CornerRadius(Theme.RadiusField),
-            Background = ClearBrush(),
-            Padding = new Thickness(10, 0, 10, 0),
-            Margin = new Thickness(0, 0, 0, 6),
-        };
         var backRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -258,30 +250,23 @@ public sealed partial class Workspace
         };
         backRow.Children.Add(Glyph('\uE72B', 14, SurfaceIconFaintBrush()));
         backRow.Children.Add(Label(Strings.SettingsBack, 12, TextBodyBrush()));
-        back.Child = backRow;
-        back.PointerEntered += (_, _) => back.Background = ChipHoverBrush();
-        back.PointerExited += (_, _) => back.Background = ClearBrush();
+
         // The page closes on release, not on press: collapsing it under the pointer would
-        // leave the release to hit-test whatever the page covered (a right-button release
-        // over a pane opens its context menu). The capture keeps press and release on this
-        // row even when the pointer drifts off it, and a release outside cancels the click
-        // the way a real button does.
-        back.PointerPressed += (_, args) =>
+        // leave the release to hit-test whatever the page covered. A button already works
+        // that way, so Click carries the whole rule.
+        var back = new ChromeButton(backRow, double.NaN, 32, new CornerRadius(Theme.RadiusField))
         {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, back)) return;
-            back.CapturePointer(args.Pointer);
+            Padding = new Thickness(10, 0, 10, 0),
+            Margin = new Thickness(0, 0, 0, 6),
+            // The row owns the whole column, like every other row in the nav: a button
+            // sized to its content would leave the hover fill hugging the label.
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
         };
-        back.PointerReleased += (_, args) =>
-        {
-            args.Handled = true;
-            back.ReleasePointerCapture(args.Pointer);
-            if (!IsPrimaryRelease(args, back)) return;
-            var point = args.GetCurrentPoint(back).Position;
-            if (point.X < 0 || point.Y < 0 ||
-                point.X > back.ActualWidth || point.Y > back.ActualHeight) return;
-            HideSettings();
-        };
+        back.SetColors(Theme.PaneIconFaint, hoverFill: Theme.ChipHover);
+        back.SetAccessibleName(Strings.SettingsBack);
+        back.Click += (_, _) => HideSettings();
+        _chromeButtons.Add(back);
         panel.Children.Add(back);
 
         panel.Children.Add(new TextBlock
@@ -299,14 +284,6 @@ public sealed partial class Workspace
         panel.Children.Add(SettingsNavItem("keys", '\uE765', Strings.SettingsNavKeys));
         panel.Children.Add(SettingsNavItem("about", '\uE946', Strings.SettingsNavAbout));
 
-        var foot = new Border
-        {
-            Height = 32,
-            CornerRadius = new CornerRadius(Theme.RadiusField),
-            Background = ClearBrush(),
-            Padding = new Thickness(10, 0, 10, 0),
-            Margin = new Thickness(0, 0, 0, 2),
-        };
         var footRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -315,15 +292,18 @@ public sealed partial class Workspace
         };
         footRow.Children.Add(Glyph('\uE8E5', 14, SurfaceIconFaintBrush()));
         footRow.Children.Add(Label(Strings.SettingsOpenConfig, 12, TextBodyBrush()));
-        foot.Child = footRow;
-        foot.PointerEntered += (_, _) => foot.Background = ChipHoverBrush();
-        foot.PointerExited += (_, _) => foot.Background = ClearBrush();
-        foot.PointerPressed += (_, args) =>
+
+        var foot = new ChromeButton(footRow, double.NaN, 32, new CornerRadius(Theme.RadiusField))
         {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, foot)) return;
-            OpenConfig();
+            Padding = new Thickness(10, 0, 10, 0),
+            Margin = new Thickness(0, 0, 0, 2),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
         };
+        foot.SetColors(Theme.PaneIconFaint, hoverFill: Theme.ChipHover);
+        foot.SetAccessibleName(Strings.SettingsOpenConfig);
+        foot.Click += (_, _) => OpenConfig();
+        _chromeButtons.Add(foot);
 
         // The foot sits at the bottom of the rail regardless of how many categories exist.
         var layout = new Grid();
