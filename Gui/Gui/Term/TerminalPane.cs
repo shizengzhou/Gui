@@ -3213,11 +3213,40 @@ public sealed class TerminalPane
         try
         {
             var view = Clipboard.GetContent();
+
+            // Copied files take precedence over clipboard text, like Ghostty: paste each
+            // path as one shell-safe token joined with spaces, so "ls <pasted>" works.
+            if (view.Contains(StandardDataFormats.StorageItems))
+            {
+                var paths = new List<string>();
+                try
+                {
+                    var items = await view.GetStorageItemsAsync();
+                    foreach (var item in items)
+                    {
+                        if (!string.IsNullOrEmpty(item.Path)) paths.Add(item.Path);
+                    }
+                }
+                catch (Exception error)
+                {
+                    // A clipboard can advertise StorageItems but fail to hand them over
+                    // (e.g. a virtual file or a source that released the data). Fall through
+                    // to the text path instead of losing the paste entirely.
+                    Diag.LogException("pane.pasteFiles", error);
+                }
+                if (paths.Count > 0)
+                {
+                    string files = ClipboardPaths.Join(paths);
+                    _session.PasteText(System.Text.Encoding.UTF8.GetBytes(files));
+                    return;
+                }
+            }
+
             string text = view.Contains(StandardDataFormats.Text) ? await view.GetTextAsync() : string.Empty;
             if (text.Length == 0)
             {
-                // Nothing to type, but the clipboard may hold an image or a file. Programs that
-                // read the clipboard themselves (Claude Code, codebuddy) take an empty bracketed
+                // Nothing to type, but the clipboard may hold an image. Programs that read
+                // the clipboard themselves (Claude Code, codebuddy) take an empty bracketed
                 // paste as "paste what you have" and read it on their own; VS Code's terminal
                 // sends it for the same reason. Without bracketed paste the program never asked.
                 if (view.AvailableFormats.Count > 0 && _session.BracketedPaste())
@@ -3236,9 +3265,10 @@ public sealed class TerminalPane
             }
             _session.PasteText(System.Text.Encoding.UTF8.GetBytes(normalized.ToString()));
         }
-        catch
+        catch (Exception error)
         {
             // Clipboard unavailable.
+            Diag.LogException("pane.paste", error);
         }
     }
 
