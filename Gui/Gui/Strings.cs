@@ -158,6 +158,18 @@ public static class Strings
     public static string SettingsCommandAuto => "pwsh/powershell/cmd";
     public static string SettingsWorkingDirectory => Pick("Working directory", "工作目录");
     public static string SettingsShellFeatures => Pick("Shell integration features", "Shell 集成特性");
+    public static string SettingsNewTabPosition => Pick("New tab position", "新标签页位置");
+    public static string SettingsNewTabPositionCurrent => Pick("After current", "当前之后");
+    public static string SettingsNewTabPositionEnd => Pick("At end", "末尾");
+    public static string SettingsTabInheritWorkingDirectory =>
+        Pick("Inherit working directory in new tabs", "新标签页继承工作目录");
+    public static string SettingsRightClickAction => Pick("Right-click action", "右键菜单");
+    public static string SettingsRightClickContextMenu => Pick("Context menu", "上下文菜单");
+    public static string SettingsRightClickPaste => Pick("Paste", "粘贴");
+    public static string SettingsRightClickCopy => Pick("Copy", "复制");
+    public static string SettingsRightClickCopyOrPaste =>
+        Pick("Copy or paste", "有选中则复制，否则粘贴");
+    public static string SettingsRightClickIgnore => Pick("Ignore", "忽略");
 
     public static string SettingsFont => Pick("Font", "字体");
     public static string SettingsFontFamily => Pick("Font family", "字体族");

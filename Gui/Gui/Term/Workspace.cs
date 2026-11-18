@@ -1277,10 +1277,12 @@ public sealed partial class Workspace
             AcceptsReturn = false,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
+            // The terminal draws its own right-click menu; the box's built-in copy/paste
+            // flyout (the "Paste / Ctrl+V" bar) must never appear over it. Setting the
+            // flyout to null is what actually suppresses it — ContextRequested.Handled
+            // alone does not stop TextBox's default menu.
+            ContextFlyout = null,
         };
-        // The terminal draws its own right-click menu; the box's built-in copy/paste menu
-        // must not appear on top of it.
-        _imeSink.ContextRequested += (_, args) => args.Handled = true;
         _root.Children.Add(_imeSink);
 
         // The sink sits above the whole window at the cursor cell. A press on it never

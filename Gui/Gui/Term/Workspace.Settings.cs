@@ -850,7 +850,14 @@ public sealed partial class Workspace
                     Config.SaveValue("working-directory", value);
                 })),
             SettingsRow(Strings.SettingsShellFeatures, null,
-                SettingsText(storedShellFeatures, "no-cursor", 260, ApplyShellFeatureList)))));
+                SettingsText(storedShellFeatures, "no-cursor", 260, ApplyShellFeatureList)),
+            SettingsRow(Strings.SettingsNewTabPosition, null,
+                SettingsSegmented(
+                    new[] { Strings.SettingsNewTabPositionCurrent, Strings.SettingsNewTabPositionEnd },
+                    _config.NewTabPosition == "end" ? 1 : 0,
+                    index => ApplyNewTabPositionChoice(index == 1 ? "end" : "current"))),
+            SettingsRow(Strings.SettingsTabInheritWorkingDirectory, null,
+                SettingsSwitch(_config.TabInheritWorkingDirectory, ApplyTabInheritWorkingDirectoryChoice)))));
 
         IReadOnlyList<string> families = MonospaceFontFamilies();
         ComboBox fontFamilies = SettingsEditableSelect(
@@ -894,9 +901,26 @@ public sealed partial class Workspace
             SettingsRow(Strings.SettingsCursorBlink, null,
                 SettingsSwitch(_config.CursorBlink != false, ApplyCursorBlinkChoice)))));
 
+        string[] rightClickActions =
+        {
+            Strings.SettingsRightClickContextMenu, Strings.SettingsRightClickPaste,
+            Strings.SettingsRightClickCopy, Strings.SettingsRightClickCopyOrPaste,
+            Strings.SettingsRightClickIgnore,
+        };
+        int rightClickIndex = _config.RightClickAction switch
+        {
+            "paste" => 1,
+            "copy" => 2,
+            "copy-or-paste" => 3,
+            "ignore" => 4,
+            _ => 0,
+        };
+
         page.Children.Add(SettingsGroup(Strings.SettingsSelection, SettingsCard(
             SettingsRow(Strings.SettingsCopyOnSelect, null,
-                SettingsSwitch(_config.CopyOnSelect, ApplyCopyOnSelectChoice)))));
+                SettingsSwitch(_config.CopyOnSelect, ApplyCopyOnSelectChoice)),
+            SettingsRow(Strings.SettingsRightClickAction, null,
+                SettingsSelect(rightClickActions, rightClickIndex, 180, ApplyRightClickActionChoice)))));
 
         return page;
     }
@@ -1427,6 +1451,18 @@ public sealed partial class Workspace
         Config.SaveValue("shell-integration-features", value);
     }
 
+    private void ApplyNewTabPositionChoice(string position)
+    {
+        _config.NewTabPosition = position;
+        Config.SaveValue("window-new-tab-position", position);
+    }
+
+    private void ApplyTabInheritWorkingDirectoryChoice(bool inherit)
+    {
+        _config.TabInheritWorkingDirectory = inherit;
+        Config.SaveValue("tab-inherit-working-directory", inherit ? "true" : "false");
+    }
+
     private void ApplyCursorStyle(string style)
     {
         _config.CursorStyle = style;
@@ -1448,6 +1484,24 @@ public sealed partial class Workspace
 
         // Split panes and inherited tabs hold a snapshot of the config; the selection code
         // reads it at copy time, so it just has to be pushed across.
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane => pane.SyncConfig(_config));
+    }
+
+    private void ApplyRightClickActionChoice(int index)
+    {
+        string action = index switch
+        {
+            1 => "paste",
+            2 => "copy",
+            3 => "copy-or-paste",
+            4 => "ignore",
+            _ => "context-menu",
+        };
+        _config.RightClickAction = action;
+        Config.SaveValue("right-click-action", action);
+
+        // Panes read the action from their own config snapshot on right-click.
         foreach (Tab tab in _tabs)
             ForEachPane(tab, pane => pane.SyncConfig(_config));
     }
