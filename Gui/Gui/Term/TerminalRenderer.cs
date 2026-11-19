@@ -24,16 +24,6 @@ namespace Gui.Term;
 /// </summary>
 public sealed unsafe class TerminalRenderer
 {
-    private const uint FR_PRIVATE = 0x10;
-
-    private static readonly string[] BundledFontFiles =
-    {
-        "JetBrainsMonoNerdFont-Regular.ttf",
-        "JetBrainsMonoNerdFont-Bold.ttf",
-        "JetBrainsMonoNerdFont-Italic.ttf",
-        "JetBrainsMonoNerdFont-BoldItalic.ttf",
-    };
-
     private readonly Dictionary<(int Face, string Family), CanvasTextFormat> _formats = new();
     private readonly StringBuilder _text = new(64);
 
@@ -58,8 +48,6 @@ public sealed unsafe class TerminalRenderer
     /// <summary>An unbounded cache would grow for the lifetime of the window, so it is capped.</summary>
     private const int LayoutCacheCapacity = 1024;
 
-    /// <summary>System font faces, consulted only when synthetic styles are disabled.</summary>
-    private CanvasFontSet? _systemFontSet;
     private readonly Dictionary<(string Family, ushort Weight, bool Italic), bool> _realFaces = new();
 
     /// <summary>Whether the system knows a family at all, used to drop a style's dead names.</summary>
@@ -237,8 +225,6 @@ public sealed unsafe class TerminalRenderer
     private bool _cursorValid;
     private string _imeComposition = string.Empty;
 
-    private static bool _fontsRegistered;
-
     /// <summary>The ideograph Ghostty measures a fallback face against (CJK water, U+6C34).</summary>
     private const int IdeographCodepoint = 0x6C34;
 
@@ -270,7 +256,7 @@ public sealed unsafe class TerminalRenderer
 
     public TerminalRenderer()
     {
-        RegisterBundledFonts();
+        FontCache.RegisterBundledFonts();
         _baseFormat = CreateFormat(_fontFamily, _fontSize, false, 400);
     }
 
@@ -329,24 +315,6 @@ public sealed unsafe class TerminalRenderer
         x = _cursorX;
         y = _cursorY;
         return _cursorValid;
-    }
-
-    /// <summary>
-    /// Loads the TTFs shipped in Assets\Fonts for this process only, so DirectWrite's
-    /// system collection can resolve the family even when it is not installed.
-    /// </summary>
-    private static void RegisterBundledFonts()
-    {
-        if (_fontsRegistered) return;
-        _fontsRegistered = true;
-
-        string directory = Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts");
-        foreach (string name in BundledFontFiles)
-        {
-            string file = Path.Combine(directory, name);
-            if (!File.Exists(file)) continue;
-            AddFontResourceEx(file, FR_PRIVATE, IntPtr.Zero);
-        }
     }
 
     private static CanvasTextFormat CreateFormat(string family, float size, bool italic, ushort weight,
@@ -783,9 +751,9 @@ public sealed unsafe class TerminalRenderer
         bool exists;
         try
         {
-            _systemFontSet ??= CanvasFontSet.GetSystemFontSet();
+            CanvasFontSet systemFontSet = FontCache.Get();
             exists = false;
-            foreach (CanvasFontFace face in _systemFontSet.Fonts)
+            foreach (CanvasFontFace face in systemFontSet.Fonts)
             {
                 if (!HasFamilyName(face, name)) continue;
                 exists = true;
@@ -814,9 +782,9 @@ public sealed unsafe class TerminalRenderer
         bool found;
         try
         {
-            _systemFontSet ??= CanvasFontSet.GetSystemFontSet();
+            CanvasFontSet systemFontSet = FontCache.Get();
             found = false;
-            foreach (CanvasFontFace face in _systemFontSet.Fonts)
+            foreach (CanvasFontFace face in systemFontSet.Fonts)
             {
                 if (face.Weight.Weight != weight) continue;
 
@@ -942,10 +910,10 @@ public sealed unsafe class TerminalRenderer
         CanvasFontFace? face = null;
         try
         {
-            _systemFontSet ??= CanvasFontSet.GetSystemFontSet();
-            face = MatchFace(_systemFontSet, family, weight, italic) ??
-                   MatchFace(_systemFontSet, family, 400, false) ??
-                   MatchFace(_systemFontSet, family, 700, false);
+            CanvasFontSet systemFontSet = FontCache.Get();
+            face = MatchFace(systemFontSet, family, weight, italic) ??
+                   MatchFace(systemFontSet, family, 400, false) ??
+                   MatchFace(systemFontSet, family, 700, false);
         }
         catch
         {
@@ -3121,8 +3089,7 @@ public sealed unsafe class TerminalRenderer
         _baseFormat.Dispose();
         _typography?.Dispose();
         _typography = null;
-        _systemFontSet?.Dispose();
-        _systemFontSet = null;
+        // The system font set is process-wide (FontCache); a pane dying must not release it.
         _backgroundImage?.Dispose();
         _backgroundImage = null;
         _backgroundImagePath = string.Empty;
@@ -3474,9 +3441,6 @@ public sealed unsafe class TerminalRenderer
         static byte Mix(byte a, byte b, float t) => (byte)(a + (b - a) * t);
         return Color.FromArgb(255, Mix(fg.R, bg.R, amount), Mix(fg.G, bg.G, amount), Mix(fg.B, bg.B, amount));
     }
-
-    [DllImport("gdi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern int AddFontResourceEx(string file, uint flags, IntPtr reserved);
 }
 
 /// <summary>

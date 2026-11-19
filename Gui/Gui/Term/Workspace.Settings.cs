@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -30,8 +31,6 @@ public sealed partial class Workspace
     /// <summary>The family the renderer falls back to when "font-family" is unset.</summary>
     private const string DefaultFontFamily = "JetBrainsMono Nerd Font";
 
-    /// <summary>Installed monospaced families, resolved once per process.</summary>
-    private static List<string>? _monospaceFamilies;
 
     private Grid? _settingsLayer;
     private Button? _settingsFocus;
@@ -477,11 +476,25 @@ public sealed partial class Workspace
     /// Opens the settings page over the window body. Esc or the header's close button
     /// returns to the terminal.
     /// </summary>
-    private void ShowSettings()
+    private async void ShowSettings()
     {
         if (_body is null) return;
         if (_paletteLayer is not null && _paletteLayer.Visibility == Visibility.Visible)
             HideCommandPalette();
+
+        // Font enumeration probes every installed face (~600 ms). BuildSettings reads the
+        // list synchronously, so make sure it is ready on a background thread first — a
+        // cold/expired cache must never block the UI here. Hot path is await-CompletedTask.
+        try
+        {
+            await FontCache.EnsureMonospaceAsync(DefaultFontFamily);
+        }
+        catch (Exception error)
+        {
+            // A failed probe leaves the list empty; Settings still opens with the bundled font.
+            Diag.LogException("Workspace.ShowSettings.fonts", error);
+        }
+        if (_body is null) return;
 
         // Rebuild on open so the controls start from the live config: the theme may have been
         // changed from the palette, and a reload may have rewritten other values.
@@ -1976,36 +1989,11 @@ public sealed partial class Workspace
     }
 
     /// <summary>
-    /// Every installed family DirectWrite marks as monospaced, sorted by name. The bundled
-    /// Nerd Font is always listed so the default stays selectable even before it is loaded.
+    /// Every installed family DirectWrite marks as monospaced, sorted by name, with the bundled
+    /// Nerd Font always present. The enumeration is done once in FontCache and shared with the
+    /// renderer, so opening Settings only reads that cached list.
     /// </summary>
-    private static List<string> MonospaceFontFamilies()
-    {
-        if (_monospaceFamilies is not null) return _monospaceFamilies;
-
-        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using CanvasFontSet set = CanvasFontSet.GetSystemFontSet();
-            foreach (CanvasFontFace face in set.Fonts)
-            {
-                if (!face.IsMonospaced) continue;
-                foreach (KeyValuePair<string, string> pair in face.FamilyNames)
-                {
-                    names.Add(pair.Value);
-                    break;
-                }
-            }
-        }
-        catch (Exception error)
-        {
-            Diag.LogException("Workspace.MonospaceFontFamilies", error);
-        }
-
-        names.Add(DefaultFontFamily);
-        _monospaceFamilies = names.ToList();
-        return _monospaceFamilies;
-    }
+    private static IReadOnlyList<string> MonospaceFontFamilies() => FontCache.MonospaceFamilies(DefaultFontFamily);
 
     /// <summary>
     /// The value written in the config file for a key, without any resolved default: an unset

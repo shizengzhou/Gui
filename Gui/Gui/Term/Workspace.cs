@@ -474,6 +474,11 @@ public sealed partial class Workspace
         UpdateStatus();
         ApplyTabBarVisibility();
         ScheduleStartupUpdateCheck();
+
+        // The font picker's family list walks every installed face (~300 ms) on first build.
+        // Enumerate on a background thread so the ~600 ms walk never blocks the UI; the
+        // result is cached in FontCache, which both the renderer and picker share.
+        _ = Task.Run(() => _ = MonospaceFontFamilies());
     }
 
     /// <summary>
@@ -600,6 +605,10 @@ public sealed partial class Workspace
 
     private void ReloadConfigCore()
     {
+        // A reload is how a newly installed font reaches the app: drop the shared font set so
+        // the next face lookup and the next Settings open re-enumerate, like WT's FontCache
+        // invalidation on a settings change.
+        FontCache.Invalidate();
         Config fresh = Config.Load();
         _config.CopyFrom(fresh);
 
