@@ -50,6 +50,12 @@ public sealed partial class Workspace
         public double Ratio = 0.5; // share of the first child, dragged via the divider
         public SplitNode? First;
         public SplitNode? Second;
+
+        // The grid this split lives in, kept across relayouts so splitting and closing move
+        // only the affected subtree instead of rebuilding the whole tab.
+        public Grid? Layout;
+        public bool LayoutCompact;
+        public double LayoutGap = -1;
     }
 
     private sealed class Tab
@@ -64,9 +70,6 @@ public sealed partial class Workspace
         public bool Zoomed;
 
         public Grid Surface = null!;
-        // Split grids built by the last relayout. A pane visual can still be a child of
-        // one of these, so relayout detaches from them before re-parenting.
-        public readonly List<Grid> Grids = new();
         public Border Chip = null!;
         public TextBlock ChipText = null!;
         public TextBox ChipEditor = null!;
@@ -2278,6 +2281,7 @@ public sealed partial class Workspace
         {
             RetireExit(pane);
             _closingPanes.Remove(pane);
+            ForgetPane(pane);
             // The session already belongs to the new window; only this pane's timers die.
             pane.Close();
         });
@@ -2301,6 +2305,21 @@ public sealed partial class Workspace
 
         Activate(TabSelection.AfterClose(_active, index, _tabs.Count));
         App.MarkSessionDirty();
+    }
+
+    /// <summary>
+    /// Stops the shells of a tab nobody took over. Once the source window has closed the
+    /// panes, a handover that failed leaves its sessions reachable only from this object;
+    /// disposing them here is what keeps their ConPTY hosts from running forever.
+    /// </summary>
+    internal static void DiscardMovedTab(MovedTab moved) => DiscardMovedSplit(moved.Root);
+
+    private static void DiscardMovedSplit(MovedSplit? node)
+    {
+        if (node is null) return;
+        node.Session?.Dispose();
+        DiscardMovedSplit(node.First);
+        DiscardMovedSplit(node.Second);
     }
 
     private static MovedSplit CaptureSplit(SplitNode node)
@@ -2467,14 +2486,39 @@ public sealed partial class Workspace
     /// <summary>Rebuilds a tab another window handed over, keeping its running sessions.</summary>
     private Tab NewTabFrom(MovedTab moved)
     {
-        SplitNode? root = moved.Root is null ? null : BuildMovedSplit(moved.Root);
-        TerminalPane? focused = root is null ? null : root.Pane ?? FirstPane(root);
-        if (root is null || focused is null) return NewTab();
+        // Panes become reachable from a tab only once AddTab lines them up, so every pane this
+        // build creates is collected here: a throw in the middle of the tree would otherwise
+        // strand the earlier ones on a recursive local, and their repeating cwd timer (started
+        // by AdoptSession) keeps the pane, its session and its shell alive for good.
+        var built = new List<TerminalPane>();
+        TerminalPane? focused = null;
+        try
+        {
+            SplitNode? root = moved.Root is null ? null : BuildMovedSplit(moved.Root, built);
+            focused = root is null ? null : root.Pane ?? FirstPane(root);
+            if (root is null || focused is null) return NewTab();
 
-        return AddTab(moved.Title, moved.TitleOverride, focused, root);
+            return AddTab(moved.Title, moved.TitleOverride, focused, root);
+        }
+        catch
+        {
+            // Once the panes are reachable from a tab, Workspace.Close() owns them. Otherwise
+            // nothing does — the adopted sessions already have a Post, so the orphan fallback
+            // for an ownerless session cannot fire — and the panes built so far have to stop
+            // their shells here.
+            bool adopted = false;
+            if (focused is not null)
+            {
+                foreach (Tab existing in _tabs)
+                    if (TabContainsPane(existing, focused)) { adopted = true; break; }
+            }
+            if (!adopted)
+                foreach (TerminalPane pane in built) pane.Close();
+            throw;
+        }
     }
 
-    private SplitNode BuildMovedSplit(MovedSplit source)
+    private SplitNode BuildMovedSplit(MovedSplit source, List<TerminalPane> built)
     {
         if (source.Session is not { } session)
         {
@@ -2482,15 +2526,20 @@ public sealed partial class Workspace
             {
                 Vertical = source.Vertical,
                 Ratio = source.Ratio,
-                First = source.First is null ? null : BuildMovedSplit(source.First),
-                Second = source.Second is null ? null : BuildMovedSplit(source.Second),
+                First = source.First is null ? null : BuildMovedSplit(source.First, built),
+                Second = source.Second is null ? null : BuildMovedSplit(source.Second, built),
             };
         }
 
         var pane = new TerminalPane(source.Config);
+        built.Add(pane);
         pane.Title = source.Title;
         WirePane(pane);
         pane.AdoptSession(session);
+        // The pane owns the session now. Clearing the handover object is what lets a failed
+        // build discard only the sessions nobody adopted, and what stops the source tab from
+        // keeping every adopted session reachable for the window's whole life.
+        source.Session = null;
         return new SplitNode { Pane = pane };
     }
 
@@ -2532,11 +2581,7 @@ public sealed partial class Workspace
         if (node.Pane is { } pane)
         {
             if (ReferenceEquals(pane, focused)) focusedPath = path;
-            string? snapshot = pane.Snapshot() is { Length: > 0 } bytes
-                ? WindowStateStore.WriteSnapshot(bytes)
-                // A pane whose tab was never opened has no content to encode yet; keep the
-                // file it was restored from so its session is not lost on the next launch.
-                : pane.Started ? null : pane.RestoredSnapshotName;
+            string? snapshot = pane.SnapshotForSave();
             return new SplitState
             {
                 Pane = new PaneState
@@ -3598,12 +3643,6 @@ public sealed partial class Workspace
     {
         SettleExitAnimations();
 
-        var previous = new List<Grid>(tab.Grids);
-
-        tab.Surface.RowDefinitions.Clear();
-        tab.Surface.ColumnDefinitions.Clear();
-        tab.Surface.Children.Clear();
-
         // The last pane cannot be zoomed or closed; the buttons stay visible but disabled.
         bool singlePane = tab.Root is not null && tab.Root.Pane is not null;
         ForEachPane(tab, pane => pane.SetSinglePane(singlePane));
@@ -3611,100 +3650,137 @@ public sealed partial class Workspace
 
         // Ghostty's split handle is the pane header itself. Dragging is enabled once a tab
         // has two or more splits; "always" keeps it on a lone pane too, and "never" turns
-        // split dragging off entirely. A zoomed tab paints one pane and refuses the drag, so
-        // it must not advertise the move cursor either.
+        // split dragging off entirely. A zoomed tab paints one pane and refuses the drag,
+        // so it must not advertise the move cursor either.
         bool dragEnabled = !tab.Zoomed && _config.DragHandle != "never" &&
                            (!singlePane || _config.DragHandle == "always");
         ForEachPane(tab, pane => pane.SetDragEnabled(dragEnabled));
 
+        EnsureSurface(tab.Surface);
+
+        // A background tab's surface is not in the visual tree, where neither Parent nor
+        // VisualTreeHelper reports the grid that still holds a pane; WinUI then throws when
+        // that pane is added to the new grid. Detach the previous layout structurally — the
+        // node tree knows every grid it built — before anything is placed again.
+        DetachLayouts(tab);
+
         if (tab.Zoomed && tab.Focused is not null)
         {
-            tab.Surface.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            tab.Surface.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            AddChild(tab.Surface, tab.Focused.Visual, previous);
             TerminalPane focused = tab.Focused;
+            PlaceElement(tab.Surface, focused.Visual, 0, 0);
             ForEachPane(tab, pane => pane.SetZoomed(ReferenceEquals(pane, focused)));
             return;
         }
         if (tab.Root is null) return;
 
         ForEachPane(tab, pane => pane.SetZoomed(false));
-
-        tab.Grids.Clear();
-        tab.Surface.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        tab.Surface.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        AddChild(tab.Surface, BuildNode(tab.Root, previous, tab.Grids), previous);
+        PlaceNode(tab.Root, tab.Surface, 0, 0);
     }
 
     /// <summary>
-    /// A pane visual belongs to its pane, not to the split grid it sits in, and the grid it
-    /// was last placed in can outlive the rebuild. Appending an element that still has a
-    /// parent throws, so detach from the old grid first.
+    /// Empties every grid the last relayout built and unhooks the root one from the surface,
+    /// so the placement that follows starts from unparented elements.
     /// </summary>
-    private static void AddChild(Panel panel, UIElement element, IReadOnlyList<Grid> previous)
+    private static void DetachLayouts(Tab tab)
     {
-        if (VisualTreeHelper.GetParent(element) is Panel owner)
-            owner.Children.Remove(element);
-        foreach (Grid grid in previous)
-            grid.Children.Remove(element);
-        panel.Children.Add(element);
+        if (tab.Root is null) return;
+        if (tab.Root.Layout is { } root && tab.Surface.Children.Contains(root)) tab.Surface.Children.Remove(root);
+        ClearLayouts(tab.Root);
+    }
+
+    private static void ClearLayouts(SplitNode node)
+    {
+        if (node.Pane is not null) return;
+        node.Layout?.Children.Clear();
+        ClearLayouts(node.First!);
+        ClearLayouts(node.Second!);
+    }
+
+    /// <summary>The surface is one star-sized cell; panes and split grids live inside it.</summary>
+    private static void EnsureSurface(Grid surface)
+    {
+        if (surface.RowDefinitions.Count == 1 && surface.ColumnDefinitions.Count == 1) return;
+        surface.RowDefinitions.Clear();
+        surface.ColumnDefinitions.Clear();
+        surface.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        surface.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
     }
 
     /// <summary>
-    /// Each split becomes a nested three-track Grid: first half, the gap (6 DIP, or compact
-    /// mode's 1 DIP divider), second half. Keeping the gap as its own track is what lets the
-    /// resize grip live exactly on the boundary — a star pair alone would put it in a fixed
-    /// middle that drifts away as the ratio changes.
+    /// Places a node in one cell of <paramref name="host"/>. A split keeps the grid it already
+    /// lives in (SplitNode.Layout), so a split or a close moves only the affected subtree:
+    /// rebuilding every grid on each relayout is what allocated, and leaked, native memory.
     /// </summary>
-    private FrameworkElement BuildNode(SplitNode node, IReadOnlyList<Grid> previous, List<Grid> grids)
+    private void PlaceNode(SplitNode node, Panel host, int row, int col)
     {
-        if (node.Pane is not null) return node.Pane.Visual;
+        if (node.Pane is not { } pane)
+        {
+            Grid grid = SplitGrid(node);
+            PlaceElement(host, grid, row, col);
+            ApplySplitRatio(node, grid);
+            if (node.Vertical)
+            {
+                PlaceNode(node.First!, grid, 0, 0);
+                PlaceNode(node.Second!, grid, 2, 0);
+            }
+            else
+            {
+                PlaceNode(node.First!, grid, 0, 0);
+                PlaceNode(node.Second!, grid, 0, 2);
+            }
+            return;
+        }
 
-        // Cozy keeps a 6 DIP gap between cells. Compact replaces it with a 1 DIP divider, so
-        // the split line is the same weight the pane border used to draw. The two stars carry
-        // the split's own ratio, which the divider drag edits.
+        PlaceElement(host, pane.Visual, row, col);
+    }
+
+    /// <summary>Puts an element in a cell, detaching it from whatever grid held it before.</summary>
+    private static void PlaceElement(Panel host, FrameworkElement element, int row, int col)
+    {
+        Grid.SetRow(element, row);
+        Grid.SetColumn(element, col);
+        // Contains, not Parent: a background tab's surface is outside the visual tree, where
+        // both Parent and VisualTreeHelper report nothing while the element is still a child
+        // of the grid it was placed in last time; adding it again throws 0x800F1000.
+        if (host.Children.Contains(element)) return;
+        if (element.Parent is Panel parent) parent.Children.Remove(element);
+        if (VisualTreeHelper.GetParent(element) is Panel visual) visual.Children.Remove(element);
+        host.Children.Add(element);
+    }
+
+    /// <summary>Builds the grid a split lives in, re-creating it only after a density or gap change.</summary>
+    private Grid SplitGrid(SplitNode node)
+    {
         bool compact = CompactDensity;
         double gap = compact ? 1.0 : SurfaceGap;
-        var grid = new Grid();
-        grids.Add(grid);
-        if (node.Vertical)
+        if (node.Layout is { } cached && node.LayoutCompact == compact &&
+            Math.Abs(node.LayoutGap - gap) < 0.01)
         {
-            grid.RowDefinitions.Add(new RowDefinition
-            {
-                Height = new GridLength(node.Ratio, GridUnitType.Star),
-            });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(gap) });
-            grid.RowDefinitions.Add(new RowDefinition
-            {
-                Height = new GridLength(1.0 - node.Ratio, GridUnitType.Star),
-            });
-        }
-        else
-        {
-            grid.ColumnDefinitions.Add(new ColumnDefinition
-            {
-                Width = new GridLength(node.Ratio, GridUnitType.Star),
-            });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(gap) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition
-            {
-                Width = new GridLength(1.0 - node.Ratio, GridUnitType.Star),
-            });
+            return cached;
         }
 
-        FrameworkElement first = BuildNode(node.First!, previous, grids);
-        FrameworkElement second = BuildNode(node.Second!, previous, grids);
+        // A density or gap change replaces the grid. The old one is still a child of the host,
+        // so without this it would stay in the surface beside the new grid, divider included.
+        if (node.Layout is { } stale)
+        {
+            if (stale.Parent is Panel previous) previous.Children.Remove(stale);
+            stale.Children.Clear();
+        }
+
+        var grid = new Grid();
         if (node.Vertical)
         {
-            Grid.SetRow(first, 0);
-            Grid.SetRow(second, 2);
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(node.Ratio, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(gap) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0 - node.Ratio, GridUnitType.Star) });
         }
         else
         {
-            Grid.SetColumn(first, 0);
-            Grid.SetColumn(second, 2);
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(node.Ratio, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(gap) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0 - node.Ratio, GridUnitType.Star) });
         }
-        AddChild(grid, first, previous);
+
         if (compact)
         {
             Color dividerColor = _config.HasSplitDividerColor
@@ -3715,9 +3791,15 @@ public sealed partial class Workspace
             if (node.Vertical) Grid.SetRow(divider, 1); else Grid.SetColumn(divider, 1);
             grid.Children.Add(divider);
         }
-        AddChild(grid, second, previous);
-        // The resize grip goes in last so it sits above both halves and the divider.
-        grid.Children.Add(BuildSplitter(node, grid, gap));
+
+        // The grip stays above both halves whatever order the panes are placed in later.
+        FrameworkElement grip = BuildSplitter(node, grid, gap);
+        Canvas.SetZIndex(grip, 1);
+        grid.Children.Add(grip);
+
+        node.Layout = grid;
+        node.LayoutCompact = compact;
+        node.LayoutGap = gap;
         return grid;
     }
 
@@ -3892,14 +3974,32 @@ public sealed partial class Workspace
         if (node.First is null)
         {
             nextFocus ??= FirstPane(node.Second);
+            DropLayout(node);
             return node.Second;
         }
         if (node.Second is null)
         {
             nextFocus ??= FirstPane(node.First);
+            DropLayout(node);
             return node.First;
         }
         return node;
+    }
+
+    /// <summary>
+    /// Drops the grid a collapsed split node lived in. Once the node leaves the tree nothing
+    /// re-places that grid, so it would stay a child of the surface (or of its parent's grid)
+    /// for the rest of the window's life, keeping its divider, its resize grip and the closed
+    /// pane's visuals alive and hit-testable. The children are detached rather than thrown
+    /// away: the surviving sibling subtree is re-parented by the relayout that follows.
+    /// </summary>
+    private static void DropLayout(SplitNode node)
+    {
+        Grid? grid = node.Layout;
+        if (grid is null) return;
+        node.Layout = null;
+        if (grid.Parent is Panel owner) owner.Children.Remove(grid);
+        grid.Children.Clear();
     }
 
     // ---------------- pane wiring ----------------
@@ -4049,7 +4149,7 @@ public sealed partial class Workspace
         _active = index;
         _ensureActiveVisible = true;
         _surfaceHost.Children.Clear();
-        AddChild(_surfaceHost, _tabs[index].Surface, Array.Empty<Grid>());
+        PlaceElement(_surfaceHost, _tabs[index].Surface, 0, 0);
         UpdateHeaders();
 
         // A background tab misses the draws that happen while it is hidden; paint it again

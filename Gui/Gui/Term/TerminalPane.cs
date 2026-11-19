@@ -61,6 +61,7 @@ public sealed class TerminalPane
     private ChromeButton? _zoomButton;
     private ChromeButton? _closeButton;
     private StackPanel? _actions;
+    private MenuFlyout? _contextMenu;
     private double _actionsInset = -1;
     private Grid? _info;
     private double _infoInset = -1;
@@ -72,6 +73,11 @@ public sealed class TerminalPane
     private Point _handlePressPoint;
     private readonly List<ActionVisual> _actionVisuals = new();
     private Keybinds _keybinds = null!;
+
+    // Handlers parked on child controls. A control the UI still holds keeps its event
+    // delegates, and each delegate that captures `this` keeps this pane alive with it.
+    // Record how to remove every one and do so at the end of Close().
+    private readonly List<Action> _unsubscribes = new();
 
     /// <summary>Ghostty's limit on how many key tables one surface can nest.</summary>
     private const int MaxKeyTables = 8;
@@ -492,8 +498,11 @@ public sealed class TerminalPane
         _searchBox.Resources["TextControlBackgroundPressed"] = TransparentBrush();
         _searchBox.Resources["TextControlBorderThemeThicknessFocused"] = new Thickness(0);
         _searchBox.Resources["TextControlBorderBrushFocused"] = TransparentBrush();
-        _searchBox.Loaded += (_, _) => HideSearchClearButton();
-        _searchBox.TextChanged += (_, _) =>
+        RoutedEventHandler searchLoaded = (_, _) => HideSearchClearButton();
+        _searchBox.Loaded += searchLoaded;
+        _unsubscribes.Add(() => _searchBox.Loaded -= searchLoaded);
+
+        TextChangedEventHandler searchTextChanged = (_, _) =>
         {
             // The counter owns the field's trailing edge; the template's own clear button
             // would sit on top of it and is hidden after every text change.
@@ -504,8 +513,15 @@ public sealed class TerminalPane
             RestartSearch();
             UpdateSearchFieldPadding();
         };
-        _searchBox.TextCompositionStarted += (_, _) => _searchComposing = true;
-        _searchBox.TextCompositionEnded += (_, _) =>
+        _searchBox.TextChanged += searchTextChanged;
+        _unsubscribes.Add(() => _searchBox.TextChanged -= searchTextChanged);
+
+        TypedEventHandler<TextBox, TextCompositionStartedEventArgs> compositionStarted =
+            (_, _) => _searchComposing = true;
+        _searchBox.TextCompositionStarted += compositionStarted;
+        _unsubscribes.Add(() => _searchBox.TextCompositionStarted -= compositionStarted);
+
+        TypedEventHandler<TextBox, TextCompositionEndedEventArgs> compositionEnded = (_, _) =>
         {
             _searchComposing = false;
             if (!_searchActive) return;
@@ -513,7 +529,11 @@ public sealed class TerminalPane
             RestartSearch();
             UpdateSearchFieldPadding();
         };
+        _searchBox.TextCompositionEnded += compositionEnded;
+        _unsubscribes.Add(() => _searchBox.TextCompositionEnded -= compositionEnded);
+
         _searchBox.KeyDown += OnSearchKeyDown;
+        _unsubscribes.Add(() => _searchBox.KeyDown -= OnSearchKeyDown);
         // Like Ghostty, the overlay is not dismissed just because focus moved: it stays
         // visible with its results until Esc on an empty query or the close button.
 
@@ -602,7 +622,7 @@ public sealed class TerminalPane
             IsTabStop = false,
             Visibility = Visibility.Collapsed,
         };
-        _scrollBar.ValueChanged += (_, _) =>
+        RangeBaseValueChangedEventHandler scrollValueChanged = (_, _) =>
         {
             // UpdateScrollbar writes the value back from the terminal's state; that write is
             // not a user scroll and must not be echoed into the terminal.
@@ -610,10 +630,15 @@ public sealed class TerminalPane
             _session.ScrollTo((ulong)Math.Round(_scrollBar.Value));
             if (_searchActive) _searchTimer?.Start();
         };
+        _scrollBar.ValueChanged += scrollValueChanged;
+        _unsubscribes.Add(() => _scrollBar.ValueChanged -= scrollValueChanged);
         // The control does not take the wheel itself, so scrolling over the bar has to reach
         // the terminal the same way it does over the surface.
         _scrollBar.PointerWheelChanged += OnPointerWheel;
-        _scrollBar.SizeChanged += (_, _) => UpdateScrollbar();
+        _unsubscribes.Add(() => _scrollBar.PointerWheelChanged -= OnPointerWheel);
+        SizeChangedEventHandler scrollSizeChanged = (_, _) => UpdateScrollbar();
+        _scrollBar.SizeChanged += scrollSizeChanged;
+        _unsubscribes.Add(() => _scrollBar.SizeChanged -= scrollSizeChanged);
 
         // "progress-style": a hairline across the top of the surface, above the first row,
         // inside the pane's padding. Ghostty draws its OSC 9;4 report in the same place.
@@ -818,20 +843,27 @@ public sealed class TerminalPane
         _headerBar = header;
         header.Background = TransparentBrush();
         header.PointerPressed += OnHeaderDragPressed;
+        _unsubscribes.Add(() => header.PointerPressed -= OnHeaderDragPressed);
         header.PointerMoved += OnHeaderDragMoved;
+        _unsubscribes.Add(() => header.PointerMoved -= OnHeaderDragMoved);
         header.PointerReleased += OnHeaderDragReleased;
-        header.PointerExited += (_, _) =>
+        _unsubscribes.Add(() => header.PointerReleased -= OnHeaderDragReleased);
+        PointerEventHandler headerExited = (_, _) =>
         {
             if (_handlePressed) return;
             _headerBar?.ShowMoveCursor(false);
         };
-        header.PointerCaptureLost += (_, _) =>
+        header.PointerExited += headerExited;
+        _unsubscribes.Add(() => header.PointerExited -= headerExited);
+        PointerEventHandler headerCaptureLost = (_, _) =>
         {
             _handlePressed = false;
             if (!_handleDragging) return;
             _handleDragging = false;
             OnDragHandleCancel?.Invoke(this);
         };
+        header.PointerCaptureLost += headerCaptureLost;
+        _unsubscribes.Add(() => header.PointerCaptureLost -= headerCaptureLost);
 
         var frameRoot = new Grid();
         frameRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -867,8 +899,11 @@ public sealed class TerminalPane
             Child = frameRoot,
         };
         _frame.PointerEntered += OnFramePointerEntered;
+        _unsubscribes.Add(() => _frame.PointerEntered -= OnFramePointerEntered);
         _frame.PointerMoved += OnFramePointerMoved;
+        _unsubscribes.Add(() => _frame.PointerMoved -= OnFramePointerMoved);
         _frame.PointerExited += OnFramePointerExited;
+        _unsubscribes.Add(() => _frame.PointerExited -= OnFramePointerExited);
 
         _host = new ContentControl
         {
@@ -888,22 +923,32 @@ public sealed class TerminalPane
         _renderer.ShadersChanged += OnShadersChanged;
 
         _canvas.PointerWheelChanged += OnPointerWheel;
+        _unsubscribes.Add(() => _canvas.PointerWheelChanged -= OnPointerWheel);
         _canvas.PointerPressed += OnPointerPressed;
+        _unsubscribes.Add(() => _canvas.PointerPressed -= OnPointerPressed);
         _canvas.PointerMoved += OnPointerMoved;
+        _unsubscribes.Add(() => _canvas.PointerMoved -= OnPointerMoved);
         _canvas.PointerReleased += OnPointerReleased;
-        _canvas.PointerCaptureLost += (_, _) =>
+        _unsubscribes.Add(() => _canvas.PointerReleased -= OnPointerReleased);
+        PointerEventHandler canvasCaptureLost = (_, _) =>
         {
             _selecting = false;
             StopSelectionScroll();
         };
-        _canvas.PointerEntered += (_, _) => _pointerInside = true;
-        _canvas.PointerExited += (_, _) =>
+        _canvas.PointerCaptureLost += canvasCaptureLost;
+        _unsubscribes.Add(() => _canvas.PointerCaptureLost -= canvasCaptureLost);
+        PointerEventHandler canvasEntered = (_, _) => _pointerInside = true;
+        _canvas.PointerEntered += canvasEntered;
+        _unsubscribes.Add(() => _canvas.PointerEntered -= canvasEntered);
+        PointerEventHandler canvasExited = (_, _) =>
         {
             _pointerInside = false;
             SetHoverUrl(null);
             ShowPointer();
         };
-        _canvas.SizeChanged += (_, _) => Diag.Guard("pane.layout", () =>
+        _canvas.PointerExited += canvasExited;
+        _unsubscribes.Add(() => _canvas.PointerExited -= canvasExited);
+        SizeChangedEventHandler canvasSizeChanged = (_, _) => Diag.Guard("pane.layout", () =>
         {
             // Starting the shell before the canvas has its real size creates the
             // pseudoconsole at the 80x24 seed. The later resize can lose the race with
@@ -912,58 +957,83 @@ public sealed class TerminalPane
             if (_loaded && !_ready) TryStart();
             else Layout();
         });
-        _canvas.Loaded += (_, _) => Diag.Guard("pane.start", () =>
+        _canvas.SizeChanged += canvasSizeChanged;
+        _unsubscribes.Add(() => _canvas.SizeChanged -= canvasSizeChanged);
+        RoutedEventHandler canvasLoaded = (_, _) => Diag.Guard("pane.start", () =>
         {
             HookXamlRoot();
             _loaded = true;
             TryStart();
         });
+        _canvas.Loaded += canvasLoaded;
+        _unsubscribes.Add(() => _canvas.Loaded -= canvasLoaded);
 
         if (_dispatcher is not null)
         {
-            _blinkTimer = _dispatcher.CreateTimer();
-            _blinkTimer.Interval = TimeSpan.FromMilliseconds(530);
-            _blinkTimer.Tick += (_, _) => Diag.Guard("pane.blink", () =>
+            // Each timer is captured in a local for the matching unsubscribe: Close() detaches
+            // after the fields are cleared, so a closure over _blinkTimer and friends would
+            // either miss or need Close() to keep a fragile ordering.
+            DispatcherQueueTimer blinkTimer = _dispatcher.CreateTimer();
+            _blinkTimer = blinkTimer;
+            blinkTimer.Interval = TimeSpan.FromMilliseconds(530);
+            TypedEventHandler<DispatcherQueueTimer, object> blinkTick = (_, _) => Diag.Guard("pane.blink", () =>
             {
                 _cursorOn = !_cursorOn;
                 Redraw();
             });
+            blinkTimer.Tick += blinkTick;
+            _unsubscribes.Add(() => blinkTimer.Tick -= blinkTick);
             // Started by SetFocused(true): an unfocused pane keeps a steady caret.
 
-            _searchTimer = _dispatcher.CreateTimer();
-            _searchTimer.Interval = TimeSpan.FromMilliseconds(25);
-            _searchTimer.Tick += (_, _) => Diag.Guard("pane.search", StepSearch);
+            DispatcherQueueTimer searchTimer = _dispatcher.CreateTimer();
+            _searchTimer = searchTimer;
+            searchTimer.Interval = TimeSpan.FromMilliseconds(25);
+            TypedEventHandler<DispatcherQueueTimer, object> searchTick = (_, _) => Diag.Guard("pane.search", StepSearch);
+            searchTimer.Tick += searchTick;
+            _unsubscribes.Add(() => searchTimer.Tick -= searchTick);
 
             // One-shot chain for Kitty animations: each draw asks the library when the next
             // frame is due, and the timer brings the pane back at that time.
-            _imageTimer = _dispatcher.CreateTimer();
-            _imageTimer.IsRepeating = false;
-            _imageTimer.Tick += (_, _) => Diag.Guard("pane.image", () =>
+            DispatcherQueueTimer imageTimer = _dispatcher.CreateTimer();
+            _imageTimer = imageTimer;
+            imageTimer.IsRepeating = false;
+            TypedEventHandler<DispatcherQueueTimer, object> imageTick = (_, _) => Diag.Guard("pane.image", () =>
             {
                 if (!_closed) Redraw();
             });
+            imageTimer.Tick += imageTick;
+            _unsubscribes.Add(() => imageTimer.Tick -= imageTick);
 
             // "custom-shader-animation": a fixed frame cadence for iTime-driven shaders.
-            _shaderTimer = _dispatcher.CreateTimer();
-            _shaderTimer.Interval = TimeSpan.FromMilliseconds(16);
-            _shaderTimer.IsRepeating = true;
-            _shaderTimer.Tick += (_, _) => Diag.Guard("pane.shader", () =>
+            DispatcherQueueTimer shaderTimer = _dispatcher.CreateTimer();
+            _shaderTimer = shaderTimer;
+            shaderTimer.Interval = TimeSpan.FromMilliseconds(16);
+            shaderTimer.IsRepeating = true;
+            TypedEventHandler<DispatcherQueueTimer, object> shaderTick = (_, _) => Diag.Guard("pane.shader", () =>
             {
                 if (!_closed) Redraw();
             });
+            shaderTimer.Tick += shaderTick;
+            _unsubscribes.Add(() => shaderTimer.Tick -= shaderTick);
 
             // The injected PowerShell shell integration reports its location over OSC 7
             // (see Term/ShellIntegration.cs); cmd.exe has no such report, so the shell
             // process itself is polled as the fallback and mirrored in the header.
-            _cwdTimer = _dispatcher.CreateTimer();
-            _cwdTimer.Interval = TimeSpan.FromMilliseconds(300);
-            _cwdTimer.Tick += (_, _) => Diag.Guard("pane.cwd", UpdateLocation);
+            DispatcherQueueTimer cwdTimer = _dispatcher.CreateTimer();
+            _cwdTimer = cwdTimer;
+            cwdTimer.Interval = TimeSpan.FromMilliseconds(300);
+            TypedEventHandler<DispatcherQueueTimer, object> cwdTick = (_, _) => Diag.Guard("pane.cwd", UpdateLocation);
+            cwdTimer.Tick += cwdTick;
+            _unsubscribes.Add(() => cwdTimer.Tick -= cwdTick);
 
             // "selection auto-scroll": while the left button drags past the top or bottom
             // edge, the viewport follows so the selection can extend into the scrollback.
-            _selectScrollTimer = _dispatcher.CreateTimer();
-            _selectScrollTimer.Interval = TimeSpan.FromMilliseconds(40);
-            _selectScrollTimer.Tick += (_, _) => Diag.Guard("pane.selectscroll", StepSelectionScroll);
+            DispatcherQueueTimer selectScrollTimer = _dispatcher.CreateTimer();
+            _selectScrollTimer = selectScrollTimer;
+            selectScrollTimer.Interval = TimeSpan.FromMilliseconds(40);
+            TypedEventHandler<DispatcherQueueTimer, object> selectScrollTick = (_, _) => Diag.Guard("pane.selectscroll", StepSelectionScroll);
+            selectScrollTimer.Tick += selectScrollTick;
+            _unsubscribes.Add(() => selectScrollTimer.Tick -= selectScrollTick);
         }
 
         UpdateShaderAnimation();
@@ -1122,11 +1192,13 @@ public sealed class TerminalPane
         var (tipTitle, tipKey) = Tips.Set(button, tip(), _keybinds.Label(actionId, shortcut));
         button.SetAccessibleName(tip());
 
-        button.Click += (_, _) =>
+        RoutedEventHandler actionClick = (_, _) =>
         {
             OnFocus?.Invoke(this);
             handler();
         };
+        button.Click += actionClick;
+        _unsubscribes.Add(() => button.Click -= actionClick);
 
         _actions!.Children.Add(button);
         _actionVisuals.Add(new ActionVisual
@@ -1154,7 +1226,9 @@ public sealed class TerminalPane
         // The find bar sits on the terminal surface, so its hover follows that palette.
         button.SetColors(Theme.TextFaint, Theme.TextStrong, hoverFill: Theme.ChipHover);
         button.SetAccessibleName(name);
-        button.Click += (_, _) => handler();
+        RoutedEventHandler searchButtonClick = (_, _) => handler();
+        button.Click += searchButtonClick;
+        _unsubscribes.Add(() => button.Click -= searchButtonClick);
         return button;
     }
 
@@ -1589,7 +1663,9 @@ public sealed class TerminalPane
 
     public void Start()
     {
-        if (_ready) return;
+        // A closed pane has _ready cleared, so without the _closed half of this test a late
+        // Loaded callback would wire a session that Close() is about to dispose.
+        if (_closed || _ready) return;
 
         WireSession();
         BeginSession();
@@ -1796,11 +1872,23 @@ public sealed class TerminalPane
         ShowPointer();
         ClearSentKeys();
 
-        _canvas.PointerWheelChanged -= OnPointerWheel;
-        _canvas.PointerPressed -= OnPointerPressed;
-        _canvas.PointerMoved -= OnPointerMoved;
-        _canvas.PointerReleased -= OnPointerReleased;
+        // A menu still up would otherwise keep the pane reachable through its item handlers,
+        // and those would fire into a session that is about to be disposed.
+        _contextMenu?.Hide();
+        _contextMenu = null;
+
+        // The canvas pointer handlers come off with the rest of _unsubscribes in Close().
         UnhookDraw();
+
+        // Win2D registers every control with the shared device and only RemoveFromVisualTree
+        // drops that registration; without it native code keeps the control, and through it
+        // this pane, alive. The element leaves the visual tree right after Close returns, so
+        // the call is posted instead of run inside the caller's tree surgery.
+        if (_dispatcher is not null)
+        {
+            CanvasControl canvas = _canvas;
+            _dispatcher.TryEnqueue(() => Diag.Guard("pane.canvas", () => canvas.RemoveFromVisualTree()));
+        }
         _renderer.NeedsRedraw -= Redraw;
         _renderer.ShadersChanged -= OnShadersChanged;
 
@@ -1820,8 +1908,7 @@ public sealed class TerminalPane
         _shaderTimer?.Stop();
         _shaderTimer = null;
         _renderer.SetSearchSpans(null);
-        _renderer.DisposeImages();
-        _renderer.DisposeShaders();
+        _renderer.Dispose();
         _blinkTimer?.Stop();
         _blinkTimer = null;
         StopSelectionScroll();
@@ -1836,9 +1923,19 @@ public sealed class TerminalPane
         _session.OnResizeWindow = null;
         _session.OnExit = null;
         _session.OnTitle = null;
-        if (_sessionReleased) return;
-        _session.Stop();
-        _session.Dispose();
+
+        if (!_sessionReleased)
+        {
+            _session.Stop();
+            _session.Dispose();
+        }
+
+        // Detach last: a control the UI still holds keeps these delegates, and through them
+        // `this`, so leaving them subscribed roots the pane after its tab and shell are gone.
+        // Running here means a failing unsubscribe can no longer skip the shell teardown
+        // above and strand the ConPTY host behind a pane that is already marked closed.
+        foreach (Action detach in _unsubscribes) detach();
+        _unsubscribes.Clear();
     }
 
     private void HookDraw()
@@ -2529,7 +2626,7 @@ public sealed class TerminalPane
     {
         ImageSource? source = await ShellIcon.GetAsync(executable);
         // Drop a late result: the pane is gone, the shell changed, or extraction failed.
-        if (_sessionReleased || source is null || _shellIconPath != executable) return;
+        if (_closed || _sessionReleased || source is null || _shellIconPath != executable) return;
 
         _shellIconSource = source;
         _shellIcon.Source = source;
@@ -2562,8 +2659,37 @@ public sealed class TerminalPane
     public string WorkingDirectory() =>
         _session.CurrentDirectory(out string directory) ? directory : _workingDirectory;
 
-    /// <summary>Terminal state for "window-save-state"; null when it cannot be encoded.</summary>
-    internal byte[]? Snapshot() => _session.Snapshot();
+    /// <summary>
+    /// The pane's snapshot file for "window-save-state", or null when it cannot be encoded.
+    /// A pane whose content and grid did not change since the previous save reuses that file:
+    /// a structural change saves every pane, and re-encoding an idle background tab would
+    /// cost a native encode and a multi-megabyte write for nothing.
+    /// </summary>
+    internal string? SnapshotForSave()
+    {
+        // A pane in a background tab has not started yet: keep the file it was restored from
+        // so its session is not lost on the next launch.
+        if (!Started) return RestoredSnapshotName;
+
+        long revision = _session.Revision;
+        if (_snapshotCache.Matches(revision, _cols, _rows) &&
+            WindowStateStore.SnapshotExists(_snapshotCache.Name))
+        {
+            return _snapshotCache.Name;
+        }
+
+        string? name = WindowStateStore.WriteSnapshot(path => _session.WriteSnapshotTo(path));
+        if (name is not null)
+        {
+            _snapshotCache.Record(name, revision, _cols, _rows);
+            return name;
+        }
+
+        // The write failed: fall back to the previous file only while it still exists.
+        return WindowStateStore.SnapshotExists(_snapshotCache.Name) ? _snapshotCache.Name : null;
+    }
+
+    private readonly SnapshotCache _snapshotCache = new();
 
     /// <summary>True once the shell has started and the pane owns a live terminal.</summary>
     internal bool Started => _ready;
@@ -3730,13 +3856,28 @@ public sealed class TerminalPane
 
     private void ShowContextMenuNow(Point position)
     {
+        if (_closed) return;
+        // Only one menu at a time: a second right-click while the first is up must not leave
+        // the earlier one holding this pane through the handlers on its items.
+        _contextMenu?.Hide();
+
         var menu = new MenuFlyout();
+        _contextMenu = menu;
+        // Every item's click captures `this`, so each has to come off when the menu goes away.
+        // They are released on Closed rather than parked on _unsubscribes: a menu is built per
+        // right-click, and a growing list of dead menus would root every one of them.
+        var detaches = new List<Action>();
 
         void AddItem(string text, Action action)
         {
             var item = new MenuFlyoutItem { Text = text };
-            item.Click += (_, _) => action();
+            RoutedEventHandler click = (_, _) =>
+            {
+                if (!_closed) action();
+            };
+            item.Click += click;
             menu.Items.Add(item);
+            detaches.Add(() => item.Click -= click);
         }
 
         // The menu intentionally shows no shortcut hints: copy and paste are bound to
@@ -3746,11 +3887,21 @@ public sealed class TerminalPane
             Text = Strings.Copy,
             IsEnabled = _session.HasSelection(),
         };
-        copy.Click += (_, _) => CopySelection();
+        RoutedEventHandler copyClick = (_, _) =>
+        {
+            if (!_closed) CopySelection();
+        };
+        copy.Click += copyClick;
+        detaches.Add(() => copy.Click -= copyClick);
         menu.Items.Add(copy);
 
         var paste = new MenuFlyoutItem { Text = Strings.Paste };
-        paste.Click += (_, _) => PasteFromClipboard();
+        RoutedEventHandler pasteClick = (_, _) =>
+        {
+            if (!_closed) PasteFromClipboard();
+        };
+        paste.Click += pasteClick;
+        detaches.Add(() => paste.Click -= pasteClick);
         menu.Items.Add(paste);
 
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -3761,6 +3912,14 @@ public sealed class TerminalPane
 
         menu.Items.Add(new MenuFlyoutSeparator());
         AddItem(Strings.CloseSplit, () => OnClosePane?.Invoke(this));
+
+        // Clearing the list leaves this closure holding nothing that captures `this`, so a
+        // flyout XAML keeps alive after it closed cannot root the pane either.
+        menu.Closed += (_, _) =>
+        {
+            foreach (Action detach in detaches) detach();
+            detaches.Clear();
+        };
 
         menu.ShowAt(_canvas, new FlyoutShowOptions { Position = position });
     }

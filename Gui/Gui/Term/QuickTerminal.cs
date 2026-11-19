@@ -220,11 +220,32 @@ internal sealed class QuickTerminal
         config.Compact = true;
 
         _window = new Window();
+        // Subscribed before the workspace exists: a failure while Attach builds it would
+        // otherwise leave a window with sessions and timers that nothing ever closes.
+        _window.Closed += (_, _) => OnClosed();
         _root = new Grid();
         _window.Content = _root;
 
-        _workspace = new Workspace(config, null, null, quickTerminal: true);
-        _workspace.Attach(_root, _window);
+        try
+        {
+            _workspace = new Workspace(config, null, null, quickTerminal: true);
+            _workspace.Attach(_root, _window);
+        }
+        catch
+        {
+            // Back to "no window": the next Toggle() has to be able to build a fresh one
+            // instead of showing this half-attached shell for the rest of the session.
+            // The window itself has to go too: its HWND exists from construction, it was
+            // never activated, so nothing will ever raise Closed for it and dropping the
+            // field alone would leak one HWND and XAML island per failed retry.
+            Window? broken = _window;
+            OnClosed();
+            // Guarded: Close() raises Closed, which re-enters the null-safe OnClosed above,
+            // but a throw here would replace the exception that got us here and the log would
+            // only say the broken window could not be closed.
+            if (broken is not null) Diag.Guard("quick.close", broken.Close);
+            throw;
+        }
 
         try
         {
@@ -247,7 +268,6 @@ internal sealed class QuickTerminal
         }
 
         _window.Activated += OnActivated;
-        _window.Closed += (_, _) => OnClosed();
 
         // Unlike the main window, this one is built imperatively, so the workspace is
         // attached before its subtree is loaded. The first FocusTerminal() in ShowCore

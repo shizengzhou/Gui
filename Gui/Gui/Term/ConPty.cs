@@ -92,7 +92,14 @@ internal sealed class ConPty : IDisposable
     private readonly IntPtr _process;
     private readonly Thread _reader;
     private readonly long _startedTicks;
-    private volatile bool _disposed;
+    /// <summary>
+    /// 1 once Dispose has claimed the instance, 0 while it runs. Stop() on the UI thread and
+    /// the orphan path on the reader thread can reach Dispose at the same time, so the flag
+    /// is claimed with Interlocked instead of tested and then set.
+    /// </summary>
+    private int _disposed;
+
+    private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     /// <summary>Raised on the reader thread with raw PTY output.</summary>
     public event Action<byte[], int>? OutputReceived;
@@ -310,12 +317,12 @@ internal sealed class ConPty : IDisposable
         var thread = new Thread(() =>
         {
             const uint WaitTimeout = 0x102;
-            while (!_disposed)
+            while (!IsDisposed)
             {
                 if (WaitForSingleObject(_process, 250) != WaitTimeout) break;
             }
 
-            if (_disposed) return;
+            if (IsDisposed) return;
 
             if (GetExitCodeProcess(_process, out uint code) && code != StillActive)
                 ExitCode = (int)code;
@@ -324,7 +331,7 @@ internal sealed class ConPty : IDisposable
             // The pane closes as soon as this is reported, so give the reader a moment to take
             // whatever the pty flushed; otherwise a command's last lines leave with the pane.
             Thread.Sleep(150);
-            if (_disposed) return;
+            if (IsDisposed) return;
 
             ProcessExited?.Invoke();
         })
@@ -342,7 +349,7 @@ internal sealed class ConPty : IDisposable
         {
             fixed (byte* pinned = buffer)
             {
-                while (!_disposed)
+                while (!IsDisposed)
                 {
                     if (!ReadFile(_outputRead, pinned, buffer.Length, out int bytesRead, IntPtr.Zero) || bytesRead <= 0)
                         break;
@@ -355,7 +362,7 @@ internal sealed class ConPty : IDisposable
             // Pipe closed: treat as EOF.
         }
 
-        if (!_disposed)
+        if (!IsDisposed)
         {
             // The output pipe closes when the child goes away, but "gone" is not the same as
             // "reaped": wait for the process briefly so the code is the real one rather than
@@ -370,7 +377,7 @@ internal sealed class ConPty : IDisposable
 
     public void Write(ReadOnlySpan<byte> data)
     {
-        if (_disposed || data.IsEmpty)
+        if (IsDisposed || data.IsEmpty)
             return;
         unsafe
         {
@@ -389,7 +396,7 @@ internal sealed class ConPty : IDisposable
 
     public void Resize(short cols, short rows)
     {
-        if (_disposed)
+        if (IsDisposed)
             return;
         int hr = ResizePseudoConsole(_pseudoConsole, new COORD { X = cols, Y = rows });
         Diag.Debug("pty.resize", $"cols={cols} rows={rows} hr={hr}");
@@ -407,9 +414,10 @@ internal sealed class ConPty : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        // Only the thread that claims the flag may tear the handles down; the loser returns
+        // instead of closing a pseudo console the winner is already closing.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        _disposed = true;
 
         try { ClosePseudoConsole(_pseudoConsole); } catch { }
         try { TerminateProcess(_process, 0); } catch { }

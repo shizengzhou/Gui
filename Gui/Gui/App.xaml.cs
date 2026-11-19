@@ -326,7 +326,20 @@ public partial class App : Application
     private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null,
         Term.WindowState? restore = null, string? command = null)
     {
-        var window = new MainWindow(workingDirectory, movedTab, restore, command, _launchOverrides);
+        MainWindow window;
+        try
+        {
+            window = new MainWindow(workingDirectory, movedTab, restore, command, _launchOverrides);
+        }
+        catch (Exception error) when (movedTab is not null)
+        {
+            // The tab already left its old window, so no pane can ever adopt these sessions.
+            // Without this they would keep buffering their shells' output for good.
+            Diag.LogException("App.ShowWindow", error);
+            Term.Workspace.DiscardMovedTab(movedTab!);
+            return;
+        }
+
         _windows.Add(window);
         window.Closed += (_, _) => OnWindowClosed(window);
         window.Activated += (_, args) =>
@@ -347,6 +360,11 @@ public partial class App : Application
     {
         var closed = window as MainWindow;
         _windows.Remove(window);
+
+        // _active must not outlive its window: it would pin the closed window, its XAML tree
+        // and the workspace behind it until some other window happens to be activated, and
+        // "gui +new-tab" would target the dead window instead of a live one.
+        if (ReferenceEquals(_active, window)) _active = null;
 
         // The drop-down is not a workspace: when the last real window goes, it goes too.
         // Leaving it alive would keep the process running with no main window at all, and

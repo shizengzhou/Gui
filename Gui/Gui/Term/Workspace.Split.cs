@@ -368,6 +368,7 @@ public sealed partial class Workspace
     {
         RetireExit(pane);
         _closingPanes.Remove(pane);
+        ForgetPane(pane);
 
         for (int index = 0; index < _tabs.Count; index++)
         {
@@ -626,6 +627,7 @@ public sealed partial class Workspace
         {
             RetireExit(pane);
             _closingPanes.Remove(pane);
+            ForgetPane(pane);
             // The tab is leaving the tree, so its shells have to stop here: nothing else
             // reaches them, and a ConPTY that stays alive keeps its console host too.
             pane.Close();

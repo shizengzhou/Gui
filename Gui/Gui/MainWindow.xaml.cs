@@ -99,13 +99,20 @@ public sealed partial class MainWindow : Window
             if (_inheritedDirectory is not null) config.WorkingDirectory = _inheritedDirectory;
             if (_commandOverride is not null) config.Command = _commandOverride;
             _workspace = new Term.Workspace(config, _movedTab, _restore, launchOverrides: _overrides);
+            // Subscribed before Attach, which builds the chrome, opens the tabs and starts the
+            // timers: if any of that throws, the catch below leaves a live workspace behind
+            // and this hook is the only thing that would ever close its shells.
+            Closed += (_, _) => _workspace?.Close();
             _workspace.Attach(RootGrid, this);
             ApplyStartupWindow(config, _workspace);
-            Closed += (_, _) => _workspace?.Close();
         }
         catch (Exception error)
         {
             Diag.LogException("MainWindow.OnTerminalLoaded", error);
+            // A handover that failed here never reaches App.ShowWindow's catch, so the
+            // sessions nobody adopted would otherwise sit in _movedTab until the window dies.
+            // Adopted panes already cleared their slot; DiscardMovedSplit disposes the rest.
+            if (_movedTab is { } moved) Term.Workspace.DiscardMovedTab(moved);
         }
     }
 

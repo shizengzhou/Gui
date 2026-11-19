@@ -121,6 +121,7 @@ public sealed unsafe class TerminalRenderer
     private readonly Dictionary<uint, ImageTexture> _imageTextures = new();
     private IntPtr _imageIterator;
     private int _imageFrame;
+    private bool _disposed;
 
     /// <summary>One image rectangle in viewport coordinates, in the library's pixel units.</summary>
     private readonly record struct ImagePlacement(
@@ -495,8 +496,13 @@ public sealed unsafe class TerminalRenderer
         _resolvedFamily = FirstMonospace(_familyChains[0]) ??
                           FirstMonospace(DefaultFamilyCandidates) ?? "Consolas";
 
-        _baseFormat = CreateBaseFormat(_resolvedFamily);
+        // These are COM wrappers around DirectWrite objects: replacing them without
+        // disposing would leave the old ones to the finalizer, which on a small managed
+        // heap can take a long time and keep the native memory around.
+        foreach (CanvasTextFormat format in _formats.Values) format.Dispose();
         _formats.Clear();
+        _baseFormat.Dispose();
+        _baseFormat = CreateBaseFormat(_resolvedFamily);
         BuildFallbacks();
         MeasureCell();
     }
@@ -1053,6 +1059,7 @@ public sealed unsafe class TerminalRenderer
     /// </summary>
     private void BuildTypography()
     {
+        _typography?.Dispose();
         _typography = null;
         if (_config is null || _config.FontFeatures.Count == 0) return;
 
@@ -3087,6 +3094,40 @@ public sealed unsafe class TerminalRenderer
         _imagePlacements.Clear();
     }
 
+    /// <summary>
+    /// Releases everything this renderer owns. The shared <c>CanvasDevice</c> belongs to the
+    /// process and stays alive; everything else — fonts, formats, typography, cached layouts,
+    /// background image, shaders and uploaded textures — is per pane and dies with it. The
+    /// pane calls this when it closes: without it these wrappers would only be released by
+    /// their finalizers, and the managed heap is far too small to make the GC run often.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        DisposeImages();
+        DisposeShaders();
+        InvalidateLayouts();
+        _segments.Clear();
+        _coverage.Clear();
+        _faces.Clear();
+        _scales.Clear();
+        _familyExists.Clear();
+        _contrast.Clear();
+
+        foreach (CanvasTextFormat format in _formats.Values) format.Dispose();
+        _formats.Clear();
+        _baseFormat.Dispose();
+        _typography?.Dispose();
+        _typography = null;
+        _systemFontSet?.Dispose();
+        _systemFontSet = null;
+        _backgroundImage?.Dispose();
+        _backgroundImage = null;
+        _backgroundImagePath = string.Empty;
+    }
+
     // ---------------- background image ----------------
 
     private void SetBackgroundImage(string path)
@@ -3107,7 +3148,8 @@ public sealed unsafe class TerminalRenderer
     /// </summary>
     private void ApplyBackgroundImage(string path, CanvasBitmap? bitmap)
     {
-        if (!string.Equals(path, _backgroundImagePath, StringComparison.Ordinal))
+        // A load started before the pane closed can finish afterwards.
+        if (_disposed || !string.Equals(path, _backgroundImagePath, StringComparison.Ordinal))
         {
             bitmap?.Dispose();
             return;

@@ -1136,6 +1136,20 @@ public sealed partial class Workspace
 
     // ---------------- shutdown ----------------
 
+    /// <summary>
+    /// Drops every field that points at a pane which is leaving. Each of these keeps the
+    /// whole pane — its XAML tree, its renderer and its session — alive, so a stale one
+    /// outlives the tab it belonged to for the rest of the window's life.
+    /// </summary>
+    private void ForgetPane(TerminalPane pane)
+    {
+        if (ReferenceEquals(_imeAnchorPane, pane)) _imeAnchorPane = null;
+        if (ReferenceEquals(_imeCompositionPane, pane)) _imeCompositionPane = null;
+        if (ReferenceEquals(_dragPane, pane)) _dragPane = null;
+        if (ReferenceEquals(_dropPane, pane)) _dropPane = null;
+        if (ReferenceEquals(_surfaceTarget, pane)) _surfaceTarget = null;
+    }
+
     public void Close()
     {
         InputSite.Release();
@@ -1150,8 +1164,32 @@ public sealed partial class Workspace
         _chipSpringTimer?.Stop();
         _chipSpringTimer = null;
 
+        // Every one of these timers is queued on the UI dispatcher, so a running one keeps
+        // this workspace (and through _root the window's whole XAML tree) rooted after the
+        // window is gone, and its tick writes into elements that no longer exist. Dragging is
+        // the one that never ends by itself: EndTabDrag needs a pointer release a closing
+        // window never gets, which would leave the 16 ms scrub timer ticking for the process.
+        _dragScrollTimer?.Stop();
+        _dropTimer?.Stop();
+        _sidebarTimer?.Stop();
+        _updatePillTimer?.Stop();
+        _updateDelayTimer?.Stop();
+        _zoomTransition?.Timer?.Stop();
+        _zoomTransition = null;
+        _sidebarAnimating = false;
+        _dragTab = null;
+        _dragArmed = false;
+        _dragMoving = false;
+        _hasPendingTabMove = false;
+
         foreach (Tab tab in _tabs) ForEachPane(tab, pane => pane.Close());
         _tabs.Clear();
+
+        _imeAnchorPane = null;
+        _imeCompositionPane = null;
+        _dragPane = null;
+        _dropPane = null;
+        _surfaceTarget = null;
     }
 
     // ---------------- Win32 ----------------

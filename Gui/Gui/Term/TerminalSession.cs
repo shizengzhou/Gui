@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace Gui.Term;
 
@@ -47,7 +48,24 @@ public sealed unsafe class TerminalSession : IDisposable
     private ConPty? _pty;
     private bool _disposed;
 
-    private readonly List<byte> _pending = new(64 * 1024);
+    /// <summary>
+    /// Incremented whenever the terminal's content changes (output, resizes, writes that go
+    /// straight to the terminal). "window-save-state" uses it to skip re-encoding a pane that
+    /// has not changed since its last snapshot.
+    /// </summary>
+    private long _revision;
+
+    /// <summary>Output waiting for the UI thread; capped so an ownerless session cannot grow.</summary>
+    private readonly PendingOutput _pending = new();
+
+    /// <summary>When this session last found itself without a pane, or 0 while it has one.</summary>
+    private long _unownedSince;
+
+    /// <summary>
+    /// How long a session may go without an owner before its shell is stopped. A tab handover
+    /// finishes inside one UI turn, so this only fires when the handover never completed.
+    /// </summary>
+    private const long UnownedGraceMs = 10_000;
 
     // Delegates must stay alive for as long as the native terminal holds them.
     private readonly GhosttyNative.WritePtyFn _writePty;
@@ -88,7 +106,7 @@ public sealed unsafe class TerminalSession : IDisposable
     private readonly ProgramStatusTracker _programStatus = new();
 
     /// <summary>The saved screen and scrollback, written once the pane's real grid is known.</summary>
-    private string _restoreText = string.Empty;
+    private readonly RestoreText _restoreText = new();
 
     /// <summary>Marshals work onto the UI thread. Must not block; called from the reader thread.</summary>
     public Action<Action>? Post;
@@ -136,6 +154,9 @@ public sealed unsafe class TerminalSession : IDisposable
     public IntPtr RenderState => _renderState;
 
     public bool Running => _pty is not null;
+
+    /// <summary>Bumped on every change that alters what a snapshot would encode.</summary>
+    internal long Revision => _revision;
 
     /// <summary>True when the terminal came from a saved snapshot rather than a blank screen.</summary>
     internal bool Restored { get; private set; }
@@ -344,10 +365,29 @@ public sealed unsafe class TerminalSession : IDisposable
     private void OnPtyOutput(byte[] buffer, int count)
     {
         Tap.Write("in", buffer.AsSpan(0, count));
+
+        // No pane owns this session: it is either between two panes (a tab moving to another
+        // window) or the handover failed. Buffering forever would let the shell's output grow
+        // without bound, so an ownerless session is stopped after a grace period.
+        if (Post is null)
+        {
+            long since = Interlocked.CompareExchange(ref _unownedSince, Environment.TickCount64, 0);
+            if (since != 0 && Environment.TickCount64 - since > UnownedGraceMs)
+            {
+                Diag.Warn("session.orphan", "no pane adopted this session; stopping the shell");
+                DetachPty();
+                return;
+            }
+        }
+        else
+        {
+            Interlocked.Exchange(ref _unownedSince, 0);
+        }
+
         lock (_pendingLock)
         {
             if (_disposed) return;
-            _pending.AddRange(new ReadOnlySpan<byte>(buffer, 0, count));
+            _pending.Append(new ReadOnlySpan<byte>(buffer, 0, count));
         }
         Post?.Invoke(Drain);
     }
@@ -383,14 +423,12 @@ public sealed unsafe class TerminalSession : IDisposable
 
     private void Drain()
     {
-        byte[] bytes;
+        byte[]? bytes;
         lock (_pendingLock)
         {
-            if (_pending.Count == 0) return;
-            bytes = _pending.ToArray();
-            _pending.Clear();
+            bytes = _pending.Take();
         }
-
+        if (bytes is null) return;
         if (_terminal != IntPtr.Zero)
         {
             fixed (byte* data = bytes)
@@ -398,6 +436,7 @@ public sealed unsafe class TerminalSession : IDisposable
         }
         // The terminal consumes the OSC sequences; read them from the same bytes first.
         _marks.Feed(bytes);
+        _revision++;
         OnOutput?.Invoke();
         OnUpdate?.Invoke();
     }
@@ -486,16 +525,26 @@ public sealed unsafe class TerminalSession : IDisposable
     public void Stop()
     {
         if (_disposed) return;
-
-        ConPty? pty = _pty;
-        _pty = null;
-        if (pty is not null)
-        {
-            pty.OutputReceived -= OnPtyOutput;
-            pty.Exited -= OnPtyExited;
-            pty.Dispose();
-        }
+        DetachPty();
         _marks.Reset();
+    }
+
+    /// <summary>
+    /// Stops the shell without touching UI-thread state. The orphan path calls this from the
+    /// pty reader thread, where <see cref="Stop"/> must not run: the shell-mark parser it
+    /// resets is only ever touched on the UI thread.
+    /// </summary>
+    private void DetachPty()
+    {
+        // Stop() on the UI thread and the orphan path on the reader thread can reach this
+        // for the same session. Only the caller that actually clears the field may
+        // unsubscribe and dispose; a second Dispose would close the pseudo console twice.
+        ConPty? pty = Interlocked.Exchange(ref _pty, null);
+        if (pty is null) return;
+
+        pty.OutputReceived -= OnPtyOutput;
+        pty.Exited -= OnPtyExited;
+        pty.Dispose();
     }
 
     public void WriteInput(ReadOnlySpan<byte> utf8)
@@ -1462,6 +1511,7 @@ public sealed unsafe class TerminalSession : IDisposable
         Diag.Debug("session.resize", $"cols={cols} rows={rows} pty={_pty is not null}");
         _pty?.Resize((short)cols, (short)rows);
         GhosttyNative.ghostty_terminal_resize(_terminal, cols, rows, metrics.Width, metrics.Height);
+        _revision++;
         SetMouseEncoderSize(cols, rows);
         OnUpdate?.Invoke();
     }
@@ -1577,7 +1627,7 @@ public sealed unsafe class TerminalSession : IDisposable
         lock (_pendingLock)
         {
             if (_disposed) return;
-            _pending.AddRange(bytes);
+            _pending.Append(bytes);
         }
         Post?.Invoke(Drain);
     }
@@ -2189,50 +2239,53 @@ public sealed unsafe class TerminalSession : IDisposable
         string? text = FormatSnapshotAsVt(snapshot);
         if (text is null) return false;
 
-        _restoreText = WithoutDividers(text).TrimEnd('\r', '\n');
+        _restoreText.Set(WithoutDividers(text).TrimEnd('\r', '\n'));
         return _restoreText.Length > 0;
     }
 
     /// <summary>
-    /// Encodes the whole terminal (screen and scrollback) for "window-save-state". Null when
-    /// the library cannot encode it, for example a half-written escape sequence that was never
-    /// tracked; the pane then simply restores empty.
+    /// Encodes the whole terminal (screen and scrollback) for "window-save-state" straight
+    /// into <paramref name="path"/>. False when the library cannot encode it, for example a
+    /// half-written escape sequence that was never tracked; the pane then simply restores
+    /// empty. The bytes never become a managed array: a scrollback-sized save would otherwise
+    /// allocate tens of megabytes on every tab or split change.
     /// </summary>
-    internal unsafe byte[]? Snapshot()
+    internal unsafe bool WriteSnapshotTo(string path)
     {
         // A runaway scrollback must not turn a window close into a multi-hundred-megabyte
         // write; the terminal's own scrollback limit keeps this well below the cap normally.
         const int maxBytes = 128 * 1024 * 1024;
 
-        if (_terminal == IntPtr.Zero || _disposed) return null;
+        if (_terminal == IntPtr.Zero || _disposed) return false;
+
+        int result = GhosttyNative.ghostty_snapshot_encode_alloc(
+            _terminal, IntPtr.Zero, out IntPtr data, out nuint length);
+        if (result != GhosttyNative.SUCCESS)
+        {
+            Diag.Warn("window-state", $"snapshot encode failed result={result}");
+            return false;
+        }
+        if (data == IntPtr.Zero || length == 0) return false;
 
         try
         {
-            int result = GhosttyNative.ghostty_snapshot_encode_alloc(
-                _terminal, IntPtr.Zero, out IntPtr data, out nuint length);
-            if (result != GhosttyNative.SUCCESS)
-            {
-                Diag.Warn("window-state", $"snapshot encode failed result={result}");
-                return null;
-            }
-            if (data == IntPtr.Zero || length == 0) return null;
+            if (length > (nuint)maxBytes) return false;
 
-            try
-            {
-                if (length > (nuint)maxBytes) return null;
-                var bytes = new byte[(int)length];
-                Marshal.Copy(data, bytes, 0, bytes.Length);
-                return bytes;
-            }
-            finally
-            {
-                GhosttyNative.ghostty_free(IntPtr.Zero, data, length);
-            }
+            using var stream = new FileStream(path, FileMode.Create, FileAccess.Write,
+                FileShare.None, 64 * 1024);
+            // Copying straight from the library's buffer into the file keeps the snapshot off
+            // the large object heap.
+            stream.Write(new ReadOnlySpan<byte>((void*)data, (int)length));
+            return true;
         }
         catch (Exception error)
         {
             Diag.LogException("Session.snapshot", error);
-            return null;
+            return false;
+        }
+        finally
+        {
+            GhosttyNative.ghostty_free(IntPtr.Zero, data, length);
         }
     }
 
@@ -2253,11 +2306,15 @@ public sealed unsafe class TerminalSession : IDisposable
         // The saved output is written at the real grid, not the 80x24 seed, so it fills the
         // pane instead of scrolling away before the shell starts.
         Resize(cols, rows, metrics);
-        if (_restoreText.Length > 0) WriteVt(_restoreText);
+        // The text is only an intermediate form of the snapshot: hand it over exactly once
+        // and let the buffer drop it, or the whole previous scrollback would be retained as
+        // a UTF-16 string for the pane's entire life.
+        int restored = _restoreText.Length;
+        if (restored > 0) WriteVt(_restoreText.Take());
         ScrollToBottom();
         if (banner.Length > 0) WriteVt("\r\n\x1b[2m" + banner + "\x1b[0m\r\n");
         OnUpdate?.Invoke();
-        Diag.Debug("restore", $"restored {_restoreText.Length} chars into {cols}x{rows}");
+        Diag.Debug("restore", $"restored {restored} chars into {cols}x{rows}");
     }
 
     private unsafe void WriteVt(string text)
@@ -2266,6 +2323,7 @@ public sealed unsafe class TerminalSession : IDisposable
         byte[] bytes = Encoding.UTF8.GetBytes(text);
         fixed (byte* data = bytes)
             GhosttyNative.ghostty_terminal_vt_write(_terminal, data, (nuint)bytes.Length);
+        _revision++;
     }
 
     public void Dispose()

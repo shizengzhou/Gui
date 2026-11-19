@@ -115,11 +115,15 @@ internal static class WindowStateStore
         return Path.Combine(appData, "gui", "session");
     }
 
-    /// <summary>Writes one pane snapshot and returns the file name stored in the session file.</summary>
-    public static string? WriteSnapshot(byte[] bytes)
+    /// <summary>
+    /// Writes one pane snapshot through <paramref name="write"/> and returns the file name
+    /// stored in the session file. The writer receives the temporary path so the snapshot can
+    /// go straight from the library to disk instead of through a large managed array.
+    /// </summary>
+    public static string? WriteSnapshot(Func<string, bool> write)
     {
         string directory = SessionDirectory();
-        if (string.IsNullOrEmpty(directory) || bytes.Length == 0) return null;
+        if (string.IsNullOrEmpty(directory)) return null;
 
         try
         {
@@ -127,7 +131,11 @@ internal static class WindowStateStore
             string name = Guid.NewGuid().ToString("N") + ".snap";
             string path = Path.Combine(directory, name);
             string temp = path + ".tmp";
-            File.WriteAllBytes(temp, bytes);
+            if (!write(temp))
+            {
+                TryDelete(temp);
+                return null;
+            }
             File.Move(temp, path, true);
             return name;
         }
@@ -135,6 +143,29 @@ internal static class WindowStateStore
         {
             Diag.Warn("window-state.snapshot", error.Message);
             return null;
+        }
+    }
+
+    /// <summary>True when the named snapshot file still exists in the session directory.</summary>
+    public static bool SnapshotExists(string? name)
+    {
+        string directory = SessionDirectory();
+        if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(name)) return false;
+
+        // Only a bare file name is accepted: the session file is user-editable.
+        if (Path.GetFileName(name) != name) return false;
+        return File.Exists(Path.Combine(directory, name));
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception error)
+        {
+            Diag.Warn("window-state.snapshot", error.Message);
         }
     }
 
