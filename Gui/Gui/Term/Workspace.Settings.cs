@@ -870,7 +870,9 @@ public sealed partial class Workspace
                     _config.NewTabPosition == "end" ? 1 : 0,
                     index => ApplyNewTabPositionChoice(index == 1 ? "end" : "current"))),
             SettingsRow(Strings.SettingsTabInheritWorkingDirectory, null,
-                SettingsSwitch(_config.TabInheritWorkingDirectory, ApplyTabInheritWorkingDirectoryChoice)))));
+                SettingsSwitch(_config.TabInheritWorkingDirectory, ApplyTabInheritWorkingDirectoryChoice)),
+            SettingsRow(Strings.SettingsSplitInheritWorkingDirectory, null,
+                SettingsSwitch(_config.SplitInheritWorkingDirectory, ApplySplitInheritWorkingDirectoryChoice)))));
 
         IReadOnlyList<string> families = MonospaceFontFamilies();
         ComboBox fontFamilies = SettingsEditableSelect(
@@ -1559,6 +1561,12 @@ public sealed partial class Workspace
     {
         _config.TabInheritWorkingDirectory = inherit;
         Config.SaveValue("tab-inherit-working-directory", inherit ? "true" : "false");
+    }
+
+    private void ApplySplitInheritWorkingDirectoryChoice(bool inherit)
+    {
+        _config.SplitInheritWorkingDirectory = inherit;
+        Config.SaveValue("split-inherit-working-directory", inherit ? "true" : "false");
     }
 
     private void ApplyCursorStyle(string style)

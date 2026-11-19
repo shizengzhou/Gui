@@ -163,6 +163,8 @@ public static class Strings
     public static string SettingsNewTabPositionEnd => Pick("At end", "末尾");
     public static string SettingsTabInheritWorkingDirectory =>
         Pick("Inherit working directory in new tabs", "新标签页继承工作目录");
+    public static string SettingsSplitInheritWorkingDirectory =>
+        Pick("Inherit working directory in new splits", "新分屏继承工作目录");
     public static string SettingsRightClickAction => Pick("Right-click action", "右键菜单");
     public static string SettingsRightClickContextMenu => Pick("Context menu", "上下文菜单");
     public static string SettingsRightClickPaste => Pick("Paste", "粘贴");
