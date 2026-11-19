@@ -68,6 +68,17 @@ public sealed partial class MainWindow : Window
         if (_restore is null) SizeAndCenter();
         else RestoreGeometry(_restore);
 
+        // The workspace configures the presenter in Attach, which runs from RootGrid.Loaded — a
+        // couple of frames after Activate(), and doing it any earlier tears the window down.
+        // Until then the window would paint its native title bar, so cloak it on first
+        // activation and uncloak once the chrome is up: the user never sees the bare frame.
+        Activated += (_, _) =>
+        {
+            if (_cloakedForStartup) return;
+            _cloakedForStartup = true;
+            Cloak(true);
+        };
+
         AppWindow.Closing += (_, _) => Snapshot = CaptureState();
 
         // The window has no system title bar, so nothing copies the exe's icon onto the HWND.
@@ -105,10 +116,12 @@ public sealed partial class MainWindow : Window
             Closed += (_, _) => _workspace?.Close();
             _workspace.Attach(RootGrid, this);
             ApplyStartupWindow(config, _workspace);
+            Cloak(false);
         }
         catch (Exception error)
         {
             Diag.LogException("MainWindow.OnTerminalLoaded", error);
+            Cloak(false);   // a broken window must still be visible, so it can be closed
             // A handover that failed here never reaches App.ShowWindow's catch, so the
             // sessions nobody adopted would otherwise sit in _movedTab until the window dies.
             // Adopted panes already cleared their slot; DiscardMovedSplit disposes the rest.
@@ -359,6 +372,30 @@ public sealed partial class MainWindow : Window
             SizeAndCenter();
         }
     }
+
+    /// <summary>Set once the first activation has cloaked the window until the chrome is up.</summary>
+    private bool _cloakedForStartup;
+
+    private const int DWMWA_CLOAK = 13;   // set with 13, read back with DWMWA_CLOAKED (14)
+
+    /// <summary>DWM cloak: the window keeps its HWND, layout and messages but is not drawn.</summary>
+    private void Cloak(bool cloak)
+    {
+        IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (hwnd == IntPtr.Zero) return;
+        int value = cloak ? 1 : 0;
+        try
+        {
+            DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, ref value, sizeof(int));
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("MainWindow.Cloak", error);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
