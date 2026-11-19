@@ -70,9 +70,11 @@ public class CliListKeybindsTests : IDisposable
         Assert.True(Has(entries, "ctrl+shift+p", "toggle_command_palette"));
         Assert.True(Has(entries, "ctrl+alt+down", "goto_split:down"));
         Assert.True(Has(entries, "ctrl+0", "reset_font_size"));
-        // new_split:right has two defaults and both are listed.
+        // Splits advertise one chord each; the Windows Terminal Alt+Shift aliases are gone.
         Assert.True(Has(entries, "ctrl+shift+o", "new_split:right"));
-        Assert.True(Has(entries, "alt+shift+plus", "new_split:right"));
+        Assert.True(Has(entries, "ctrl+shift+e", "new_split:down"));
+        Assert.False(Has(entries, "alt+shift+plus", "new_split:right"));
+        Assert.False(Has(entries, "alt+shift+minus", "new_split:down"));
     }
 
     [Fact]

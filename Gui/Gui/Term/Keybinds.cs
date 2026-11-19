@@ -177,8 +177,8 @@ internal sealed class Keybinds
         ["goto_tab:8"] = new[] { "alt+8" },
         ["toggle_sidebar"] = new[] { "ctrl+shift+b" },
 
-        ["new_split:right"] = new[] { "ctrl+shift+o", "alt+shift+plus" },
-        ["new_split:down"] = new[] { "ctrl+shift+e", "alt+shift+minus" },
+        ["new_split:right"] = new[] { "ctrl+shift+o" },
+        ["new_split:down"] = new[] { "ctrl+shift+e" },
         ["goto_split:previous"] = new[] { "ctrl+super+bracket_left" },
         ["goto_split:next"] = new[] { "ctrl+super+bracket_right" },
         ["goto_split:left"] = new[] { "ctrl+alt+left" },

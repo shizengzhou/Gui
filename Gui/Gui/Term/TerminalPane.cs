@@ -735,9 +735,9 @@ public sealed class TerminalPane
         };
         _actionsInset = 0.0;
 
-        AddAction(SplitIcon(true, iconFaint, 12.0), () => Strings.SplitRight, "new_split:right", "alt+shift+plus",
+        AddAction(SplitIcon(true, iconFaint, 12.0), () => Strings.SplitRight, "new_split:right", "ctrl+shift+o",
             () => OnSplitRight?.Invoke(this));
-        AddAction(SplitIcon(false, iconFaint, 12.0), () => Strings.SplitDown, "new_split:down", "alt+shift+-",
+        AddAction(SplitIcon(false, iconFaint, 12.0), () => Strings.SplitDown, "new_split:down", "ctrl+shift+e",
             () => OnSplitDown?.Invoke(this));
 
         _zoomIcon = StyledIcon(iconFaint, 12.0);

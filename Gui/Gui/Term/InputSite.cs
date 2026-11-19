@@ -10,9 +10,9 @@ namespace Gui.Term;
 ///
 /// WinUI hands WM_SYSCHAR from its child "InputSiteWindowClass" windows to DefWindowProc,
 /// which plays the default system sound for any Alt chord that produced a character.
-/// Alt+Shift+Plus / Alt+Shift+Minus (splits) and Alt+1..9 (tab switching) are handled by
-/// the app, so their WM_SYSCHAR is swallowed at that window. The flag is armed only by
-/// those keys, so Alt+Space and other Alt combinations keep their normal behaviour.
+/// Alt+Shift+Plus / Alt+Shift+Minus and Alt+1..9 (tab switching) are swallowed at that
+/// window, so those chords never beep. The flag is armed only by those keys, so Alt+Space
+/// and other Alt combinations keep their normal behaviour.
 /// </summary>
 internal static class InputSite
 {

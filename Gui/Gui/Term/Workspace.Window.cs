@@ -1022,23 +1022,6 @@ public sealed partial class Workspace
             }
         }
 
-        // Windows Terminal's split bindings: Alt+Shift+Plus splits right, Alt+Shift+- splits
-        // down. WinUI may report the OEM key or the numpad key depending on the layout.
-        if (alt && shift && !ctrl)
-        {
-            int keyCode = (int)args.Key;
-            if (keyCode == 0xBB || args.Key == VirtualKey.Add)
-            {
-                SplitFocused(SplitDirection.Right);
-                return true;
-            }
-            if (keyCode == 0xBD || args.Key == VirtualKey.Subtract)
-            {
-                SplitFocused(SplitDirection.Down);
-                return true;
-            }
-        }
-
         if (ctrl && shift && !alt)
         {
             // VK_OEM_COMMA has no VirtualKey member; WinUI reports the raw OEM code.
