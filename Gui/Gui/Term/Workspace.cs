@@ -267,6 +267,7 @@ public sealed partial class Workspace
     private StackPanel _paletteRows = null!;
     private TextBlock? _paletteEmpty;
     private readonly List<PaletteItem> _paletteItems = new();
+    private readonly List<PaletteItem> _paletteTabItems = new();
     private readonly List<PaletteItem> _paletteWindowItems = new();
     private readonly List<PaletteItem> _paletteThemeItems = new();
     private List<PaletteItem>? _paletteActiveSub;

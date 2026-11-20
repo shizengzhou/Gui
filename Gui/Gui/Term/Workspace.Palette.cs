@@ -438,6 +438,7 @@ public sealed partial class Workspace
     private void ResetPaletteState()
     {
         _paletteItems.Clear();
+        _paletteTabItems.Clear();
         _paletteWindowItems.Clear();
         _paletteThemeItems.Clear();
         _paletteWindowChecks.Clear();
@@ -960,6 +961,36 @@ public sealed partial class Workspace
         if (next != _paletteSelected) SelectPalette(next);
     }
 
+    /// <summary>
+    /// Rebuilds the "switch to tab" rows from the tabs that are open when the palette opens.
+    /// Titles and the tab list both change between opens, so a stale row would switch to the
+    /// wrong tab; the rows are dropped and recreated instead of refreshed.
+    /// </summary>
+    private void RebuildPaletteTabRows()
+    {
+        foreach (PaletteItem item in _paletteTabItems)
+        {
+            _paletteRows.Children.Remove(item.Row);
+            _paletteItems.Remove(item);
+        }
+        _paletteTabItems.Clear();
+        if (_tabs.Count == 0) return;
+
+        for (int index = 0; index < _tabs.Count; index++)
+        {
+            Tab target = _tabs[index];
+            string shortcut = index < 8 ? _keybinds.Label($"goto_tab:{index + 1}", string.Empty) : string.Empty;
+            // Appended after the sorted commands instead of being sorted in with them, so the
+            // tab rows always sit at the end of the list.
+            PaletteItem item = MakeRow(Strings.TabName(target.Title), shortcut, _paletteItems, () =>
+            {
+                int live = IndexOf(target);
+                if (live >= 0) Activate(live);
+            });
+            _paletteTabItems.Add(item);
+        }
+    }
+
     private void ShowCommandPalette()
     {
         if (_palettePanel is null) return;
@@ -972,6 +1003,7 @@ public sealed partial class Workspace
         _paletteInput.PlaceholderText = _paletteRootPlaceholder;
         _paletteInput.Text = string.Empty;
         RefreshPaletteValues();
+        RebuildPaletteTabRows();
         FilterPalette();
 
         // The opening press keeps bubbling to the dismiss handler; mark it so that press is
