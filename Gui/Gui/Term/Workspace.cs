@@ -147,8 +147,6 @@ public sealed partial class Workspace
         public string Label = string.Empty;
         public Action? Action;
         public bool Submenu;
-        public string Value = string.Empty;
-        public bool Light;
 
         /// <summary>True while the pointer is over the row; selection styling keeps it in mind.</summary>
         public bool Hovered;
@@ -271,7 +269,6 @@ public sealed partial class Workspace
     private TextBlock? _paletteEmpty;
     private readonly List<PaletteItem> _paletteItems = new();
     private readonly List<PaletteItem> _paletteTabItems = new();
-    private readonly List<PaletteItem> _paletteWindowItems = new();
     private readonly List<PaletteItem> _paletteThemeItems = new();
     private List<PaletteItem>? _paletteActiveSub;
     private bool _paletteSubmenu;
@@ -285,9 +282,8 @@ public sealed partial class Workspace
     private string _paletteRootPlaceholder = string.Empty;
     private int _paletteSelected;
     private List<PaletteItem>? _paletteSelectedList;
-    private TextBlock? _paletteWindowValue;
     private TextBlock? _paletteThemeValue;
-    private readonly List<FontIcon> _paletteWindowChecks = new();
+    private readonly List<(string Value, FontIcon Check)> _paletteWindowThemeChecks = new();
 
     private TextBox _imeSink = null!;
     private bool _composing;

@@ -373,9 +373,9 @@ public static class Strings
     public static string CopyDiagnosticsLog => Pick("Copy Diagnostics Log", "复制调试日志");
     public static string EnableCrashDumps => Pick("Enable Crash Dumps", "启用崩溃转储");
 
-    public static string ChooseWindowTheme => Pick("Choose Window Theme\u2026", "选择窗口主题\u2026");
-    public static string WindowTheme => Pick("Window Theme", "窗口主题");
     public static string ChooseTheme => Pick("Choose Theme\u2026", "选择主题\u2026");
+    public static string WindowThemeOption(string value) =>
+        Pick($"Window Theme: {value}", $"窗口主题：{value}");
     public static string Theme => Pick("Theme", "主题");
 
     public static string TabBarTop => Pick("Tabs on Top", "标签栏在顶部");

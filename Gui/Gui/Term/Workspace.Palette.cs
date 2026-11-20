@@ -460,51 +460,12 @@ public sealed partial class Workspace
         items.Add(item);
     }
 
-    private FontIcon AddOptionRow(List<PaletteItem> items, string text, string value, bool light, Action action)
-    {
-        Border row = PaletteRowBorder();
-        row.BorderBrush = ClearBrush();
-        row.Background = ClearBrush();
-
-        var grid = new Grid();
-        AddStarColumn(grid);
-        AddAutoColumn(grid);
-
-        TextBlock title = Label(text, 12.5, TextBodyBrush());
-        grid.Children.Add(title);
-
-        FontIcon check = Glyph('\uE73E', 12, AccentBrush());
-        check.Visibility = Visibility.Collapsed;
-        check.HorizontalAlignment = HorizontalAlignment.Right;
-        Grid.SetColumn(check, 1);
-        grid.Children.Add(check);
-        row.Child = grid;
-
-        var item = new PaletteItem
-        {
-            Row = row,
-            Title = title,
-            Label = text,
-            Action = action,
-            Value = value,
-            Light = light,
-        };
-        WirePaletteRow(row, title, items, item);
-        _paletteRows.Children.Add(row);
-        items.Add(item);
-
-        if (ReferenceEquals(items, _paletteWindowItems)) _paletteWindowChecks.Add(check);
-        return check;
-    }
-
     /// <summary>Drops the rows and the selection a previous chrome build left behind.</summary>
     private void ResetPaletteState()
     {
         _paletteItems.Clear();
         _paletteTabItems.Clear();
-        _paletteWindowItems.Clear();
         _paletteThemeItems.Clear();
-        _paletteWindowChecks.Clear();
         _paletteThemeOptions.Clear();
         _paletteThemeMatches.Clear();
         _paletteThemeHost = null;
@@ -512,13 +473,13 @@ public sealed partial class Workspace
         _paletteThemeEmpty = null;
         _paletteThemeSelected = -1;
         _paletteThemeHovered = -1;
+        _paletteWindowThemeChecks.Clear();
 
         _paletteSubmenu = false;
         _paletteActiveSub = null;
         _paletteSelected = 0;
         _paletteSelectedList = null;
 
-        _paletteWindowValue = null;
         _paletteThemeValue = null;
         _paletteChip = null;
         _paletteChipText = null;
@@ -851,11 +812,37 @@ public sealed partial class Workspace
         MakeRow(Strings.CopyDiagnosticsLog, string.Empty, _paletteItems, CopyDiagnosticsLog);
         MakeRow(Strings.EnableCrashDumps, string.Empty, _paletteItems, EnableCrashDumps);
 
-        // Two-level entries: Window Theme and Theme. The parent rows live in the root list;
-        // their actions open the corresponding second level.
-        AddSubmenuRow(_paletteItems, Strings.ChooseWindowTheme,
-            () => EnterPaletteSubmenu(Strings.WindowTheme, Strings.ChooseWindowTheme, _paletteWindowItems), out TextBlock windowValue);
-        _paletteWindowValue = windowValue;
+        // Window theme is three flat commands: like every other command, they only take
+        // effect on Enter, with no live preview while the selection moves over them.
+        (string Label, string Value)[] windowOptions =
+        {
+            (Strings.FollowSystem, "system"), (Strings.Light, "light"), (Strings.Dark, "dark"),
+        };
+        foreach ((string label, string value) in windowOptions)
+        {
+            string optionValue = value;
+            PaletteItem item = MakeRow(Strings.WindowThemeOption(label), string.Empty, _paletteItems, () =>
+            {
+                ApplyWindowThemeMode(optionValue);
+                Config.SaveValue("window-theme", optionValue);
+                _themePreviewActive = false;
+                BroadcastTheme();
+            });
+
+            // The row that matches "window-theme" carries a check at its end, like the
+            // active entry in a picker.
+            FontIcon check = Glyph('\uE73E', 12, AccentBrush());
+            check.Visibility = Visibility.Collapsed;
+            check.HorizontalAlignment = HorizontalAlignment.Right;
+            check.VerticalAlignment = VerticalAlignment.Center;
+            check.Margin = new Thickness(6, 0, 0, 0);
+            Grid.SetColumn(check, 1);
+            if (item.Row.Child is Grid grid) grid.Children.Add(check);
+            _paletteWindowThemeChecks.Add((optionValue, check));
+        }
+
+        // Theme is a second level drawn by a virtualized ListView (see BuildThemeList); the
+        // parent row opens it.
         AddSubmenuRow(_paletteItems, Strings.ChooseTheme,
             () => EnterPaletteSubmenu(Strings.Theme, Strings.ChooseTheme, _paletteThemeItems), out TextBlock themeValue);
         _paletteThemeValue = themeValue;
@@ -869,27 +856,7 @@ public sealed partial class Workspace
         _densityRow = MakeRow(DensityLabel(), string.Empty, _paletteItems,
             () => SetDensity(!CompactDensity));
 
-        (string Label, string Value)[] windowOptions =
-        {
-            (Strings.FollowSystem, "system"), (Strings.Light, "light"), (Strings.Dark, "dark"),
-        };
-        foreach ((string label, string value) in windowOptions)
-        {
-            string optionValue = value;
-            AddOptionRow(_paletteWindowItems, label, optionValue, false, () =>
-            {
-                ApplyWindowThemeMode(optionValue);
-                Config.SaveValue("window-theme", optionValue);
-                _themePreviewActive = false;
-                BroadcastTheme();
-            });
-        }
-
-        // Theme is a second level drawn by a virtualized ListView (see BuildThemeList); its
-        // rows are not part of the hand-built command stack.
-
-        // Ghostty sorts the root command list alphabetically; the window submenu keeps the
-        // order its option table declares.
+        // Ghostty sorts the root command list alphabetically.
         SortPaletteLevel(_paletteItems);
 
         // Every row has registered its handler by now; aliases need the final table.
@@ -1256,25 +1223,16 @@ public sealed partial class Workspace
 
     private void RefreshPaletteValues()
     {
-        string windowMode = _config.WindowThemeMode is "light" or "dark" ? _config.WindowThemeMode : "system";
-        if (_paletteWindowValue is not null)
-        {
-            _paletteWindowValue.Text = windowMode switch
-            {
-                "light" => Strings.Light,
-                "dark" => Strings.Dark,
-                _ => Strings.FollowSystem,
-            };
-        }
         if (_paletteThemeValue is not null)
         {
             // The value is the theme selected for the current appearance.
             _paletteThemeValue.Text = _config.ThemeMode;
         }
 
-        string[] windowValues = { "system", "light", "dark" };
-        for (int i = 0; i < _paletteWindowChecks.Count && i < 3; i++)
-            _paletteWindowChecks[i].Visibility = windowMode == windowValues[i] ? Visibility.Visible : Visibility.Collapsed;
+        // Mark the window theme in use: "system" covers the resolved light/dark cases.
+        string windowMode = _config.WindowThemeMode is "light" or "dark" ? _config.WindowThemeMode : "system";
+        foreach ((string value, FontIcon check) in _paletteWindowThemeChecks)
+            check.Visibility = value == windowMode ? Visibility.Visible : Visibility.Collapsed;
 
         // Only the theme used by the current appearance is marked; the other half stays in
         // the config but is not offered by the list.
@@ -1324,36 +1282,6 @@ public sealed partial class Workspace
 
         RefreshTheme();
         _themePreviewActive = true;
-    }
-
-    private void PreviewWindowThemeOption(string value)
-    {
-        bool light = value switch
-        {
-            "light" => true,
-            "dark" => false,
-            _ => Config.SystemUsesLightTheme(),
-        };
-
-        // Preview the half of "theme" that this appearance selects.
-        _config.ResolveThemeSide(light, out TerminalTheme theme, out bool themeIsLight, out _);
-        Theme.WindowLight = light;
-        Theme.Light = themeIsLight;
-        Theme.Terminal = theme;
-        RefreshTheme();
-        _themePreviewActive = true;
-    }
-
-    private void PreviewSelectedPaletteItem(int index)
-    {
-        if (!_paletteSubmenu || _paletteActiveSub is null) return;
-        List<PaletteItem> items = _paletteActiveSub;
-        if (index < 0 || index >= items.Count) return;
-
-        PaletteItem item = items[index];
-        if (item.Value.Length == 0) return;
-
-        if (ReferenceEquals(_paletteActiveSub, _paletteWindowItems)) PreviewWindowThemeOption(item.Value);
     }
 
     private void RestoreCommittedTheme()
@@ -1463,7 +1391,6 @@ public sealed partial class Workspace
 
         // Rows from the other levels never participate in the current filter.
         foreach (PaletteItem item in _paletteItems) item.Row.Visibility = Visibility.Collapsed;
-        foreach (PaletteItem item in _paletteWindowItems) item.Row.Visibility = Visibility.Collapsed;
 
         if (IsPaletteThemeLevel)
         {
@@ -1631,9 +1558,6 @@ public sealed partial class Workspace
         _paletteSelectedList = items;
         _paletteSelected = index;
         if (index >= 0 && index < items.Count) StylePaletteRow(items[index], selected: true);
-
-        // Moving through the window-theme menu previews the highlighted option live.
-        if (_paletteSubmenu && !_suppressPalettePreview) PreviewSelectedPaletteItem(index);
 
         // Keep the highlighted row visible even when only the bar moved.
         _dispatcher?.TryEnqueue(ScrollPaletteSelectionIntoView);
