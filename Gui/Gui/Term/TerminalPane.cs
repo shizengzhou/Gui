@@ -15,6 +15,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
@@ -228,6 +229,11 @@ public sealed class TerminalPane
     private StackPanel? _statusBadge;
     private FontIcon? _statusIcon;
     private TextBlock? _statusText;
+
+    /// <summary>Spin applied to the status icon while a program reports work in progress.</summary>
+    private readonly RotateTransform _statusIconSpin = new();
+    private Storyboard? _statusSpin;
+    private bool _statusSpinning;
 
     // Read-only state: a lock badge in the header's right corner, shown while input is blocked.
     private Border? _readOnlyBadge;
@@ -778,6 +784,9 @@ public sealed class TerminalPane
             FontSize = Theme.FontSmall,
             Foreground = faint,
             VerticalAlignment = VerticalAlignment.Center,
+            // Spins around its centre while the report is "working".
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = _statusIconSpin,
         };
         _statusText = new TextBlock
         {
@@ -1602,6 +1611,7 @@ public sealed class TerminalPane
         {
             _statusBadge.Visibility = Visibility.Collapsed;
             if (_iconStatusDot is not null) _iconStatusDot.Visibility = Visibility.Collapsed;
+            SetStatusSpin(false);
             return;
         }
 
@@ -1623,6 +1633,43 @@ public sealed class TerminalPane
         _statusText.Text = text;
         _statusText.Foreground = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
         _statusText.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        SetStatusSpin(status.State == ProgramState.Working);
+    }
+
+    /// <summary>Runs the status icon's spin only while the report says work is in progress.</summary>
+    private void SetStatusSpin(bool spin)
+    {
+        if (spin == _statusSpinning) return;
+        _statusSpinning = spin;
+        if (spin)
+        {
+            _statusSpin ??= BuildStatusSpin();
+            _statusSpin.Begin();
+            return;
+        }
+
+        _statusSpin?.Stop();
+        _statusIconSpin.Angle = 0;
+    }
+
+    private Storyboard BuildStatusSpin()
+    {
+        var turn = new DoubleAnimation
+        {
+            From = 0,
+            To = 360,
+            Duration = new Duration(TimeSpan.FromSeconds(1.1)),
+            RepeatBehavior = RepeatBehavior.Forever,
+            // A render-transform animation runs on the UI thread; without this flag the
+            // storyboard silently declines to animate it.
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(turn, _statusIconSpin);
+        Storyboard.SetTargetProperty(turn, "Angle");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(turn);
+        return storyboard;
     }
 
     private void UpdateReadOnlyBadge()
