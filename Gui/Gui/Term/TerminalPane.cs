@@ -46,6 +46,19 @@ public sealed class TerminalPane
     /// </summary>
     public string? RestoredSnapshotName { get; }
 
+    /// <summary>
+    /// True for a pane rebuilt from window state. Such a pane may carry a one-off command,
+    /// so its exit is treated more carefully than a fresh shell's.
+    /// </summary>
+    public bool Restored { get; init; }
+
+    /// <summary>
+    /// How soon after a restored shell starts its exit is still blamed on the saved
+    /// command. An interactive shell cannot end that fast, and losing the window over a
+    /// one-off command is worse than leaving the pane on screen.
+    /// </summary>
+    private static readonly TimeSpan RestoredExitHold = TimeSpan.FromSeconds(3);
+
     private readonly ContentControl _host;
     private readonly Border _frame;
     private readonly CanvasControl _canvas;
@@ -127,7 +140,8 @@ public sealed class TerminalPane
 
     /// <summary>
     /// True while a finished surface is waiting for a key or a click: the shell exited and
-    /// either "wait-after-command" or the abnormal-exit notice is holding the pane open.
+    /// "wait-after-command", the abnormal-exit notice, or a restored command that ended at
+    /// once is holding the pane open.
     /// </summary>
     public bool HoldingAfterExit { get; private set; }
 
@@ -1808,6 +1822,17 @@ public sealed class TerminalPane
         };
         _session.OnExit = () =>
         {
+            // A restored pane can still run something that ends right away: a saved command
+            // whose script survived the pre-check but fails, or a missing executable in a
+            // form the check does not parse. Hold the pane so a possible last tab does not
+            // take the window down before the exit can be read.
+            if (Restored && _session.Runtime < RestoredExitHold)
+            {
+                ShowRestoredExitNotice(_session.ExitCode, _session.Runtime);
+                HoldingAfterExit = true;
+                return;
+            }
+
             // "abnormal-command-exit-runtime": a process that dies within the threshold with a
             // bad exit code keeps its surface and says so, instead of vanishing before the
             // message can be read.
@@ -1833,12 +1858,19 @@ public sealed class TerminalPane
     /// Prints the abnormal-exit line into the surface. The shell is gone, so the line goes
     /// through the terminal, not the pty; the pane then holds until a key or click arrives.
     /// </summary>
-    private void ShowExitNotice(int exitCode, TimeSpan runtime)
+    private void ShowExitNotice(int exitCode, TimeSpan runtime) =>
+        WriteExitNotice(Strings.AbnormalExit, exitCode, runtime);
+
+    /// <summary>Prints the line a restored pane shows when its saved command ends at once.</summary>
+    private void ShowRestoredExitNotice(int exitCode, TimeSpan runtime) =>
+        WriteExitNotice(Strings.RestoredExit, exitCode, runtime);
+
+    private void WriteExitNotice(string template, int exitCode, TimeSpan runtime)
     {
         string duration = runtime.TotalMilliseconds < 1000
             ? $"{runtime.TotalMilliseconds:0} ms"
             : $"{runtime.TotalSeconds:0.0} s";
-        string text = string.Format(Strings.AbnormalExit, exitCode, duration);
+        string text = string.Format(template, exitCode, duration);
         _session.WriteNotice($"\r\n\u001b[1;31m{text}\u001b[0m\r\n");
     }
 

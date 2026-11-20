@@ -49,6 +49,14 @@ public static class Strings
         "Process exited abnormally: code {0} after {1}",
         "进程异常退出：退出码 {0}，运行 {1}");
 
+    /// <summary>
+    /// Printed into a restored surface whose saved command ended soon after starting.
+    /// {0} is the exit code, {1} the runtime.
+    /// </summary>
+    public static string RestoredExit => Pick(
+        "Restored command exited: code {0} after {1}",
+        "恢复的命令已退出：退出码 {0}，运行 {1}");
+
     // ---- tab context menu -------------------------------------------------
 
     public static string RenameTab => Pick("Rename Tab", "重命名标签页");

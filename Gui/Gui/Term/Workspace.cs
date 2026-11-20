@@ -2641,13 +2641,44 @@ public sealed partial class Workspace
         Relayout(tab);
     }
 
+    /// <summary>
+    /// A restored pane can carry a one-off command (a test helper, an installer) whose
+    /// script file is gone. Launching it would make the fresh shell exit immediately and,
+    /// as the only tab, take the window with it, so such a pane falls back to the normal
+    /// shell instead. A relative path is resolved the way the shell would see it: against
+    /// the directory the pane launches in.
+    /// </summary>
+    private static bool RestoredCommandUsable(string command, string directory)
+    {
+        int file = command.IndexOf("-File ", StringComparison.OrdinalIgnoreCase);
+        if (file < 0) return true;
+
+        string path = command[(file + 6)..].Trim();
+        if (path.StartsWith('"'))
+        {
+            int end = path.IndexOf('"', 1);
+            if (end < 1) return true;
+            path = path[1..end];
+        }
+        else
+        {
+            int space = path.IndexOf(' ');
+            if (space >= 0) path = path[..space];
+        }
+
+        if (path.Length == 0) return true;
+        path = Environment.ExpandEnvironmentVariables(path);
+        if (!System.IO.Path.IsPathRooted(path) && directory.Length > 0)
+            path = System.IO.Path.Combine(directory, path);
+        return File.Exists(path);
+    }
+
     private SplitNode? RestoreSplit(SplitState source)
     {
         if (source.Pane is { } saved)
         {
             var config = new Config();
             config.CopyFrom(_config);
-            if (!saved.AutoCommand && saved.Command.Length > 0) config.Command = saved.Command;
 
             // A directory that no longer exists (removed drive, deleted folder) falls back
             // to the configured start directory instead of dropping the pane.
@@ -2656,9 +2687,15 @@ public sealed partial class Workspace
                 directory = _config.WorkingDirectory;
             if (directory.Length > 0) config.WorkingDirectory = directory;
 
+            if (!saved.AutoCommand && saved.Command.Length > 0 && RestoredCommandUsable(saved.Command, directory))
+                config.Command = saved.Command;
+
             byte[]? snapshot = WindowStateStore.ReadSnapshot(saved.Snapshot);
             var pane = new TerminalPane(config, snapshot, snapshot is null ? null : RestoreBanner(),
-                saved.Snapshot);
+                saved.Snapshot)
+            {
+                Restored = true,
+            };
             if (saved.Title.Length > 0) pane.Title = saved.Title;
             WirePane(pane);
             return new SplitNode { Pane = pane };
