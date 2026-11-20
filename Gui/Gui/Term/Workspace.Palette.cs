@@ -823,10 +823,8 @@ public sealed partial class Workspace
             string optionValue = value;
             PaletteItem item = MakeRow(Strings.WindowThemeOption(label), string.Empty, _paletteItems, () =>
             {
-                ApplyWindowThemeMode(optionValue);
-                Config.SaveValue("window-theme", optionValue);
+                ApplyWindowThemeChoice(optionValue);
                 _themePreviewActive = false;
-                BroadcastTheme();
             });
 
             // The row that matches "window-theme" carries a check at its end, like the
@@ -1169,10 +1167,17 @@ public sealed partial class Workspace
         }
     }
 
+    /// <summary>Opens the palette directly on the theme picker, for the View menu entry.</summary>
+    private void ShowThemePalette()
+    {
+        if (_palettePanel is null) return;
+        ShowCommandPalette();
+        EnterPaletteSubmenu(Strings.Theme, Strings.ChooseTheme, _paletteThemeItems);
+    }
+
     private void ShowCommandPalette()
     {
         if (_palettePanel is null) return;
-
         // Always open on the command list, not on the level used last time.
         _paletteSubmenu = false;
         _paletteActiveSub = null;
@@ -1858,6 +1863,33 @@ public sealed partial class Workspace
         view.Items.Add(resetFont);
         view.Items.Add(new MenuFlyoutSeparator());
 
+        // Window theme and Theme form one group of their own, ahead of the tab layout.
+        var windowThemeMenu = new MenuFlyoutSubItem { Text = Strings.WindowTheme };
+        string windowMode = _config.WindowThemeMode is "light" or "dark" ? _config.WindowThemeMode : "system";
+        (string Label, string Value)[] windowModes =
+        {
+            (Strings.FollowSystem, "system"), (Strings.Light, "light"), (Strings.Dark, "dark"),
+        };
+        foreach ((string label, string value) in windowModes)
+        {
+            string optionValue = value;
+            var option = new ToggleMenuFlyoutItem
+            {
+                Text = label,
+                IsChecked = windowMode == optionValue,
+            };
+            option.Click += (_, _) => ApplyWindowThemeChoice(optionValue);
+            windowThemeMenu.Items.Add(option);
+        }
+        view.Items.Add(windowThemeMenu);
+
+        var themePicker = new MenuFlyoutItem { Text = Strings.Theme };
+        // The flyout is still dismissing on Click; opening the palette in the same dispatch
+        // would let the dismissal take focus back right after it. Defer past the close.
+        themePicker.Click += (_, _) => _dispatcher?.TryEnqueue(ShowThemePalette);
+        view.Items.Add(themePicker);
+        view.Items.Add(new MenuFlyoutSeparator());
+
         var layout = new MenuFlyoutSubItem { Text = Strings.ViewLayout };
         var tabsTop = new ToggleMenuFlyoutItem
         {
@@ -1936,6 +1968,16 @@ public sealed partial class Workspace
         nextTab.Click += (_, _) => CycleTab(1);
         window.Items.Add(nextTab);
 
+        var changeWindowTitle = new MenuFlyoutItem
+        {
+            Text = Strings.ChangeWindowTitle,
+            KeyboardAcceleratorTextOverride = _keybinds.Label("prompt_window_title", string.Empty),
+        };
+        // The flyout is still dismissing on Click; opening the prompt in the same dispatch
+        // would let the dismissal take focus back from its text box.
+        changeWindowTitle.Click += (_, _) => _dispatcher?.TryEnqueue(PromptWindowTitle);
+        window.Items.Add(changeWindowTitle);
+
         menu.Items.Add(window);
 
         var help = new MenuFlyoutSubItem { Text = Strings.HelpMenu };
@@ -2008,7 +2050,11 @@ public sealed partial class Workspace
                 FontSize = 18,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             });
-            identity.Children.Add(new TextBlock { Text = AppVersion(), FontSize = 12 });
+            identity.Children.Add(new TextBlock
+            {
+                Text = Strings.AboutVersion(AppVersion()),
+                FontSize = 12,
+            });
             identity.Children.Add(new TextBlock
             {
                 Text = Strings.AboutCopyright(DateTime.Now.Year),

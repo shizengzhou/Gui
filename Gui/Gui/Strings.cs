@@ -239,6 +239,8 @@ public static class Strings
     public static string AboutRepository => Pick("Repository", "仓库地址");
     public static string AboutCopyRepository => Pick("Copy repository URL", "复制仓库地址");
     public static string AboutLicense => Pick("Open source license", "开源协议");
+    public static string AboutVersion(string version) =>
+        Pick($"Version {version}", $"版本 {version}");
     public static string AboutCopyright(int year) => Pick(
         $"\u00a9 {year} Gui. All rights reserved.", $"\u00a9 {year} Gui. 保留所有权利。");
 
@@ -374,6 +376,7 @@ public static class Strings
     public static string EnableCrashDumps => Pick("Enable Crash Dumps", "启用崩溃转储");
 
     public static string ChooseTheme => Pick("Choose Theme\u2026", "选择主题\u2026");
+    public static string WindowTheme => Pick("Window Theme", "窗口主题");
     public static string WindowThemeOption(string value) =>
         Pick($"Window Theme: {value}", $"窗口主题：{value}");
     public static string Theme => Pick("Theme", "主题");
