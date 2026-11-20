@@ -149,6 +149,9 @@ public sealed partial class Workspace
         public bool Submenu;
         public string Value = string.Empty;
         public bool Light;
+
+        /// <summary>True while the pointer is over the row; selection styling keeps it in mind.</summary>
+        public bool Hovered;
     }
 
     /// <summary>The rail's width before it is dragged; the config carries it afterwards.</summary>
@@ -272,21 +275,19 @@ public sealed partial class Workspace
     private readonly List<PaletteItem> _paletteThemeItems = new();
     private List<PaletteItem>? _paletteActiveSub;
     private bool _paletteSubmenu;
-    private bool _paletteThemesBuilt;
     private bool _themePreviewActive;
     private bool _suppressPalettePreview;
     private ScrollViewer? _paletteScroller;
-    private readonly List<(string Name, FontIcon Check)> _paletteThemeNameChecks = new();
     private Border? _paletteChip;
     private TextBlock? _paletteChipText;
     private PaletteItem? _densityRow;
     private bool _paletteOpenedByPress;
     private string _paletteRootPlaceholder = string.Empty;
     private int _paletteSelected;
+    private List<PaletteItem>? _paletteSelectedList;
     private TextBlock? _paletteWindowValue;
     private TextBlock? _paletteThemeValue;
     private readonly List<FontIcon> _paletteWindowChecks = new();
-    private readonly List<FontIcon> _paletteThemeChecks = new();
 
     private TextBox _imeSink = null!;
     private bool _composing;

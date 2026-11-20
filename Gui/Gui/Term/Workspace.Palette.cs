@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
@@ -7,6 +9,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
@@ -37,6 +40,58 @@ public sealed partial class Workspace
     /// and below.
     /// </summary>
     private const double ListMaxHeight = 8 * RowHeight + 7 * RowSpacing + 12;
+
+    /// <summary>
+    /// One entry in the virtualized theme picker. The ListView only creates rows for the
+    /// entries on screen, so the several hundred theme names never become several hundred
+    /// controls.
+    /// </summary>
+    private sealed class PaletteThemeOption : INotifyPropertyChanged
+    {
+        private double _checkOpacity;
+
+        public PaletteThemeOption(string name, bool light)
+        {
+            Name = name;
+            Light = light;
+        }
+
+        public string Name { get; }
+
+        public bool Light { get; }
+
+        /// <summary>1 while this is the committed theme, 0 otherwise.</summary>
+        public double CheckOpacity
+        {
+            get => _checkOpacity;
+            set
+            {
+                if (Math.Abs(_checkOpacity - value) < 0.001) return;
+                _checkOpacity = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CheckOpacity)));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
+    /// <summary>Every theme the picker can offer; filled in on first entry.</summary>
+    private readonly List<PaletteThemeOption> _paletteThemeOptions = new();
+
+    /// <summary>The entries that survived the current filter, bound to the ListView.</summary>
+    private readonly ObservableCollection<PaletteThemeOption> _paletteThemeMatches = new();
+
+    /// <summary>Row count the ListView currently has realized, kept on the row element itself.</summary>
+    private sealed class ThemeRowTag
+    {
+        public int Index;
+    }
+
+    private Grid? _paletteThemeHost;
+    private ListView? _paletteThemeList;
+    private TextBlock? _paletteThemeEmpty;
+    private int _paletteThemeSelected = -1;
+    private int _paletteThemeHovered = -1;
 
     // ---- help menu links ----
     private const string ReleaseNotesUrl = "https://github.com/shizengzhou/Gui/releases";
@@ -112,15 +167,26 @@ public sealed partial class Workspace
 
         _root.RequestedTheme = Theme.Light ? ElementTheme.Light : ElementTheme.Dark;
 
-        // Acrylic is not a themed brush; rebuild it with the new tint.
+        // Acrylic is not a themed brush; retint it. Reuse the existing brush: a theme preview
+        // refreshes on every selection move, and replacing the brush rebuilt its composition
+        // surface each time.
         if (_palettePanel is not null)
         {
-            _palettePanel.Background = new AcrylicBrush
+            if (_palettePanel.Background is AcrylicBrush acrylic)
             {
-                TintColor = Theme.PaletteTint(),
-                TintOpacity = Theme.PaletteTintOpacity(),
-                FallbackColor = Theme.PaletteBg(),
-            };
+                acrylic.TintColor = Theme.PaletteTint();
+                acrylic.TintOpacity = Theme.PaletteTintOpacity();
+                acrylic.FallbackColor = Theme.PaletteBg();
+            }
+            else
+            {
+                _palettePanel.Background = new AcrylicBrush
+                {
+                    TintColor = Theme.PaletteTint(),
+                    TintOpacity = Theme.PaletteTintOpacity(),
+                    FallbackColor = Theme.PaletteBg(),
+                };
+            }
         }
 
         ApplyWindowTheme();
@@ -277,7 +343,7 @@ public sealed partial class Workspace
             Height = RowHeight,
             CornerRadius = new CornerRadius(Theme.RadiusField),
             Padding = new Thickness(10, 0, 10, 0),
-            BorderThickness = new Thickness(1),
+            BorderThickness = new Thickness(0),
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
         };
     }
@@ -335,16 +401,14 @@ public sealed partial class Workspace
         row.PointerEntered += (_, _) =>
         {
             if (!ReferenceEquals(owner, ActivePaletteItems())) return;
-            if (owner.IndexOf(item) == _paletteSelected) return;
-            row.Background = ChipHoverBrush();
-            title.Foreground = TextStrongBrush();
+            item.Hovered = true;
+            StylePaletteRow(item, selected: owner.IndexOf(item) == _paletteSelected);
         };
         row.PointerExited += (_, _) =>
         {
             if (!ReferenceEquals(owner, ActivePaletteItems())) return;
-            if (owner.IndexOf(item) == _paletteSelected) return;
-            row.Background = ClearBrush();
-            title.Foreground = TextBodyBrush();
+            item.Hovered = false;
+            StylePaletteRow(item, selected: owner.IndexOf(item) == _paletteSelected);
         };
         row.PointerPressed += (_, args) =>
         {
@@ -430,7 +494,6 @@ public sealed partial class Workspace
         items.Add(item);
 
         if (ReferenceEquals(items, _paletteWindowItems)) _paletteWindowChecks.Add(check);
-        else if (ReferenceEquals(items, _paletteThemeItems)) _paletteThemeChecks.Add(check);
         return check;
     }
 
@@ -442,13 +505,18 @@ public sealed partial class Workspace
         _paletteWindowItems.Clear();
         _paletteThemeItems.Clear();
         _paletteWindowChecks.Clear();
-        _paletteThemeChecks.Clear();
-        _paletteThemeNameChecks.Clear();
+        _paletteThemeOptions.Clear();
+        _paletteThemeMatches.Clear();
+        _paletteThemeHost = null;
+        _paletteThemeList = null;
+        _paletteThemeEmpty = null;
+        _paletteThemeSelected = -1;
+        _paletteThemeHovered = -1;
 
-        _paletteThemesBuilt = false;
         _paletteSubmenu = false;
         _paletteActiveSub = null;
         _paletteSelected = 0;
+        _paletteSelectedList = null;
 
         _paletteWindowValue = null;
         _paletteThemeValue = null;
@@ -817,23 +885,11 @@ public sealed partial class Workspace
             });
         }
 
-        (string Label, bool Light)[] themeOptions =
-        {
-            (Config.DarkThemeName, false),
-            (Config.LightThemeName, true),
-        };
-        foreach ((string label, bool isLight) in themeOptions)
-        {
-            bool lightMode = isLight;
-            string themeName = label;
-            AddOptionRow(_paletteThemeItems, label, themeName, lightMode, () =>
-            {
-                ApplyThemeChoice(themeName, lightMode);
-            });
-        }
+        // Theme is a second level drawn by a virtualized ListView (see BuildThemeList); its
+        // rows are not part of the hand-built command stack.
 
-        // Ghostty sorts the root command list alphabetically; the two submenu levels keep the
-        // order their option tables declare.
+        // Ghostty sorts the root command list alphabetically; the window submenu keeps the
+        // order its option table declares.
         SortPaletteLevel(_paletteItems);
 
         // Every row has registered its handler by now; aliases need the final table.
@@ -860,6 +916,10 @@ public sealed partial class Workspace
         _paletteScroller = listScroll;
         Grid.SetRow(listScroll, 1);
         layout.Children.Add(listScroll);
+
+        Grid themeHost = BuildThemeList();
+        Grid.SetRow(themeHost, 1);
+        layout.Children.Add(themeHost);
 
         var footer = new Border
         {
@@ -909,6 +969,151 @@ public sealed partial class Workspace
     }
 
     /// <summary>
+    /// The theme level of the palette. It is a ListView over <see cref="_paletteThemeMatches"/>,
+    /// so only the visible rows exist: a few hundred themes cost no more to scroll or filter
+    /// than the short command list. The StackPanel level stays for the commands, which are
+    /// few enough that hand-built rows keep the exact styling.
+    /// </summary>
+    private Grid BuildThemeList()
+    {
+        _paletteThemeMatches.Clear();
+
+        _paletteThemeList = new ListView
+        {
+            ItemsSource = _paletteThemeMatches,
+            ItemTemplate = ThemeRowTemplate(),
+            SelectionMode = ListViewSelectionMode.Single,
+            IsItemClickEnabled = true,
+            Background = ClearBrush(),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            Margin = new Thickness(6, 6, 6, 6),
+            VerticalAlignment = VerticalAlignment.Top,
+            MaxHeight = ListMaxHeight,
+        };
+        // The item template draws the highlight itself, exactly like a command row; the
+        // stock ListViewItem chrome (state fills, focus ring, indicator) is switched off so
+        // nothing can differ from the hand-built rows.
+        Brush clear = ClearBrush();
+        foreach (string key in new[]
+                 {
+                     "ListViewItemBackground", "ListViewItemBackgroundPointerOver",
+                     "ListViewItemBackgroundPressed", "ListViewItemBackgroundSelected",
+                     "ListViewItemBackgroundSelectedPointerOver", "ListViewItemBackgroundSelectedPressed",
+                     "ListViewItemSelectionIndicatorBrush", "ListViewItemSelectionIndicatorPointerOverBrush",
+                     "ListViewItemSelectionIndicatorPressedBrush",
+                 })
+        {
+            _paletteThemeList.Resources[key] = clear;
+        }
+        _paletteThemeList.Resources["ListViewItemMinHeight"] = RowHeight;
+        _paletteThemeList.Resources["ListViewItemPadding"] = new Thickness(0);
+
+        _paletteThemeList.SelectionChanged += (_, _) => OnThemeSelectionChanged();
+        _paletteThemeList.ItemClick += (_, args) =>
+        {
+            if (args.ClickedItem is not PaletteThemeOption option) return;
+            _paletteThemeList.SelectedItem = option;
+            CommitPaletteTheme();
+        };
+        _paletteThemeList.ContainerContentChanging += (_, args) =>
+        {
+            if (args.InRecycleQueue) return;
+            // Recycled containers keep whatever the stock style measured them with; take the
+            // same row metrics as the hand-built command rows.
+            args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+            args.ItemContainer.Padding = new Thickness(0);
+            args.ItemContainer.Margin = new Thickness(0, 0, 0, RowSpacing);
+            args.ItemContainer.UseSystemFocusVisuals = false;
+            args.ItemContainer.FocusVisualPrimaryThickness = new Thickness(0);
+            args.ItemContainer.FocusVisualSecondaryThickness = new Thickness(0);
+            if (args.ItemContainer.ContentTemplateRoot is not Border row) return;
+
+            // The row element is recycled with its container: hook the pointer once and let
+            // the tag carry the index it currently shows.
+            if (row.Tag is not ThemeRowTag tag)
+            {
+                tag = new ThemeRowTag();
+                row.Tag = tag;
+                row.PointerEntered += (_, _) =>
+                {
+                    if (row.Tag is ThemeRowTag current) SetThemeRowHover(current.Index, true);
+                };
+                row.PointerExited += (_, _) =>
+                {
+                    if (row.Tag is ThemeRowTag current) SetThemeRowHover(current.Index, false);
+                };
+            }
+            tag.Index = args.ItemIndex;
+            ApplyThemeRowStyle(row, args.ItemIndex);
+        };
+
+        _paletteThemeEmpty = Label(Strings.NoMatchingCommands, 12, TextFaintBrush());
+        _paletteThemeEmpty.Margin = new Thickness(12, 22, 12, 22);
+        _paletteThemeEmpty.TextWrapping = TextWrapping.Wrap;
+        _paletteThemeEmpty.HorizontalAlignment = HorizontalAlignment.Center;
+        _paletteThemeEmpty.Visibility = Visibility.Collapsed;
+
+        var host = new Grid
+        {
+            Visibility = Visibility.Collapsed,
+            MaxHeight = ListMaxHeight,
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        host.Children.Add(_paletteThemeList);
+        host.Children.Add(_paletteThemeEmpty);
+        _paletteThemeHost = host;
+        return host;
+    }
+
+    /// <summary>The one row shape the virtualized theme list recycles.</summary>
+    private static DataTemplate ThemeRowTemplate()
+    {
+        const string markup =
+            "<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\">" +
+            "<Border Padding=\"10,0\">" +
+            "<Grid ColumnSpacing=\"8\">" +
+            "<Grid.ColumnDefinitions>" +
+            "<ColumnDefinition Width=\"*\"/><ColumnDefinition Width=\"Auto\"/>" +
+            "</Grid.ColumnDefinitions>" +
+            "<TextBlock Text=\"{Binding Name}\" FontSize=\"12.5\" VerticalAlignment=\"Center\"/>" +
+            "<FontIcon Grid.Column=\"1\" Glyph=\"&#xE73E;\" FontSize=\"12\" VerticalAlignment=\"Center\"" +
+            " Opacity=\"{Binding CheckOpacity}\"/>" +
+            "</Grid></Border></DataTemplate>";
+        return (DataTemplate)XamlReader.Load(markup);
+    }
+
+    /// <summary>Styles one realized theme row; the highlight lives on the template's border.</summary>
+    private void ApplyThemeRowStyle(Border row, int index)
+    {
+        bool selected = index == _paletteThemeSelected;
+        bool hovered = index == _paletteThemeHovered;
+        row.Height = RowHeight;
+        row.CornerRadius = new CornerRadius(Theme.RadiusField);
+        // Same fill rules as StylePaletteRow so the two levels read as one list.
+        row.Background = selected
+            ? (hovered ? AccentStrokeBrush() : AccentSoftBrush())
+            : (hovered ? ChipHoverBrush() : ClearBrush());
+        if (FirstDescendant<TextBlock>(row) is { } label)
+            label.Foreground = selected || hovered ? TextStrongBrush() : TextBodyBrush();
+        if (FirstDescendant<FontIcon>(row) is { } check) check.Foreground = AccentBrush();
+    }
+
+    private void SetThemeRowHover(int index, bool hovered)
+    {
+        if (hovered) _paletteThemeHovered = index;
+        else if (_paletteThemeHovered == index) _paletteThemeHovered = -1;
+        StyleThemeRowAt(index);
+    }
+
+    private void StyleThemeRowAt(int index)
+    {
+        if (index < 0) return;
+        if (_paletteThemeList?.ContainerFromIndex(index) is not ListViewItem container) return;
+        if (container.ContentTemplateRoot is Border row) ApplyThemeRowStyle(row, index);
+    }
+
+    /// <summary>
     /// Handles the keys the palette owns. It runs from the window-level preview handler, not
     /// from the search box, because the search box is not the only element that can hold
     /// focus: clicking a tab chip or letting the IME sink take it used to leave the palette
@@ -950,6 +1155,12 @@ public sealed partial class Workspace
     /// <summary>Steps the highlight to the next or previous row that survived the filter.</summary>
     private void MovePaletteSelection(bool down)
     {
+        if (IsPaletteThemeLevel)
+        {
+            StepThemeSelection(down);
+            return;
+        }
+
         List<PaletteItem> items = ActivePaletteItems();
         if (items.Count == 0) return;
 
@@ -1067,16 +1278,8 @@ public sealed partial class Workspace
 
         // Only the theme used by the current appearance is marked; the other half stays in
         // the config but is not offered by the list.
-        for (int i = 0; i < _paletteThemeChecks.Count && i < 2; i++)
-        {
-            string name = i == 0 ? Config.DarkThemeName : Config.LightThemeName;
-            _paletteThemeChecks[i].Visibility =
-                ThemeNameEquals(_config.ThemeMode, name) ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        foreach ((string name, FontIcon check) in _paletteThemeNameChecks)
-            check.Visibility =
-                ThemeNameEquals(_config.ThemeMode, name) ? Visibility.Visible : Visibility.Collapsed;
+        foreach (PaletteThemeOption option in _paletteThemeOptions)
+            option.CheckOpacity = ThemeNameEquals(_config.ThemeMode, option.Name) ? 1 : 0;
     }
 
     /// <summary>Compares the legacy "light"/"dark" spellings with their full names.</summary>
@@ -1151,7 +1354,6 @@ public sealed partial class Workspace
         if (item.Value.Length == 0) return;
 
         if (ReferenceEquals(_paletteActiveSub, _paletteWindowItems)) PreviewWindowThemeOption(item.Value);
-        else if (ReferenceEquals(_paletteActiveSub, _paletteThemeItems)) PreviewThemeOption(item.Value);
     }
 
     private void RestoreCommittedTheme()
@@ -1166,7 +1368,8 @@ public sealed partial class Workspace
 
     private void ScrollPaletteSelectionIntoView()
     {
-        if (_paletteScroller is null) return;
+        // The theme level is a ListView and scrolls its selection by itself.
+        if (_paletteScroller is null || IsPaletteThemeLevel) return;
         List<PaletteItem> items = ActivePaletteItems();
         if (_paletteSelected < 0 || _paletteSelected >= items.Count) return;
 
@@ -1198,47 +1401,40 @@ public sealed partial class Workspace
     }
 
     /// <summary>
-    /// Puts the shared list back on its first row. Both levels live in one ScrollViewer, so
-    /// without this a submenu opens at the offset the level above was left at — the theme
-    /// list then starts a few entries down instead of at its first theme.
+    /// Puts the shared list back on its first row. Both stack levels live in one ScrollViewer,
+    /// so without this a submenu opens at the offset the level above was left at.
     /// </summary>
     private void ResetPaletteScroll() => _paletteScroller?.ChangeView(null, 0.0, null, true);
 
     private void EnterPaletteSubmenu(string title, string placeholder, List<PaletteItem> items)
     {
-        if (ReferenceEquals(items, _paletteThemeItems) && !_paletteThemesBuilt)
-        {
-            _paletteThemesBuilt = true;
-            foreach ((string name, bool light) in TerminalThemes.Available())
-            {
-                string themeName = name;
-                bool themeLight = light;
-                FontIcon check = AddOptionRow(_paletteThemeItems, name, name, light, () =>
-                {
-                    ApplyThemeChoice(themeName, themeLight);
-                });
-                _paletteThemeNameChecks.Add((name, check));
-            }
-            // The bundled rows did not exist when the palette opened, so their check marks
-            // (including the committed theme's) must be applied now.
-            RefreshPaletteValues();
-        }
-
         _paletteSubmenu = true;
         _paletteActiveSub = items;
+
+        if (ReferenceEquals(items, _paletteThemeItems))
+        {
+            // The theme level is virtualized: its source is built once and filtered by
+            // swapping the bound collection, so there are no rows to add here.
+            EnsurePaletteThemeOptions();
+            RefreshPaletteValues();
+        }
 
         if (_paletteChipText is not null) _paletteChipText.Text = title;
         if (_paletteChip is not null) _paletteChip.Visibility = Visibility.Visible;
         if (_paletteBackRow is not null) _paletteBackRow.Visibility = Visibility.Visible;
         _paletteInput.PlaceholderText = placeholder;
-        _paletteInput.Text = string.Empty;
 
-        // Open with no row focused and no preview; the first arrow key starts the selection
-        // (and with it, the live preview).
+        // Clearing the text re-filters; suppress the preview across that pass so opening the
+        // level never repaints the window before the user moves.
         _suppressPalettePreview = true;
+        _paletteInput.Text = string.Empty;
         FilterPalette();
         _suppressPalettePreview = false;
+
+        // Clear the command level's highlight even when the theme ListView owns the
+        // selection now; otherwise its old row stays filled after coming back.
         SelectPalette(items.Count);
+        if (IsPaletteThemeLevel) SelectFirstTheme();
 
         // No row is selected yet, so the queued scroll-into-view above would skip; the list
         // still carries the offset of the level we came from.
@@ -1254,32 +1450,33 @@ public sealed partial class Workspace
         if (_paletteBackRow is not null) _paletteBackRow.Visibility = Visibility.Collapsed;
         _paletteInput.PlaceholderText = _paletteRootPlaceholder;
         _paletteInput.Text = string.Empty;
-        _paletteSelected = 0;
         FilterPalette();
         ResetPaletteScroll();
     }
 
+    private bool IsPaletteThemeLevel =>
+        _paletteSubmenu && ReferenceEquals(_paletteActiveSub, _paletteThemeItems);
+
     private void FilterPalette()
     {
-        string query = _paletteInput.Text.ToLowerInvariant();
+        string query = _paletteInput.Text;
 
-        // Rows from the other level never participate in the current filter.
-        void Collapse(List<PaletteItem> list)
+        // Rows from the other levels never participate in the current filter.
+        foreach (PaletteItem item in _paletteItems) item.Row.Visibility = Visibility.Collapsed;
+        foreach (PaletteItem item in _paletteWindowItems) item.Row.Visibility = Visibility.Collapsed;
+
+        if (IsPaletteThemeLevel)
         {
-            foreach (PaletteItem item in list) item.Row.Visibility = Visibility.Collapsed;
+            // The theme level owns its own scroller: a virtualized ListView over the matches.
+            if (_paletteScroller is not null) _paletteScroller.Visibility = Visibility.Collapsed;
+            if (_paletteThemeHost is not null) _paletteThemeHost.Visibility = Visibility.Visible;
+            if (_paletteEmpty is not null) _paletteEmpty.Visibility = Visibility.Collapsed;
+            FilterPaletteThemes(query);
+            return;
         }
 
-        if (_paletteSubmenu)
-        {
-            Collapse(_paletteItems);
-            if (!ReferenceEquals(_paletteActiveSub, _paletteWindowItems)) Collapse(_paletteWindowItems);
-            if (!ReferenceEquals(_paletteActiveSub, _paletteThemeItems)) Collapse(_paletteThemeItems);
-        }
-        else
-        {
-            Collapse(_paletteWindowItems);
-            Collapse(_paletteThemeItems);
-        }
+        if (_paletteThemeHost is not null) _paletteThemeHost.Visibility = Visibility.Collapsed;
+        if (_paletteScroller is not null) _paletteScroller.Visibility = Visibility.Visible;
 
         List<PaletteItem> items = ActivePaletteItems();
         int first = items.Count;
@@ -1287,13 +1484,8 @@ public sealed partial class Workspace
         for (int index = 0; index < items.Count; index++)
         {
             PaletteItem item = items[index];
-            bool match = query.Length == 0 || item.Label.ToLowerInvariant().Contains(query);
-            // Only themes matching the window brightness are offered: a light window edits
-            // the "light:" half of "theme", a dark window the "dark:" half.
-            bool modeMatch = !ReferenceEquals(_paletteActiveSub, _paletteThemeItems)
-                || item.Light == Theme.WindowLight;
-            bool visible = match && modeMatch;
-
+            bool visible = query.Length == 0 ||
+                item.Label.Contains(query, StringComparison.OrdinalIgnoreCase);
             item.Row.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             if (visible)
             {
@@ -1308,24 +1500,153 @@ public sealed partial class Workspace
         SelectPalette(first);
     }
 
-    private void SelectPalette(int index)
+    /// <summary>
+    /// Rebuilds the theme matches. Only the ListView's visible containers exist, so this
+    /// replaces hiding hundreds of hand-built rows one by one on every keystroke.
+    /// </summary>
+    private void FilterPaletteThemes(string query)
     {
-        _paletteSelected = index;
-        List<PaletteItem> items = ActivePaletteItems();
-        for (int current = 0; current < items.Count; current++)
+        string trimmed = query.Trim();
+        _paletteThemeSelected = -1;
+        _paletteThemeHovered = -1;
+        _paletteThemeMatches.Clear();
+        foreach (PaletteThemeOption option in _paletteThemeOptions)
         {
-            PaletteItem item = items[current];
-            bool selected = current == index;
-            item.Row.Background = selected ? AccentSoftBrush() : ClearBrush();
-            item.Row.BorderBrush = selected ? AccentStrokeBrush() : ClearBrush();
-            item.Title.Foreground = selected ? TextStrongBrush() : TextBodyBrush();
+            // Only themes matching the window brightness are offered: a light window edits
+            // the "light:" half of "theme", a dark window the "dark:" half.
+            if (option.Light != Theme.WindowLight) continue;
+            if (trimmed.Length > 0 &&
+                !option.Name.Contains(trimmed, StringComparison.OrdinalIgnoreCase)) continue;
+            _paletteThemeMatches.Add(option);
         }
 
-        // Moving through a theme menu previews the highlighted option live.
+        bool any = _paletteThemeMatches.Count > 0;
+        if (_paletteThemeEmpty is not null)
+            _paletteThemeEmpty.Visibility =
+                !any && trimmed.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (_paletteThemeList is null) return;
+
+        if (!any)
+        {
+            _paletteThemeList.SelectedIndex = -1;
+            return;
+        }
+
+        int previous = _paletteThemeList.SelectedIndex;
+        _paletteThemeList.SelectedIndex = 0;
+        _paletteThemeList.ScrollIntoView(_paletteThemeMatches[0]);
+        // Typing again can leave the index on zero; no SelectionChanged fires then, so the
+        // newly filtered first match still has to be previewed here.
+        if (!_suppressPalettePreview && previous == 0)
+            PreviewThemeOption(_paletteThemeMatches[0].Name);
+    }
+
+    /// <summary>Adds the built-in themes and every theme file, in the picker's display order.</summary>
+    private void EnsurePaletteThemeOptions()
+    {
+        if (_paletteThemeOptions.Count > 0) return;
+        _paletteThemeOptions.Add(new PaletteThemeOption(Config.DarkThemeName, false));
+        _paletteThemeOptions.Add(new PaletteThemeOption(Config.LightThemeName, true));
+        foreach ((string name, bool light) in TerminalThemes.Available())
+            _paletteThemeOptions.Add(new PaletteThemeOption(name, light));
+    }
+
+    private void OnThemeSelectionChanged()
+    {
+        if (_paletteThemeList is null) return;
+        int index = _paletteThemeList.SelectedIndex;
+        if (index == _paletteThemeSelected) return;
+
+        int previous = _paletteThemeSelected;
+        _paletteThemeSelected = index;
+        StyleThemeRowAt(previous);
+        StyleThemeRowAt(index);
+
+        if (_suppressPalettePreview || index < 0) return;
+        if (_paletteThemeList.SelectedItem is PaletteThemeOption option)
+            PreviewThemeOption(option.Name);
+    }
+
+    /// <summary>
+    /// Opens the theme level on its first row no matter how the level was entered, so typing
+    /// a search and arrowing to "Choose Theme" land on the same state.
+    /// </summary>
+    private void SelectFirstTheme()
+    {
+        if (_paletteThemeList is null || _paletteThemeMatches.Count == 0) return;
+        _paletteThemeList.SelectedIndex = 0;
+        // Already-zero selections raise no SelectionChanged; keep the bookkeeping in step.
+        _paletteThemeSelected = 0;
+        StyleThemeRowAt(0);
+        _paletteThemeList.ScrollIntoView(_paletteThemeMatches[0]);
+        // A selected row is a previewed theme here, so entering the level applies the first
+        // theme exactly as arrowing onto it would.
+        PreviewThemeOption(_paletteThemeMatches[0].Name);
+    }
+
+    private void StepThemeSelection(bool down)
+    {
+        if (_paletteThemeList is null) return;
+        int count = _paletteThemeMatches.Count;
+        if (count == 0) return;
+
+        int current = _paletteThemeList.SelectedIndex;
+        int next = current < 0 || current >= count
+            ? (down ? 0 : count - 1)
+            : (down ? (current + 1) % count : (current + count - 1) % count);
+
+        _paletteThemeList.SelectedIndex = next;
+        _paletteThemeList.ScrollIntoView(_paletteThemeMatches[next]);
+    }
+
+    private void CommitPaletteTheme()
+    {
+        if (_paletteThemeList?.SelectedItem is not PaletteThemeOption option) return;
+        HideCommandPalette();
+        ApplyThemeChoice(option.Name, option.Light);
+    }
+
+    private void SelectPalette(int index)
+    {
+        List<PaletteItem> items = ActivePaletteItems();
+
+        // Restyle only the row that loses the highlight and the one that gains it, so a
+        // level with many rows does not repaint every one of them on each arrow key.
+        if (_paletteSelectedList is not null)
+        {
+            if (ReferenceEquals(_paletteSelectedList, items))
+            {
+                if (_paletteSelected >= 0 && _paletteSelected < items.Count)
+                    StylePaletteRow(items[_paletteSelected], selected: false);
+            }
+            else
+            {
+                // The index belongs to the level being left. Clear every highlight there so
+                // none stays behind when that level is shown again.
+                foreach (PaletteItem item in _paletteSelectedList)
+                    StylePaletteRow(item, selected: false);
+            }
+        }
+
+        _paletteSelectedList = items;
+        _paletteSelected = index;
+        if (index >= 0 && index < items.Count) StylePaletteRow(items[index], selected: true);
+
+        // Moving through the window-theme menu previews the highlighted option live.
         if (_paletteSubmenu && !_suppressPalettePreview) PreviewSelectedPaletteItem(index);
 
         // Keep the highlighted row visible even when only the bar moved.
         _dispatcher?.TryEnqueue(ScrollPaletteSelectionIntoView);
+    }
+
+    private void StylePaletteRow(PaletteItem item, bool selected)
+    {
+        // Selection and hover combine: a hovered row keeps its stronger fill even when the
+        // keyboard moves the selection onto it, so hover is never swallowed by selection.
+        item.Row.Background = selected
+            ? (item.Hovered ? AccentStrokeBrush() : AccentSoftBrush())
+            : (item.Hovered ? ChipHoverBrush() : ClearBrush());
+        item.Title.Foreground = selected || item.Hovered ? TextStrongBrush() : TextBodyBrush();
     }
 
     private void RunPaletteItem(List<PaletteItem> items, int index)
@@ -1346,7 +1667,15 @@ public sealed partial class Workspace
         action?.Invoke();
     }
 
-    private void RunPalette() => RunPaletteItem(ActivePaletteItems(), _paletteSelected);
+    private void RunPalette()
+    {
+        if (IsPaletteThemeLevel)
+        {
+            CommitPaletteTheme();
+            return;
+        }
+        RunPaletteItem(ActivePaletteItems(), _paletteSelected);
+    }
 
     /// <summary>
     /// The hamburger menu shared by the title bar and the rail.
