@@ -31,6 +31,19 @@ public sealed unsafe class TerminalRenderer
     private readonly Dictionary<LayoutKey, CachedLayout> _layouts = new();
 
     /// <summary>
+    /// Single-grapheme symbol layouts scaled to fit one cell. Keyed per face/family; the scale
+    /// is recomputed on Rebuild so a font-size change cannot leave a stale-sized icon behind.
+    /// </summary>
+    private readonly Dictionary<(string Text, int Face, string Family), CachedLayout> _symbolLayouts = new();
+
+    /// <summary>
+    /// How far a symbol glyph's ink overflows its cell (1 = fits, &lt;1 = shrink). Some Nerd Font
+    /// icons draw a full em of ink but advance only one cell, so they spill onto the next letter.
+    /// Cached per codepoint/face; cell size changes invalidate it in Rebuild.
+    /// </summary>
+    private readonly Dictionary<(int Codepoint, int Face), float> _iconScales = new();
+
+    /// <summary>
     /// A cached layout plus the distance from its top to the first baseline. Fallback faces
     /// have their own ascent, so every layout is drawn shifted onto the primary face's
     /// baseline; without that, CJK text sits a few pixels off the Latin text.
@@ -460,6 +473,7 @@ public sealed unsafe class TerminalRenderer
         _coverage.Clear();
         _faces.Clear();
         _scales.Clear();
+        _iconScales.Clear();
 
         _resolvedFamily = FirstMonospace(_familyChains[0]) ??
                           FirstMonospace(DefaultFamilyCandidates) ?? "Consolas";
@@ -1013,6 +1027,8 @@ public sealed unsafe class TerminalRenderer
     {
         foreach (CachedLayout cached in _layouts.Values) cached.Layout.Dispose();
         _layouts.Clear();
+        foreach (CachedLayout cached in _symbolLayouts.Values) cached.Layout.Dispose();
+        _symbolLayouts.Clear();
     }
 
     /// <summary>
@@ -1287,6 +1303,115 @@ public sealed unsafe class TerminalRenderer
         // Sit every face on the primary face's baseline, so a fallback font's taller
         // ascent does not lift CJK off the line the Latin text sits on.
         ds.DrawTextLayout(cached.Layout, x, y + _primaryBaseline - cached.Baseline, color);
+    }
+
+    /// <summary>
+    /// How much to shrink a symbol glyph so its ink fits one cell (1 = no change). Many Nerd
+    /// Font icons draw a full em of ink but advance only one cell; drawn in a shared layout the
+    /// ink spills onto the following letter. Measured from the font's own glyph metrics in em
+    /// units, so it is independent of the current font size or DPI.
+    /// </summary>
+    private float IconScale(int codepoint, int face, string family)
+    {
+        var key = (codepoint, face);
+        if (_iconScales.TryGetValue(key, out float cached)) return cached;
+
+        float scale = 1f;
+        try
+        {
+            (ushort weight, bool italic, _) = ResolveFace(face, family);
+            CanvasFontFace? fontFace = FindFace(family, weight, italic);
+            if (fontFace is not null)
+            {
+                int[] glyphs = fontFace.GetGlyphIndices(new[] { (uint)codepoint });
+                if (glyphs.Length > 0 && glyphs[0] >= 0)
+                {
+                    CanvasGlyphMetrics[] metrics = fontFace.GetGlyphMetrics(glyphs, false);
+                    if (metrics.Length > 0)
+                    {
+                        // DrawBounds.Width is the glyph's ink extent in em units. One cell is
+                        // _cellAdvanceX DIPs, which at _fontSize is _cellAdvanceX / _fontSize em.
+                        float inkEm = (float)metrics[0].DrawBounds.Width;
+                        float cellEm = _cellAdvanceX / _fontSize;
+                        if (inkEm > cellEm && cellEm > 0f)
+                            scale = MathF.Max(0.15f, cellEm / inkEm);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // A font without glyph metrics keeps its glyph at full size; a spilled icon is
+            // cosmetic, so a failed probe must never drop the glyph.
+        }
+
+        _iconScales[key] = scale;
+        return scale;
+    }
+
+    /// <summary>Layout for a single symbol grapheme drawn at a reduced size to fit its cell.</summary>
+    private CachedLayout? GetSymbolLayout(string text, int face, string family, float scale)
+    {
+        var key = (text, face, family);
+        if (_symbolLayouts.TryGetValue(key, out CachedLayout? cached)) return cached;
+        if (scale >= 0.999f) return null;
+
+        try
+        {
+            var layout = new CanvasTextLayout(CanvasDevice.GetSharedDevice(), text, FormatFor(face, family), 0f, 0f);
+            layout.Options = CanvasDrawTextOptions.EnableColorFont;
+            layout.SetFontSize(0, text.Length, _fontSize * scale);
+            var entry = new CachedLayout(layout, BaselineOf(layout));
+            _symbolLayouts[key] = entry;
+            return entry;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Draws a run that contains symbol glyphs one grapheme at a time, each placed on its own
+    /// cell boundary. A mixed run drawn as one layout lets a wide icon's ink shift the letters
+    /// after it off the grid; placing graphemes by cell keeps the terminal columns aligned.
+    /// </summary>
+    private void DrawSymbolRun(CanvasDrawingSession ds, Run run, int face, float cellW, float textY)
+    {
+        var elements = StringInfo.GetTextElementEnumerator(run.Text);
+        int cell = 0;
+        while (elements.MoveNext())
+        {
+            string grapheme = elements.GetTextElement();
+            if (grapheme.Length == 0) continue;
+
+            int codepoint = CodepointAt(grapheme, 0);
+            float x = (run.Col + cell) * cellW;
+
+            if (IsPrivateUse(codepoint))
+            {
+                string family = FamilyForGrapheme(grapheme, face);
+                float scale = IconScale(codepoint, face, family);
+                CachedLayout? symbol = scale < 0.999f ? GetSymbolLayout(grapheme, face, family, scale) : null;
+                if (symbol is not null)
+                    ds.DrawTextLayout(symbol.Layout, x, textY + _primaryBaseline - symbol.Baseline, run.Fg);
+                else
+                    DrawTextRun(ds, grapheme, x, textY, run.Fg, run.Bold, run.Italic, family);
+            }
+            else
+            {
+                DrawTextRun(ds, grapheme, x, textY, run.Fg, run.Bold, run.Italic);
+            }
+            cell++;
+        }
+    }
+
+    /// <summary>Whether a string contains a private-use (symbol) glyph that needs cell-safe placement.</summary>
+    private static bool HasSymbol(string text)
+    {
+        foreach (char ch in text)
+            if (ch >= '\uE000' && ch <= '\uF8FF') return true;
+        return false;
     }
 
     /// <summary>Char index where the cursor cell starts inside a run, or -1 when there is none.</summary>
@@ -2279,13 +2404,23 @@ public sealed unsafe class TerminalRenderer
                     signature = (signature ^ (uint)run.Text.Length) * 16777619u;
 
                     int face = (run.Bold ? 1 : 0) | (run.Italic ? 2 : 0);
-                    // "font-shaping-break = cursor" (the default) draws the cells on either
-                    // side of the cursor as two layouts so a ligature cannot form across it.
-                    (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, row.ViewportY);
 
-                    RunSegment[]? segments = SegmentsFor(run.Text, face);
-                    if (segments is not null)
+                    // A symbol glyph may draw more ink than the one cell it advances. Draw the
+                    // run a grapheme at a time so each glyph starts on its own cell and scale
+                    // oversized icons down to fit; a plain run keeps its single shaped layout.
+                    if (HasSymbol(run.Text))
                     {
+                        DrawSymbolRun(ds, run, face, cellW, textY);
+                    }
+                    else
+                    {
+                        // "font-shaping-break = cursor" (the default) draws the cells on either
+                        // side of the cursor as two layouts so a ligature cannot form across it.
+                        (int split, int splitCell) = ShapingBreakAt(run, haveCursor, cursor, row.ViewportY);
+
+                        RunSegment[]? segments = SegmentsFor(run.Text, face);
+                        if (segments is not null)
+                        {
                         // Some graphemes need a fallback family, so each segment is
                         // placed on the grid instead of relying on the font advance.
                         // A segment is already a shaping break of its own; the one the
@@ -2305,6 +2440,7 @@ public sealed unsafe class TerminalRenderer
                         {
                             DrawTextRun(ds, run.Text, run.Col * cellW, textY,
                                 run.Fg, run.Bold, run.Italic);
+                        }
                         }
                     }
                 }
@@ -3081,6 +3217,7 @@ public sealed unsafe class TerminalRenderer
         _coverage.Clear();
         _faces.Clear();
         _scales.Clear();
+        _iconScales.Clear();
         _familyExists.Clear();
         _contrast.Clear();
 
