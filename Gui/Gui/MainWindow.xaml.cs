@@ -315,6 +315,7 @@ public sealed partial class MainWindow : Window
                 Scale = scale,
                 Maximized = maximized,
                 FullScreen = fullScreen,
+                SidebarCollapsed = _workspace.SidebarCollapsed,
                 SavedAt = DateTime.Now,
                 ActiveTab = activeTab,
                 Tabs = tabs,

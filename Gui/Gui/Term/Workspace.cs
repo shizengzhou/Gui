@@ -388,6 +388,7 @@ public sealed partial class Workspace
         _restore = restore;
         _placement = PlacementFrom(config.TabPosition);
         _sidebarWidth = Math.Max(MinSidebarWidth(), SidebarWidthFromConfig());
+        _sidebarCollapsed = restore?.SidebarCollapsed == true;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _appliedLanguage = Strings.Current;
         RefreshKeybinds();
@@ -469,6 +470,11 @@ public sealed partial class Workspace
         Activate(_restore is { } state && _tabs.Count > 0
             ? Math.Clamp(state.ActiveTab, 0, _tabs.Count - 1)
             : 0);
+
+        // A restored collapsed rail is applied without the slide a toggle would play: the
+        // window comes back in the state it was left in.
+        if (_sidebarCollapsed && _placement != TabPlacement.Top) ApplySidebarChrome();
+
         UpdateStatus();
         ApplyTabBarVisibility();
         ScheduleStartupUpdateCheck();
@@ -2552,6 +2558,9 @@ public sealed partial class Workspace
 
     /// <summary>True unless "window-save-state = never" turns session persistence off.</summary>
     internal bool SavesWindowState => _config.WindowSaveState != "never";
+
+    /// <summary>Whether the tab rail is collapsed; saved with the window state.</summary>
+    internal bool SidebarCollapsed => _sidebarCollapsed;
 
     // ---------------- window-save-state ----------------
 

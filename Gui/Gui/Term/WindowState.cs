@@ -25,6 +25,9 @@ internal sealed class WindowState
     public bool Maximized { get; set; }
     public bool FullScreen { get; set; }
 
+    /// <summary>True when the tab rail was collapsed; the rail's side keeps its own width.</summary>
+    public bool SidebarCollapsed { get; set; }
+
     /// <summary>Local time the session was captured, shown in each pane's restore divider.</summary>
     public DateTime SavedAt { get; set; }
 
