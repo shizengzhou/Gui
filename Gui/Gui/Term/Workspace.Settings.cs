@@ -277,6 +277,7 @@ public sealed partial class Workspace
             Margin = new Thickness(10, 2, 0, 8),
         });
 
+        panel.Children.Add(SettingsNavItem("general", '\uE713', Strings.SettingsNavGeneral));
         panel.Children.Add(SettingsNavItem("appearance", '\uE790', Strings.SettingsNavAppearance));
         panel.Children.Add(SettingsNavItem("terminal", '\uE756', Strings.SettingsNavTerminal));
         panel.Children.Add(SettingsNavItem("notifications", '\uE7ED', Strings.SettingsNavNotifications));
@@ -410,6 +411,7 @@ public sealed partial class Workspace
         _settingsPages = new Grid();
         AddStarRow(_settingsPages);
 
+        AddSettingsPage("general", BuildGeneralSettingsPage());
         AddSettingsPage("appearance", BuildAppearanceSettingsPage());
         AddSettingsPage("terminal", BuildTerminalSettingsPage());
         AddSettingsPage("notifications", BuildNotificationsSettingsPage());
@@ -541,6 +543,39 @@ public sealed partial class Workspace
             if (ReferenceEquals(node, _settingsLayer)) return true;
         }
         return false;
+    }
+
+    // ---------------- general ----------------
+
+    private FrameworkElement BuildGeneralSettingsPage()
+    {
+        var page = SettingsPageStack();
+
+        int confirmCloseIndex = _config.ConfirmCloseSurface switch
+        {
+            "always" => 1,
+            "false" => 2,
+            _ => 0,
+        };
+        FrameworkElement confirmClose = SettingsSegmented(
+            new[]
+            {
+                Strings.SettingsConfirmCloseRunning, Strings.SettingsConfirmCloseAlways,
+                Strings.SettingsConfirmCloseNever,
+            },
+            confirmCloseIndex, ApplyConfirmCloseSurfaceChoice);
+
+        page.Children.Add(SettingsGroup(Strings.SettingsWindow, SettingsCard(
+            SettingsRow(Strings.SettingsWindowSaveState, null,
+                SettingsSwitch(_config.WindowSaveState != "never", ApplyWindowSaveStateChoice)),
+            SettingsRow(Strings.SettingsConfirmClose, null,
+                confirmClose))));
+
+        page.Children.Add(SettingsGroup(Strings.SettingsUpdates, SettingsCard(
+            SettingsRow(Strings.SettingsAutoUpdate, null,
+                SettingsSwitch(_config.AutoUpdate != "off", ApplyAutoUpdateChoice)))));
+
+        return page;
     }
 
     // ---------------- appearance ----------------
@@ -1444,6 +1479,30 @@ public sealed partial class Workspace
     }
 
     // ---------------- live application ----------------
+
+    private void ApplyWindowSaveStateChoice(bool save)
+    {
+        _config.WindowSaveState = save ? "always" : "never";
+        Config.SaveValue("window-save-state", _config.WindowSaveState);
+    }
+
+    private void ApplyConfirmCloseSurfaceChoice(int index)
+    {
+        string value = index switch
+        {
+            1 => "always",
+            2 => "false",
+            _ => "true",
+        };
+        _config.ConfirmCloseSurface = value;
+        Config.SaveValue("confirm-close-surface", value);
+    }
+
+    private void ApplyAutoUpdateChoice(bool check)
+    {
+        _config.AutoUpdate = check ? "check" : "off";
+        Config.SaveValue("auto-update", _config.AutoUpdate);
+    }
 
     private void ApplyLanguageChoice(string value)
     {

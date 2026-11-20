@@ -125,11 +125,20 @@ public static class Strings
 
     // ---- settings ----
     public static string SettingsTitle => Pick("Settings", "设置");
+    public static string SettingsNavGeneral => Pick("General", "通用");
     public static string SettingsNavAppearance => Pick("Appearance", "外观");
     public static string SettingsNavTerminal => Pick("Terminal", "终端");
     public static string SettingsNavKeys => Pick("Key bindings", "快捷键");
     public static string SettingsNavAbout => Pick("About", "关于");
     public static string SettingsNavNotifications => Pick("Notifications", "通知");
+    public static string SettingsWindow => Pick("Window", "窗口");
+    public static string SettingsWindowSaveState => Pick("Save window state", "保存窗口状态");
+    public static string SettingsConfirmClose => Pick("Confirm before closing", "关闭前确认");
+    public static string SettingsConfirmCloseRunning => Pick("Running only", "运行中");
+    public static string SettingsConfirmCloseAlways => Pick("Always", "总是");
+    public static string SettingsConfirmCloseNever => Pick("Never", "从不");
+    public static string SettingsUpdates => Pick("Updates", "更新");
+    public static string SettingsAutoUpdate => Pick("Check for updates automatically", "自动检查更新");
     public static string SettingsLanguage => Pick("Language", "语言");
     public static string SettingsWindowAppearance => Pick("Window theme", "窗口外观");
     public static string SettingsTabPosition => Pick("Tabs position", "标签栏位置");
