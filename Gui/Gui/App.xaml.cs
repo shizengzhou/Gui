@@ -58,6 +58,16 @@ public partial class App : Application
     private readonly bool _noSessionSave;
 
     /// <summary>
+    /// The marker Windows appends when it starts the exe to deliver a toast click. An
+    /// unpackaged app's notification activator is the exe itself, so the click arrives as a
+    /// second launch rather than as an event in the process that raised the notification.
+    /// </summary>
+    internal const string NotificationActivationPrefix = "----AppNotificationActivated:";
+
+    /// <summary>Set when this process was started by a toast click instead of by the user.</summary>
+    private readonly bool _notificationActivation;
+
+    /// <summary>
     /// Windows are laid out (and so marked dirty) while a restored pane is still printing its
     /// saved output. Saving during that window would overwrite the session with a blank one,
     /// so the first seconds after launch are ignored. Closing a window always saves.
@@ -73,13 +83,16 @@ public partial class App : Application
 
         // Launch flags are read first: they are config lines for this process, so the theme
         // and every window built later have to see them.
-        ParseLaunchArgs(Environment.GetCommandLineArgs(),
+        string[] args = Environment.GetCommandLineArgs();
+        ParseLaunchArgs(args,
             out string? launchCommand, out string? launchDirectory, out List<string> launchOverrides,
             out List<string> launchConfigFiles, out bool launchDefaultFiles, out bool noSessionSave);
         _launchCommand = launchCommand;
         _launchDirectory = launchDirectory;
         _launchOverrides = launchOverrides;
         _noSessionSave = noSessionSave;
+        _notificationActivation = Array.Exists(args,
+            arg => arg.StartsWith(NotificationActivationPrefix, StringComparison.Ordinal));
 
         // Which files to read are inputs to the config load, not overrides of it, so they are
         // recorded before the first load and every later load sees the same set.
@@ -191,6 +204,16 @@ public partial class App : Application
     {
         try
         {
+            // A toast click belongs to the window that raised it, so hand it to the running
+            // instance and leave before anything is built. No pipe answering means the app
+            // was closed after the toast was posted, and this becomes an ordinary launch.
+            if (_notificationActivation && TryFocusRunningInstance())
+            {
+                Diag.Log("launch", "toast activation forwarded to the running instance");
+                Exit();
+                return;
+            }
+
             // Global chords belong to the process, not to a window: they have to work while
             // another application has the focus, so the set is registered here rather than
             // when a window or the drop-down is first shown.
@@ -310,6 +333,28 @@ public partial class App : Application
                 (int)cell.Height, request.Foreground, request.Output);
         }
 
+        if (string.Equals(request.Action, "focus", StringComparison.Ordinal))
+        {
+            MainWindow? existing = _active ?? _windows.OfType<MainWindow>().LastOrDefault();
+            if (existing is null) return "no window is open";
+
+            // A toast names the session that raised it, which may sit in another window or on
+            // a tab the user has since switched away from.
+            if (request.Session != 0)
+            {
+                foreach (MainWindow window in _windows.OfType<MainWindow>())
+                {
+                    if (window.Workspace is not { } owner || !owner.FocusSessionById(request.Session)) continue;
+                    existing = window;
+                    break;
+                }
+            }
+
+            existing.BringToFront();
+            Diag.Log("ipc", $"focus session={request.Session}");
+            return null;
+        }
+
         if (!string.Equals(request.Action, "new-tab", StringComparison.Ordinal))
             return $"unknown action '{request.Action}'";
 
@@ -321,6 +366,59 @@ public partial class App : Application
         Diag.Log("ipc",
             $"new-tab cwd={request.WorkingDirectory ?? "-"} command={request.Command ?? "-"} title={request.Title ?? "-"}");
         return null;
+    }
+
+    /// <summary>
+    /// Asks the running instance to come to the front, over the pipe the CLI already uses.
+    /// False when nothing answered, which is how a toast clicked after the app closed turns
+    /// back into an ordinary launch.
+    /// </summary>
+    private static bool TryFocusRunningInstance()
+    {
+        string pipeName = Term.IpcProtocol.PipeName();
+        try
+        {
+            using var pipe = new System.IO.Pipes.NamedPipeClientStream(".", pipeName,
+                System.IO.Pipes.PipeDirection.InOut);
+            pipe.Connect(2000);
+
+            byte[] payload = System.Text.Encoding.UTF8.GetBytes(
+                Term.IpcProtocol.Serialize(new Term.IpcProtocol.Request
+                {
+                    Action = "focus",
+                    Session = NotificationSession(),
+                }) + "\n");
+            pipe.Write(payload, 0, payload.Length);
+            pipe.Flush();
+
+            using var reader = new System.IO.StreamReader(pipe, System.Text.Encoding.UTF8);
+            string? line = reader.ReadLine();
+            if (line is not null && Term.IpcProtocol.ParseResponse(line) is { Ok: true }) return true;
+
+            Diag.Log("launch", $"instance on {pipeName} did not take the activation: {line ?? "no reply"}");
+            return false;
+        }
+        catch (Exception error)
+        {
+            Diag.Log("launch", $"no running instance on {pipeName}: {error.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The session named by the clicked toast. Arguments arrive as "key=value" pairs joined by
+    /// '&amp;'; 0 means the click carried no session, so the window comes forward as it is.
+    /// </summary>
+    private static int NotificationSession()
+    {
+        if (Program.NotificationArgument is not { } argument) return 0;
+        foreach (string pair in argument.Split('&'))
+        {
+            int split = pair.IndexOf('=');
+            if (split > 0 && pair[..split] == "session" && int.TryParse(pair[(split + 1)..], out int id))
+                return id;
+        }
+        return 0;
     }
 
     private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null,

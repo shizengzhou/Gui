@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
 
     private Term.Workspace? _workspace;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _geometryTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _focusTimer;
 
     /// <summary>Directory a second window starts in, from "window-inherit-working-directory".</summary>
     private readonly string? _inheritedDirectory;
@@ -374,10 +375,105 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Takes the foreground for a request that did not come from the shell's own activation:
+    /// a toast click is delivered to a second process, and by the time this one hears about it
+    /// Windows no longer lets it call SetForegroundWindow. Sharing the foreground thread's
+    /// input queue is what makes the call succeed anyway; it is detached straight afterwards
+    /// so the two threads do not stay tied together.
+    /// </summary>
+    internal void BringToFront()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
+            presenter.Restore();
+
+        if (TryTakeForeground()) Activate();
+
+        // Winning the foreground once is not enough. The Action Center can still be up and
+        // deny the call, or take the foreground back right after we won it, so keep watching
+        // until this window has held it for a moment.
+        Microsoft.UI.Dispatching.DispatcherQueue? queue = RootGrid.DispatcherQueue;
+        if (queue is null) return;
+
+        IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        _focusTimer?.Stop();
+        var timer = queue.CreateTimer();
+        _focusTimer = timer;
+        timer.Interval = TimeSpan.FromMilliseconds(200);
+        int ticks = 0, held = 0;
+        timer.Tick += (_, _) =>
+        {
+            ticks++;
+            if (GetForegroundWindow() == hwnd)
+            {
+                held++;
+            }
+            else
+            {
+                held = 0;
+                DismissActionCenter();
+                if (TryTakeForeground()) Activate();
+            }
+            if (held >= 2 || ticks >= 12)
+            {
+                timer.Stop();
+                if (held < 2) Diag.Warn("focus", "the window did not reach the foreground");
+            }
+        };
+        timer.Start();
+    }
+
+    /// <summary>
+    /// The Action Center waits for the activated app to take the foreground before it
+    /// dismisses, and denies every activation while it is up: a toast click can deadlock
+    /// there and leave nothing but a flashing taskbar button. Esc closes it, so send one —
+    /// but only when a shell surface really is the foreground window, never to the app the
+    /// user is working in.
+    /// </summary>
+    private static void DismissActionCenter()
+    {
+        IntPtr foreground = GetForegroundWindow();
+        if (foreground == IntPtr.Zero) return;
+
+        var className = new System.Text.StringBuilder(64);
+        GetClassName(foreground, className, className.Capacity);
+        if (className.ToString() != "Windows.UI.Core.CoreWindow") return;
+
+        keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
+        keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+
+    /// <summary>One activation attempt; true once this window really is the foreground one.</summary>
+    private bool TryTakeForeground()
+    {
+        IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        IntPtr foreground = GetForegroundWindow();
+        uint foregroundThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, out _);
+        uint thread = GetCurrentThreadId();
+        bool attached = foregroundThread != 0 && foregroundThread != thread &&
+            AttachThreadInput(thread, foregroundThread, true);
+        try
+        {
+            SetForegroundWindow(hwnd);
+            BringWindowToTop(hwnd);
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(thread, foregroundThread, false);
+        }
+
+        bool taken = GetForegroundWindow() == hwnd;
+        Diag.Debug("focus", $"hwnd={hwnd} foreground={foreground} attached={attached} taken={taken}");
+        return taken;
+    }
+
     /// <summary>Set once the first activation has cloaked the window until the chrome is up.</summary>
     private bool _cloakedForStartup;
 
     private const int DWMWA_CLOAK = 13;   // set with 13, read back with DWMWA_CLOAKED (14)
+
+    private const byte VK_ESCAPE = 0x1B;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
 
     /// <summary>DWM cloak: the window keeps its HWND, layout and messages but is not drawn.</summary>
     private void Cloak(bool cloak)
@@ -403,4 +499,28 @@ public sealed partial class MainWindow : Window
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int index);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint attach, uint to, bool attachInput);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool BringWindowToTop(IntPtr hwnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder className, int maxCount);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 }

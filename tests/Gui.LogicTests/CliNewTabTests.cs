@@ -34,6 +34,27 @@ public class CliNewTabTests
     }
 
     [Fact]
+    public void ProtocolRoundTripsTheSessionAFocusRequestNames()
+    {
+        var request = new IpcProtocol.Request { Action = "focus", Session = 7 };
+
+        IpcProtocol.Request? parsed = IpcProtocol.ParseRequest(IpcProtocol.Serialize(request));
+
+        Assert.NotNull(parsed);
+        Assert.Equal("focus", parsed!.Action);
+        Assert.Equal(7, parsed.Session);
+    }
+
+    [Fact]
+    public void ProtocolReadsAFocusRequestWithoutASessionAsZero()
+    {
+        IpcProtocol.Request? parsed = IpcProtocol.ParseRequest("""{"action":"focus"}""");
+
+        Assert.NotNull(parsed);
+        Assert.Equal(0, parsed!.Session);
+    }
+
+    [Fact]
     public void ProtocolOmitsAbsentFieldsAndReadsThemBackAsNull()
     {
         string json = IpcProtocol.Serialize(new IpcProtocol.Request { Action = "new-tab" });

@@ -283,6 +283,33 @@ public sealed partial class Workspace
         return ReferenceEquals(_tabs[_active].Focused, pane);
     }
 
+    /// <summary>
+    /// Selects the tab and split showing a session, so a notification click lands on the shell
+    /// that asked for attention even after the user has switched elsewhere or moved the tab to
+    /// another window. False when that session is gone, which is what a toast outliving its
+    /// pane looks like.
+    /// </summary>
+    internal bool FocusSessionById(int id)
+    {
+        for (int index = 0; index < _tabs.Count; index++)
+        {
+            TerminalPane? found = null;
+            ForEachPane(_tabs[index], pane => { if (pane.SessionId == id) found = pane; });
+            if (found is null) continue;
+
+            Tab tab = _tabs[index];
+            tab.Focused = found;
+            Activate(index);
+            Diag.Debug("notify", $"focus session={id} tab={index}");
+
+            // A zoomed tab paints only its focused pane, and Activate does not rebuild the
+            // layout, so the zoom would otherwise keep showing the pane it was zoomed on.
+            if (tab.Zoomed) Relayout(tab);
+            return true;
+        }
+        return false;
+    }
+
     private static bool _notificationsRegistered;
 
     private static void EnsureNotificationsRegistered()
@@ -301,6 +328,7 @@ public sealed partial class Workspace
             var notification = new AppNotificationBuilder()
                 .AddText(Strings.CommandFinishedTitle)
                 .AddText(Strings.CommandFinishedNotification(pane.Title, exitCode))
+                .AddArgument("session", pane.SessionId.ToString())
                 .BuildNotification();
             AppNotificationManager.Default.Show(notification);
         }
@@ -325,6 +353,7 @@ public sealed partial class Workspace
             string heading = title.Length > 0 ? title : pane.Title.Length > 0 ? pane.Title : "Gui";
             var builder = new AppNotificationBuilder().AddText(heading);
             if (body.Length > 0) builder.AddText(body);
+            builder.AddArgument("session", pane.SessionId.ToString());
             AppNotificationManager.Default.Show(builder.BuildNotification());
         }
         catch (Exception error)

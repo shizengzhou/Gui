@@ -12,7 +12,7 @@ namespace Gui.Term;
 ///
 /// Both ends compile this file (the app and Gui.Cli link it), so the pipe name and the wire
 /// shape cannot drift. Nothing secret goes over it: a request only ever asks the running app
-/// to open a tab, and the pipe accepts the current user's processes only.
+/// to open a tab or come to the front, and the pipe accepts the current user's processes only.
 /// </summary>
 public static class IpcProtocol
 {
@@ -82,7 +82,7 @@ public static class IpcProtocol
     /// <summary>One command for the running app. Unknown fields are ignored.</summary>
     public sealed class Request
     {
-        /// <summary>"new-tab" or "render-sample".</summary>
+        /// <summary>"new-tab", "focus" or "render-sample".</summary>
         public string Action { get; set; } = string.Empty;
 
         /// <summary>Directory the new tab's shell starts in; null keeps the app's default.</summary>
@@ -93,6 +93,8 @@ public static class IpcProtocol
 
         /// <summary>Title override for the new tab.</summary>
         public string? Title { get; set; }
+        /// <summary>Terminal session a "focus" request should select; 0 leaves the current one alone.</summary>
+        public int Session { get; set; }
         /// <summary>Font family for "render-sample".</summary>
         public string? Family { get; set; }
         /// <summary>Cell size in physical pixels for "render-sample".</summary>
