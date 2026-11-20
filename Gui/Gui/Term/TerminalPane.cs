@@ -52,7 +52,6 @@ public sealed class TerminalPane
     private readonly Border _dim;
     private readonly ScrollBar _scrollBar;
     private readonly TextBlock _pathText;
-    private readonly FontIcon _iconFallback;
     private readonly Image _shellIcon;
 
     /// <summary>OSC 7501 status dot on the header's shell icon, matching the tab chip.</summary>
@@ -673,15 +672,6 @@ public sealed class TerminalPane
 
         var iconSlot = new Grid { Width = 16, Height = 16 };
         _iconSlot = iconSlot;
-        _iconFallback = new FontIcon
-        {
-            Glyph = "\uE756",
-            FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = Theme.FontTitle,
-            Foreground = faint,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        iconSlot.Children.Add(_iconFallback);
 
         _shellIcon = new Image
         {
@@ -2367,7 +2357,6 @@ public sealed class TerminalPane
     {
         _dim.Opacity = _focused ? 0.0 : 1.0;
         _pathText.Foreground = new SolidColorBrush(_focused ? Theme.TextStrong() : Theme.TextFaint());
-        _iconFallback.Foreground = new SolidColorBrush(_focused ? Theme.Accent() : Theme.TextFaint());
         _shellIcon.Opacity = _focused ? 1.0 : 0.6;
 
         if (_actions is not null)
@@ -2631,7 +2620,6 @@ public sealed class TerminalPane
         _shellIconSource = source;
         _shellIcon.Source = source;
         _shellIcon.Visibility = Visibility.Visible;
-        _iconFallback.Visibility = Visibility.Collapsed;
 
         // A cached icon resolves synchronously, so by the time it is ready the pane's tab does
         // not exist yet and nobody is listening. Announcing on the next dispatcher turn gives

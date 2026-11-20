@@ -80,7 +80,6 @@ public sealed partial class Workspace
         /// <summary>The template's clear button, hidden so the chip keeps a single ×.</summary>
         public Button? ChipEditorClear;
         public Image ChipIcon = null!;
-        public FontIcon ChipIconFallback = null!;
         public ImageSource? ChipIconSource;
 
         /// <summary>OSC 7501 status dot on the shell icon (blocked, failed, done, working).</summary>
@@ -2795,8 +2794,8 @@ public sealed partial class Workspace
         AddAutoColumn(chipGrid);
         AddAutoColumn(chipGrid);
 
-        // Same shell icon as the pane header: a 16 DIP slot that shows the extracted
-        // executable icon and falls back to the terminal glyph.
+        // Same shell icon as the pane header: a 16 DIP slot that stays empty until the
+        // extracted executable icon is ready, instead of showing a placeholder glyph.
         var iconSlot = new Grid
         {
             Width = 16,
@@ -2804,9 +2803,6 @@ public sealed partial class Workspace
             Margin = new Thickness(0, 0, 8, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-
-        tab.ChipIconFallback = Glyph('\uE756', 16, ChromeTextFaintBrush());
-        iconSlot.Children.Add(tab.ChipIconFallback);
 
         tab.ChipIcon = new Image
         {

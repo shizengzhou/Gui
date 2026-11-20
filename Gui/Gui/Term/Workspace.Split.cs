@@ -798,14 +798,13 @@ public sealed partial class Workspace
                 tab.ChipIconSource = iconSource;
                 if (iconSource is null)
                 {
+                    // Nothing to show yet: leave the slot empty rather than a fallback glyph.
                     tab.ChipIcon.Visibility = Visibility.Collapsed;
-                    tab.ChipIconFallback.Visibility = Visibility.Visible;
                 }
                 else
                 {
                     tab.ChipIcon.Source = iconSource;
                     tab.ChipIcon.Visibility = Visibility.Visible;
-                    tab.ChipIconFallback.Visibility = Visibility.Collapsed;
                 }
             }
 
