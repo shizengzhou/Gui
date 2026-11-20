@@ -206,7 +206,10 @@ foreach ($name in $variants) {
         "Gui.pri",
         "App.xbf",
         "ghostty-vt.dll",
-        "Microsoft.ui.xaml.dll"
+        "Microsoft.ui.xaml.dll",
+        # TERMINFO_DIRS points inside the app directory, so a payload without the entry
+        # leaves vim and other terminfo programs in an MSYS shell without a terminal type.
+        "Assets/terminfo/78/xterm-ghostty"
     )
     if ($lite) {
         # The runtime must be absent here, or the app stops depending on the shared one

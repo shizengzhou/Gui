@@ -384,7 +384,9 @@ public sealed class Config
     public IReadOnlyList<KeyRemap> KeyRemaps = Array.Empty<KeyRemap>();
     public bool WaitAfterCommand;
     public int AbnormalCommandExitRuntime = 250;   // ms; Ghostty's default
-    public string TermVariable = string.Empty;
+    // Ghostty's own TERM, so programs that look for it (agent CLIs, capability probes) see the
+    // name they would under Ghostty. "term" in the config, or --term=, replaces it.
+    public string TermVariable = "xterm-ghostty";
 
     private readonly Dictionary<string, List<string>> _values = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ConfigDiagnostic> _diagnostics = new();
@@ -1398,7 +1400,7 @@ public sealed class Config
         KeyRemaps = ParseKeyRemaps(All("key-remap"));
         WaitAfterCommand = GetBool("wait-after-command", false);
         AbnormalCommandExitRuntime = Math.Clamp(GetInt("abnormal-command-exit-runtime", 250), 0, 3600000);
-        TermVariable = Last("term") ?? string.Empty;
+        TermVariable = Last("term") ?? "xterm-ghostty";
         ShellIntegration = NormalizeShellIntegration(Last("shell-integration"));
         ApplyShellFeatures(Last("shell-integration-features"));
         NotifyOnCommandFinish = NormalizeNotifyMode(Last("notify-on-command-finish"));

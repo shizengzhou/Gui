@@ -258,6 +258,18 @@ internal sealed class ConPty : IDisposable
         // Programs inside a pane detect what the terminal can do through TERM_PROGRAM: the
         // kitty graphics protocol here, which "gui +list-fonts" uses for its font previews.
         variables["TERM_PROGRAM"] = "Gui";
+
+        // MSYS and Cygwin programs resolve TERM through terminfo, and Windows ships no entry
+        // for xterm-ghostty, so the payload carries one and this points the search path at
+        // it. The trailing colon keeps the system directories in the list, so a program that
+        // sets its own TERM still resolves that name. A native Windows program ignores both
+        // variables, so nothing changes there.
+        string terminfo = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "terminfo");
+        if (System.IO.Directory.Exists(terminfo) && MsysPath(terminfo) is { } terminfoDirs)
+        {
+            variables.TryGetValue("TERMINFO_DIRS", out string? inheritedDirs);
+            variables["TERMINFO_DIRS"] = terminfoDirs + ":" + inheritedDirs;
+        }
         if (extra is not null)
         {
             foreach ((string name, string value) in extra)
@@ -272,6 +284,21 @@ internal sealed class ConPty : IDisposable
         block.Append('\0');
 
         return Marshal.StringToHGlobalUni(block.ToString());
+    }
+
+    /// <summary>
+    /// A Windows path the way an MSYS or Cygwin runtime spells it: <c>C:\dir</c> becomes
+    /// <c>/c/dir</c>, and <c>\\server\share</c> becomes <c>//server/share</c>. Null when the
+    /// path has no such spelling, so a caller leaves it out instead of handing over a path
+    /// that runtime cannot open.
+    /// </summary>
+    private static string? MsysPath(string path)
+    {
+        if (path.Length >= 2 && path[1] == ':')
+            return "/" + char.ToLowerInvariant(path[0]) + path[2..].Replace('\\', '/');
+        if (path.StartsWith("\\\\", StringComparison.Ordinal))
+            return path.Replace('\\', '/');
+        return null;
     }
 
     /// <summary>
