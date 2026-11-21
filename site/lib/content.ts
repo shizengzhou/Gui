@@ -67,8 +67,8 @@ const downloads: Download[] = [
     icon: 'download',
     title: { zh: '完整安装包', en: 'Full installer' },
     desc: {
-      zh: '自包含，随包携带 .NET 8 运行时，机器上什么都不用装。',
-      en: 'Self-contained. Ships the .NET 8 runtime, so nothing else needs to be installed.',
+      zh: '自包含，随包携带 .NET 10 运行时，机器上什么都不用装。',
+      en: 'Self-contained. Ships the .NET 10 runtime, so nothing else needs to be installed.',
     },
     file: 'Gui-0.1.1-x64-setup.exe',
     size: '≈ 63 MB · x64',
@@ -79,11 +79,11 @@ const downloads: Download[] = [
     icon: 'bolt',
     title: { zh: 'Lite', en: 'Lite' },
     desc: {
-      zh: '框架依赖，不带 .NET 8 运行时；安装时会检查，缺失时给出下载入口。',
-      en: 'Framework-dependent. Leaves out the .NET 8 runtime; the setup checks for it and links to the download if missing.',
+      zh: '框架依赖，不带 .NET 10 运行时；安装时会检查，缺失时给出下载入口。',
+      en: 'Framework-dependent. Leaves out the .NET 10 runtime; the setup checks for it and links to the download if missing.',
     },
     file: 'Gui-0.1.1-x64-lite-setup.exe',
-    size: '≈ 31 MB · x64 · .NET 8',
+    size: '≈ 31 MB · x64 · .NET 10',
     url: `${LATEST}/Gui-0.1.1-x64-lite-setup.exe`,
   },
 ];

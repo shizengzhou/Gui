@@ -45,7 +45,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrEmpty($Exe)) {
-    $Exe = Join-Path $root 'Gui/Gui/bin/x64/Release/net8.0-windows10.0.19041.0/win-x64/Gui.exe'
+    $Exe = Join-Path $root 'Gui/Gui/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/Gui.exe'
 }
 $baselinePath = if ([string]::IsNullOrEmpty($BaselinePath)) { Join-Path $PSScriptRoot 'perf-gui-baseline.json' } else { $BaselinePath }
 

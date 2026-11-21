@@ -37,7 +37,7 @@ configuration and the csproj `Platforms` are `x86;x64;ARM64`. The RuntimeIdentif
 dotnet build Gui/Gui/Gui.csproj -p:Platform=x64
 
 # Run (no packaging, no deploy)
-Gui/Gui/bin/x64/Debug/net8.0-windows10.0.19041.0/win-x64/Gui.exe
+Gui/Gui/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/Gui.exe
 
 # Theme picker (tsp's layout): All/Light/Dark chips, the highlighted theme's colors and a
 # sample on the right, Enter writes the matching half of "theme" into the config. When the
@@ -69,7 +69,7 @@ dotnet run --project tests/Gui.PerfTests -c Release
 
 # Installers: tests, publish and Inno Setup in one step; the version is stamped into the
 # exe, the setups and their file names. One version yields two payloads: self-contained
-# (dist/Gui-<version>-x64-setup.exe) and framework-dependent (`-lite`, needs .NET 8,
+# (dist/Gui-<version>-x64-setup.exe) and framework-dependent (`-lite`, needs .NET 10,
 # dist/Gui-<version>-x64-lite-setup.exe); -Variant full|lite builds just one.
 ./build-installer.ps1 1.2.3
 ```
@@ -543,7 +543,7 @@ Only the x64 binary is checked in; other platforms need the script with `PLATFOR
 
 ## Build configuration notes
 
-- Target: `net8.0-windows10.0.19041.0`, min OS `10.0.17763.0`, `Nullable` enabled, `OutputType` WinExe.
+- Target: `net10.0-windows10.0.19041.0`, min OS `10.0.17763.0`, `Nullable` enabled, `OutputType` WinExe.
 - The Windows App SDK is referenced as **component packages** (`WindowsAppSDK.WinUI`,
   `.DWrite`, `.Runtime`, which pull `.Base` / `.Foundation` / `.InteractiveExperiences`) at the
   versions the 1.8.260921001 umbrella pinned, not as the umbrella: the umbrella also pulls

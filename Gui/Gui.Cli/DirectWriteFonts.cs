@@ -152,7 +152,7 @@ internal static class DirectWriteFonts
             try
             {
                 Guid iid = FontFace1Id;
-                if (Marshal.QueryInterface(face, ref iid, out IntPtr face1) < 0 || face1 == IntPtr.Zero)
+                if (Marshal.QueryInterface(face, in iid, out IntPtr face1) < 0 || face1 == IntPtr.Zero)
                     return false;
 
                 try

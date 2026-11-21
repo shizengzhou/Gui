@@ -56,13 +56,13 @@ jobs:
           $commits = @(git log $range --no-merges --pretty=format:'- %s (%h)')
 
           $notes = [System.Collections.Generic.List[string]]::new()
-          # Two downloads, one product: the full package carries the .NET 8 runtime, the
+          # Two downloads, one product: the full package carries the .NET 10 runtime, the
           # lite one does not. Worth saying out loud in the notes, because the smaller
           # file is the one that can refuse to install.
           $notes.Add('## Downloads')
           $notes.Add('')
-          $notes.Add("- `Gui-$env:VERSION-x64-setup.exe` - self-contained: the .NET 8 runtime, the Windows App SDK and everything else travel with it. Pick this one if you are not sure.")
-          $notes.Add("- `Gui-$env:VERSION-x64-lite-setup.exe` - smaller download for a machine that already has the .NET 8 runtime; the setup checks for it and opens the download page if it is missing.")
+          $notes.Add("- `Gui-$env:VERSION-x64-setup.exe` - self-contained: the .NET 10 runtime, the Windows App SDK and everything else travel with it. Pick this one if you are not sure.")
+          $notes.Add("- `Gui-$env:VERSION-x64-lite-setup.exe` - smaller download for a machine that already has the .NET 10 runtime; the setup checks for it and opens the download page if it is missing.")
           $notes.Add('')
           $notes.Add('## What''s changed')
           $notes.Add('')
