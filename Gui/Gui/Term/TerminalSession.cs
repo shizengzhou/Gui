@@ -34,12 +34,11 @@ public readonly record struct SearchSpan(int Row, int StartX, int EndX, bool Sel
 public sealed unsafe class TerminalSession : IDisposable
 {
     /// <summary>
-    /// Process-wide identity. A notification carries it rather than the pane's, because moving
-    /// a tab to another window builds a new pane around this same session: the shell, its
-    /// scrollback and this id all survive the handover.
+    /// Identity carried by a notification instead of the pane's, because moving a tab to
+    /// another window builds a new pane around this same session: the shell, its scrollback
+    /// and this id all survive the handover. Version 7, so ids sort by creation time too.
     /// </summary>
-    public int Id { get; } = ++_nextId;
-    private static int _nextId;
+    public Guid Id { get; } = Uuid7.New();
 
     private readonly object _gate = new();
     private readonly object _pendingLock = new();

@@ -93,8 +93,8 @@ public static class IpcProtocol
 
         /// <summary>Title override for the new tab.</summary>
         public string? Title { get; set; }
-        /// <summary>Terminal session a "focus" request should select; 0 leaves the current one alone.</summary>
-        public int Session { get; set; }
+        /// <summary>Session a "focus" request should select; Guid.Empty leaves the current one alone.</summary>
+        public Guid Session { get; set; }
         /// <summary>Font family for "render-sample".</summary>
         public string? Family { get; set; }
         /// <summary>Cell size in physical pixels for "render-sample".</summary>

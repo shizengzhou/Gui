@@ -340,7 +340,7 @@ public partial class App : Application
 
             // A toast names the session that raised it, which may sit in another window or on
             // a tab the user has since switched away from.
-            if (request.Session != 0)
+            if (request.Session != Guid.Empty)
             {
                 foreach (MainWindow window in _windows.OfType<MainWindow>())
                 {
@@ -423,18 +423,19 @@ public partial class App : Application
 
     /// <summary>
     /// The session named by the clicked toast. Arguments arrive as "key=value" pairs joined by
-    /// '&amp;'; 0 means the click carried no session, so the window comes forward as it is.
+    /// '&amp;'; an empty guid means the click carried no session, so the window comes forward
+    /// as it is.
     /// </summary>
-    private static int NotificationSession()
+    private static Guid NotificationSession()
     {
-        if (Program.NotificationArgument is not { } argument) return 0;
+        if (Program.NotificationArgument is not { } argument) return Guid.Empty;
         foreach (string pair in argument.Split('&'))
         {
             int split = pair.IndexOf('=');
-            if (split > 0 && pair[..split] == "session" && int.TryParse(pair[(split + 1)..], out int id))
+            if (split > 0 && pair[..split] == "session" && Guid.TryParse(pair[(split + 1)..], out Guid id))
                 return id;
         }
-        return 0;
+        return Guid.Empty;
     }
 
     private void ShowWindow(string? workingDirectory, Term.Workspace.MovedTab? movedTab = null,

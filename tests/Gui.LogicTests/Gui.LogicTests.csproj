@@ -31,6 +31,7 @@
     <Compile Include="../../Gui/Gui.Cli/Launch.cs" Link="Launch.cs" />
     <Compile Include="../../Gui/Gui.Cli/AppChannel.cs" Link="AppChannel.cs" />
     <Compile Include="../../Gui/Gui/Term/IpcProtocol.cs" Link="IpcProtocol.cs" />
+    <Compile Include="../../Gui/Gui/Term/Uuid7.cs" Link="Uuid7.cs" />
     <Compile Include="../../Gui/Gui/Term/RestoreText.cs" Link="RestoreText.cs" />
     <Compile Include="../../Gui/Gui/Term/SnapshotCache.cs" Link="SnapshotCache.cs" />
     <Compile Include="../../Gui/Gui/Term/PendingOutput.cs" Link="PendingOutput.cs" />

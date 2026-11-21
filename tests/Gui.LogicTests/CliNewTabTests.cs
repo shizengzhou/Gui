@@ -36,22 +36,23 @@ public class CliNewTabTests
     [Fact]
     public void ProtocolRoundTripsTheSessionAFocusRequestNames()
     {
-        var request = new IpcProtocol.Request { Action = "focus", Session = 7 };
+        Guid session = Guid.Parse("0198f3a0-6b2e-7c1d-9a4f-2b8c5d6e7f80");
+        var request = new IpcProtocol.Request { Action = "focus", Session = session };
 
         IpcProtocol.Request? parsed = IpcProtocol.ParseRequest(IpcProtocol.Serialize(request));
 
         Assert.NotNull(parsed);
         Assert.Equal("focus", parsed!.Action);
-        Assert.Equal(7, parsed.Session);
+        Assert.Equal(session, parsed.Session);
     }
 
     [Fact]
-    public void ProtocolReadsAFocusRequestWithoutASessionAsZero()
+    public void ProtocolReadsAFocusRequestWithoutASessionAsEmpty()
     {
         IpcProtocol.Request? parsed = IpcProtocol.ParseRequest("""{"action":"focus"}""");
 
         Assert.NotNull(parsed);
-        Assert.Equal(0, parsed!.Session);
+        Assert.Equal(Guid.Empty, parsed!.Session);
     }
 
     [Fact]

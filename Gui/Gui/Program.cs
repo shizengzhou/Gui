@@ -12,7 +12,7 @@ namespace Gui;
 /// </summary>
 public static class Program
 {
-    /// <summary>The clicked notification's launch argument, e.g. "session=3".</summary>
+    /// <summary>The clicked notification's launch argument, e.g. "session=&lt;uuid&gt;".</summary>
     internal static string? NotificationArgument;
 
     [STAThread]

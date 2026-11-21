@@ -241,7 +241,7 @@ public sealed class TerminalPane
     public string Title = string.Empty;
 
     /// <summary>Identity of the session this pane shows; it outlives the pane across a move.</summary>
-    internal int SessionId => _session.Id;
+    internal Guid SessionId => _session.Id;
 
     /// <summary>
     /// A title the user pinned by hand ("Change Terminal Title…"). While it is set the

@@ -271,7 +271,7 @@ function Get-LogLineCount {
 
 # Each shell start is one [pty.start] line naming its session. The suite reads the first
 # tab's session there instead of assuming an id, for the "focus" request that puts the first
-# tab back in front of a notification scenario's tab. Returns 0 when none appeared.
+# tab back in front of a notification scenario's tab. Returns $null when none appeared.
 function Wait-PaneStart {
     param([string]$Path, [int]$Skip, [double]$Seconds)
 
@@ -281,13 +281,13 @@ function Wait-PaneStart {
         if ($lines.Count -gt $Skip) {
             $starts = @($lines[$Skip..($lines.Count - 1)] | Where-Object { $_ -match '\[pty\.start\]' })
             if ($starts.Count -gt 0) {
-                if ($starts[-1] -match 'session=(\d+)') { return [int]$Matches[1] }
-                return 0
+                if ($starts[-1] -match 'session=([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})') { return $Matches[1] }
+                return $null
             }
         }
         Start-Sleep -Milliseconds 100
     }
-    return 0
+    return $null
 }
 
 # Waits for a [notify] line carrying the state, ignoring everything up to Skip so a previous
@@ -405,7 +405,7 @@ try {
     # The first tab is the shell the window opened with: it stays at a prompt and is the tab
     # the notification scenarios switch back to.
     $firstSession = Wait-PaneStart -Path $log -Skip 0 -Seconds $TimeoutSeconds
-    if ($firstSession -eq 0) {
+    if (-not $firstSession) {
         throw 'no shell started in the first tab; rebuild the app before running the suite'
     }
 

@@ -289,7 +289,7 @@ public sealed partial class Workspace
     /// another window. False when that session is gone, which is what a toast outliving its
     /// pane looks like.
     /// </summary>
-    internal bool FocusSessionById(int id)
+    internal bool FocusSessionById(Guid id)
     {
         for (int index = 0; index < _tabs.Count; index++)
         {
