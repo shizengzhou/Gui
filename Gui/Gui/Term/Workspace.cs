@@ -2459,10 +2459,15 @@ public sealed partial class Workspace
 
     /// <summary>
     /// Opens a tab on behalf of the CLI's "+new-tab": the caller may pin the directory, the
-    /// command and the title; everything else follows this window's config.
+    /// command and the title; everything else follows this window's config. The tab becomes
+    /// active right away, like the new-tab button: a background tab's surface stays out of
+    /// the tree, so its shell would not start until the user clicked the chip.
     /// </summary>
-    internal void OpenTab(string? workingDirectory, string? command, string? title) =>
-        OpenTabCore(workingDirectory, command, title);
+    internal void OpenTab(string? workingDirectory, string? command, string? title)
+    {
+        Tab tab = OpenTabCore(workingDirectory, command, title);
+        Activate(IndexOf(tab));
+    }
 
     private Tab OpenTabCore(string? workingDirectory, string? command, string? title)
     {
@@ -4111,6 +4116,7 @@ public sealed partial class Workspace
         pane.OnCommandFinished = OnPaneCommandFinished;
         pane.OnResizeWindow = ResizeWindowFromProgram;
         pane.OnDesktopNotification = OnPaneDesktopNotification;
+        pane.OnProgramAttention = OnPaneProgramAttention;
         pane.OnSearchFocusReleased = p =>
         {
             // Returning focus to the IME sink lets the find bar stay visible while the

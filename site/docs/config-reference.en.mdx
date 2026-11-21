@@ -2199,6 +2199,20 @@ ranging from 0.0 (silence) to 1.0 (as loud as possible). The default is 0.5.
 If `true` (default), applications running in the terminal can show desktop
 notifications using certain escape sequences such as OSC 9 or OSC 777.
 
+## `notify-on-program-status`
+
+Which OSC 7501 program status reports raise a desktop notification while the
+pane is in the background. A comma separated list of the following values,
+each of which can be negated by prefixing it with `no-`:
+
+ * `block` — the program is waiting for the user (approval, an answer, a
+   credential).
+ * `done` — the program finished a piece of work.
+ * `fail` — the program failed and stopped.
+
+All three are enabled by default. For example, `no-done` keeps the blocked
+and failed notifications but silences finished work.
+
 ## `progress-style`
 
 If `true` (default), applications running in the terminal can show

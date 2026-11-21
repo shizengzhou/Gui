@@ -130,6 +130,17 @@ public class CliNewTabTests
     }
 
     [Fact]
+    public void DashEKeepsAWholeQuotedCommandLineUnquoted()
+    {
+        // A shell hands "-e 'pwsh -Command dir'" over as one argument; quoting it again would
+        // make CreateProcess look for an executable named after the whole line.
+        NewTab.Options options = Parse("-e", "pwsh -Command dir");
+
+        Assert.Null(options.Error);
+        Assert.Equal("pwsh -Command dir", options.Command);
+    }
+
+    [Fact]
     public void WorkingDirectoryResolvesAgainstTheCurrentDirectory()
     {
         NewTab.Options options = Parse("--working-directory=sub/dir");

@@ -180,8 +180,14 @@ public static class NewTab
         {
             if (text.Length > 0) text.Append(' ');
             string arg = args[i];
-            // Keep arguments with spaces together; the app parses this back as a command line.
-            text.Append(arg.Contains(' ') && !arg.StartsWith('"') ? "\"" + arg + "\"" : arg);
+            // Keep arguments with spaces together; the app parses this back as a command
+            // line. The first word is the exception: it is either the executable or the whole
+            // command as one shell-quoted "-e 'cmd arg'" argument, and quoting that would ask
+            // CreateProcess for a file named after the entire line.
+            if (i > start && arg.Contains(' ') && !arg.StartsWith('"'))
+                text.Append('"').Append(arg).Append('"');
+            else
+                text.Append(arg);
         }
 
         return text.ToString();

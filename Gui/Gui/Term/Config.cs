@@ -363,6 +363,14 @@ public sealed class Config
     public bool NotifyOnCommandFinishToast = true;  // notify-on-command-finish-action: notify
     public TimeSpan NotifyOnCommandFinishAfter = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// "notify-on-program-status": which OSC 7501 outcomes raise a notification while the
+    /// pane is in the background. All three are on by default.
+    /// </summary>
+    public bool NotifyOnProgramBlock = true;        // notify-on-program-status: block
+    public bool NotifyOnProgramDone = true;         // notify-on-program-status: done
+    public bool NotifyOnProgramFail = true;         // notify-on-program-status: fail
+
     /// <summary>"progress-style": draw OSC 9;4 progress in the tab bar (default on).</summary>
     public bool ProgressStyle = true;
 
@@ -687,6 +695,9 @@ public sealed class Config
         NotifyOnCommandFinishBell = other.NotifyOnCommandFinishBell;
         NotifyOnCommandFinishToast = other.NotifyOnCommandFinishToast;
         NotifyOnCommandFinishAfter = other.NotifyOnCommandFinishAfter;
+        NotifyOnProgramBlock = other.NotifyOnProgramBlock;
+        NotifyOnProgramDone = other.NotifyOnProgramDone;
+        NotifyOnProgramFail = other.NotifyOnProgramFail;
         ProgressStyle = other.ProgressStyle;
         DesktopNotifications = other.DesktopNotifications;
 
@@ -1408,6 +1419,8 @@ public sealed class Config
             ParseNotifyAction(Last("notify-on-command-finish-action"));
         NotifyOnCommandFinishAfter =
             ParseDuration(Last("notify-on-command-finish-after"), TimeSpan.FromSeconds(5));
+        (NotifyOnProgramBlock, NotifyOnProgramDone, NotifyOnProgramFail) =
+            ParseProgramStatusNotify(Last("notify-on-program-status"));
         ProgressStyle = GetBool("progress-style", true);
         DesktopNotifications = GetBool("desktop-notifications", true);
 
@@ -2224,6 +2237,38 @@ public sealed class Config
         }
 
         return (bell, toast);
+    }
+
+    /// <summary>
+    /// "notify-on-program-status": a comma separated list of block/done/fail with "no-"
+    /// negations. All three are on by default.
+    /// </summary>
+    private static (bool Block, bool Done, bool Fail) ParseProgramStatusNotify(string? value)
+    {
+        bool block = true;
+        bool done = true;
+        bool fail = true;
+        if (string.IsNullOrWhiteSpace(value)) return (block, done, fail);
+
+        foreach (string raw in value.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string token = raw.Trim().ToLowerInvariant();
+            bool enable = true;
+            if (token.StartsWith("no-", StringComparison.Ordinal))
+            {
+                enable = false;
+                token = token[3..];
+            }
+
+            switch (token)
+            {
+                case "block": block = enable; break;
+                case "done": done = enable; break;
+                case "fail": fail = enable; break;
+            }
+        }
+
+        return (block, done, fail);
     }
 
     /// <summary>

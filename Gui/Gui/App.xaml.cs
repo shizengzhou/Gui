@@ -382,6 +382,15 @@ public partial class App : Application
                 System.IO.Pipes.PipeDirection.InOut);
             pipe.Connect(2000);
 
+            // The click gave this process the right to set the foreground; the window that
+            // actually comes forward is the running instance, so hand the right over first.
+            // Without it the running instance may only manage to flash its taskbar button.
+            if (GetNamedPipeServerProcessId(pipe.SafePipeHandle, out uint owner) && owner != 0)
+            {
+                bool granted = AllowSetForegroundWindow(owner);
+                Diag.Log("launch", $"foreground grant pid={owner} ok={granted}");
+            }
+
             byte[] payload = System.Text.Encoding.UTF8.GetBytes(
                 Term.IpcProtocol.Serialize(new Term.IpcProtocol.Request
                 {
@@ -404,6 +413,13 @@ public partial class App : Application
             return false;
         }
     }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetNamedPipeServerProcessId(
+        System.Runtime.InteropServices.SafeHandle pipe, out uint serverProcessId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool AllowSetForegroundWindow(uint processId);
 
     /// <summary>
     /// The session named by the clicked toast. Arguments arrive as "key=value" pairs joined by

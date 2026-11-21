@@ -209,14 +209,21 @@ public static class Strings
     public static string SettingsNotifyAction => Pick("Notify on command finish action", "命令结束时通知动作");
     public static string SettingsNotifyOnFinish => Pick("Notify on command finish", "命令结束时通知");
     public static string SettingsNotifyOnFinishDescription => Pick(
-        "Reads the OSC 133 D report from the shell integration. \"Unfocused\" only fires while the pane or the window is in the background.",
-        "依赖 shell 集成上报的 OSC 133 D。选择“未聚焦时”只在窗格或窗口处于后台时通知。");
+        "Reads the OSC 133 D report from the shell integration. \"Unfocused\" only fires while the pane or the window is not focused.",
+        "依赖 shell 集成上报的 OSC 133 D。选择“未聚焦时”只在窗格或窗口未聚焦时通知。");
     public static string SettingsNotifyNever => Pick("Never", "从不");
     public static string SettingsNotifyUnfocused => Pick("Unfocused", "未聚焦时");
     public static string SettingsNotifyAlways => Pick("Always", "总是");
     public static string SettingsNotifyBell => Pick("Bell", "响铃");
     public static string SettingsNotifyToast => Pick("System", "系统通知");
     public static string SettingsNotifyAfter => Pick("Notify on command finish after", "命令运行多长时间后才通知");
+    public static string SettingsNotifyProgram => Pick("Program status (OSC 7501)", "程序状态（OSC 7501）");
+    public static string SettingsNotifyProgramDescription => Pick(
+        "Notify when a program reports its status with OSC 7501, while the pane is not focused.",
+        "程序通过 OSC 7501 上报状态时，在窗格未聚焦时发送通知。");
+    public static string SettingsNotifyProgramBlock => Pick("Blocked / needs input", "等待操作");
+    public static string SettingsNotifyProgramDone => Pick("Done", "已完成");
+    public static string SettingsNotifyProgramFail => Pick("Failed", "失败");
     public static string SettingsDesktopNotifications => Pick("Desktop notifications", "桌面通知");
     public static string SettingsDesktopNotificationsAllow => Pick(
         "Allow programs to send notifications", "允许程序发送通知");
@@ -369,6 +376,15 @@ public static class Strings
         "此终端中仍有命令正在运行，关闭会终止该命令。");
 
     public static string CommandFinishedTitle => Pick("Command finished", "命令已完成");
+
+    public static string ProgramBlockedTitle => Pick("Program needs input", "程序等待操作");
+    public static string ProgramDoneTitle => Pick("Program finished", "程序已完成");
+    public static string ProgramFailedTitle => Pick("Program failed", "程序失败");
+
+    public static string ProgramStatusWorking => Pick("Working", "运行中");
+    public static string ProgramStatusBlocked => Pick("Blocked", "等待操作");
+    public static string ProgramStatusDone => Pick("Done", "已完成");
+    public static string ProgramStatusFailed => Pick("Error", "失败");
 
     public static string CommandFinishedNotification(string title, int exitCode)
     {

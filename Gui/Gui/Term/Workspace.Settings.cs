@@ -1020,6 +1020,26 @@ public sealed partial class Workspace
                     SaveNotifyAction();
                 })))));
 
+        page.Children.Add(SettingsGroup(Strings.SettingsNotifyProgram, SettingsCard(
+            SettingsRow(Strings.SettingsNotifyProgramBlock, Strings.SettingsNotifyProgramDescription,
+                SettingsSwitch(_config.NotifyOnProgramBlock, on =>
+                {
+                    _config.NotifyOnProgramBlock = on;
+                    SaveProgramStatusNotify();
+                })),
+            SettingsRow(Strings.SettingsNotifyProgramDone, null,
+                SettingsSwitch(_config.NotifyOnProgramDone, on =>
+                {
+                    _config.NotifyOnProgramDone = on;
+                    SaveProgramStatusNotify();
+                })),
+            SettingsRow(Strings.SettingsNotifyProgramFail, null,
+                SettingsSwitch(_config.NotifyOnProgramFail, on =>
+                {
+                    _config.NotifyOnProgramFail = on;
+                    SaveProgramStatusNotify();
+                })))));
+
         page.Children.Add(SettingsGroup(Strings.SettingsDesktopNotifications, SettingsCard(
             SettingsRow(Strings.SettingsDesktopNotificationsAllow,
                 Strings.SettingsDesktopNotificationsDescription,
@@ -1147,6 +1167,18 @@ public sealed partial class Workspace
         string action = (_config.NotifyOnCommandFinishBell ? "bell" : "no-bell") + "," +
                         (_config.NotifyOnCommandFinishToast ? "notify" : "no-notify");
         Config.SaveValue("notify-on-command-finish-action", action);
+    }
+
+    /// <summary>
+    /// "notify-on-program-status" is a list with "no-" negations. Every token is written,
+    /// otherwise the omitted one keeps its default and a switch would lie.
+    /// </summary>
+    private void SaveProgramStatusNotify()
+    {
+        string action = (_config.NotifyOnProgramBlock ? "block" : "no-block") + "," +
+                        (_config.NotifyOnProgramDone ? "done" : "no-done") + "," +
+                        (_config.NotifyOnProgramFail ? "fail" : "no-fail");
+        Config.SaveValue("notify-on-program-status", action);
     }
 
     private void ApplyNotifyAfterChoice(string value)

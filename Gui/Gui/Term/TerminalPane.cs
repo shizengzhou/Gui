@@ -1600,10 +1600,14 @@ public sealed class TerminalPane
     /// <summary>Raised when the visible OSC 7501 report changed, so tab chips can follow.</summary>
     public Action<TerminalPane>? OnProgramStatusChanged;
 
+    /// <summary>Raised when an OSC 7501 record reports blocked, done or error, if enabled.</summary>
+    public Action<TerminalPane, ProgramStatusInfo>? OnProgramAttention;
+
     /// <summary>
-    /// Draws the program's own status in the header: its message or title, plus a percentage
-    /// while it works. An idle program shows nothing, and the icon alone is enough when the
-    /// report carried no text.
+    /// Draws the reported program state in the header as a short state name, with the
+    /// program's own completion percentage while it works. What the program is doing in
+    /// detail belongs to the program, not to a header that must stay one glance wide.
+    /// An idle program shows nothing.
     /// </summary>
     private void UpdateStatusBadge()
     {
@@ -1624,18 +1628,22 @@ public sealed class TerminalPane
             _iconStatusDot.Fill = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
         }
 
-        string text = status.Message.Length > 0 ? status.Message
-            : status.Title.Length > 0 ? status.Title
-            : status.App;
-        if (status.Progress >= 0)
-            text = text.Length == 0 ? $"{status.Progress}%" : $"{text} {status.Progress}%";
+        string text = status.State switch
+        {
+            ProgramState.Working => status.Progress >= 0
+                ? $"{Strings.ProgramStatusWorking} {status.Progress}%"
+                : Strings.ProgramStatusWorking,
+            ProgramState.Blocked => Strings.ProgramStatusBlocked,
+            ProgramState.Error => Strings.ProgramStatusFailed,
+            _ => Strings.ProgramStatusDone,
+        };
 
         _statusBadge.Visibility = Visibility.Visible;
         _statusIcon.Glyph = StatusGlyph(status.State);
         _statusIcon.Foreground = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
         _statusText.Text = text;
         _statusText.Foreground = new SolidColorBrush(Theme.ProgramStatusColor(status.State));
-        _statusText.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _statusText.Visibility = Visibility.Visible;
         SetStatusSpin(status.State == ProgramState.Working);
     }
 
@@ -1795,6 +1803,7 @@ public sealed class TerminalPane
         session.OnCommandFinished = null;
         session.OnProgress = null;
         session.OnProgramStatus = null;
+        session.OnProgramAttention = null;
         session.OnDesktopNotification = null;
         session.OnResizeWindow = null;
         session.OnExit = null;
@@ -1869,6 +1878,17 @@ public sealed class TerminalPane
         {
             UpdateStatusBadge();
             OnProgramStatusChanged?.Invoke(this);
+        };
+        _session.OnProgramAttention = status =>
+        {
+            bool enabled = status.State switch
+            {
+                ProgramState.Blocked => _config.NotifyOnProgramBlock,
+                ProgramState.Done => _config.NotifyOnProgramDone,
+                ProgramState.Error => _config.NotifyOnProgramFail,
+                _ => false,
+            };
+            if (enabled) OnProgramAttention?.Invoke(this, status);
         };
         _session.OnExit = () =>
         {
@@ -1991,6 +2011,7 @@ public sealed class TerminalPane
         _session.OnCommandFinished = null;
         _session.OnProgress = null;
         _session.OnProgramStatus = null;
+        _session.OnProgramAttention = null;
         _session.OnDesktopNotification = null;
         _session.OnResizeWindow = null;
         _session.OnExit = null;

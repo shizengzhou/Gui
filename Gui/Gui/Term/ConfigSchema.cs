@@ -242,6 +242,7 @@ public static class ConfigSchema
         new("sidebar-width-right", ConfigKind.Float, ConfigPlatform.All, "right rail width in DIPs"),
         new("debug-tap", ConfigKind.Bool, ConfigPlatform.All, "record the raw VT byte stream"),
         new("crash-dumps", ConfigKind.Bool, ConfigPlatform.All, "ask Windows for a full crash dump"),
+        new("notify-on-program-status", ConfigKind.Text, ConfigPlatform.All, "OSC 7501 status notifications"),
     };
 
     private static readonly Dictionary<string, ConfigOption> Index = BuildIndex();

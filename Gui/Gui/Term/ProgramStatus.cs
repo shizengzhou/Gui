@@ -78,6 +78,12 @@ internal sealed class ProgramStatusTracker
     /// <summary>How many records are kept; the cap keeps a busy program bounded.</summary>
     internal int Count => _records.Count;
 
+    /// <summary>
+    /// A record entered blocked, done or error with new content: the outcome a notification
+    /// is about. Repeated identical reports do not fire again.
+    /// </summary>
+    public Action<ProgramStatusInfo>? Attention;
+
     /// <summary>The report a person should see, or null when the program reported nothing.</summary>
     public ProgramStatusInfo? Current
     {
@@ -108,7 +114,12 @@ internal sealed class ProgramStatusTracker
         if (app.Length == 0) app = InheritedApp(info.Id);
         info = info with { App = app, Title = Clean(info.Title), Message = Clean(info.Message) };
 
-        if (!_records.TryGetValue(info.Id, out Record? record))
+        ProgramStatusInfo? previous = null;
+        if (_records.TryGetValue(info.Id, out Record? record))
+        {
+            previous = record.Info;
+        }
+        else
         {
             record = new Record();
             _records[info.Id] = record;
@@ -116,6 +127,12 @@ internal sealed class ProgramStatusTracker
         record.Info = info;
         record.Sequence = ++_sequence;
         Trim();
+
+        if (info.State is ProgramState.Blocked or ProgramState.Done or ProgramState.Error
+            && (previous is null || previous.Value != info))
+        {
+            Attention?.Invoke(info);
+        }
 
         return !Same(before, Current);
     }

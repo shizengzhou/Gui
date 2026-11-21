@@ -143,6 +143,9 @@ public sealed unsafe class TerminalSession : IDisposable
     /// <summary>OSC 7501: the record a person should see changed (or went away).</summary>
     public Action? OnProgramStatus;
 
+    /// <summary>OSC 7501: a record entered blocked, done or error with new content.</summary>
+    public Action<ProgramStatusInfo>? OnProgramAttention;
+
     /// <summary>OSC 9 / OSC 777: the program asked for a desktop notification.</summary>
     public Action<string, string>? OnDesktopNotification;
 
@@ -192,6 +195,7 @@ public sealed unsafe class TerminalSession : IDisposable
         _resizeWindowFn = OnResizeWindowReport;
         _marks.CommandFinished = (exit, duration) => OnCommandFinished?.Invoke(exit, duration);
         _marks.ProgressChanged = (state, value) => OnProgress?.Invoke(state, value);
+        _programStatus.Attention = info => OnProgramAttention?.Invoke(info);
         // A new prompt means the command that reported "working"/"blocked" is over.
         _marks.PromptStarted += () =>
         {
@@ -336,7 +340,7 @@ public sealed unsafe class TerminalSession : IDisposable
 
         try
         {
-            Diag.Debug("pty.start", $"cols={cols} rows={rows} exec={executable}");
+            Diag.Debug("pty.start", $"session={Id} cols={cols} rows={rows} exec={executable}");
             // A program that draws the font itself (the font browser's preview) needs the cell
             // size in physical pixels to render at exactly the size a pane draws with.
             var cellVariables = new List<(string Name, string Value)>

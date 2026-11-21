@@ -364,6 +364,42 @@ public sealed partial class Workspace
     }
 
     /// <summary>
+    /// "notify-on-program-status": OSC 7501 reported the program blocked, done or failed.
+    /// Only notify while the pane is in the background; the status badge already shows the
+    /// outcome on the pane the user is watching.
+    /// </summary>
+    private void OnPaneProgramAttention(TerminalPane pane, ProgramStatusInfo status)
+    {
+        if (IsActivePane(pane)) return;
+        Diag.Debug("notify", $"program state={status.State} session={pane.SessionId}");
+
+        try
+        {
+            EnsureNotificationsRegistered();
+
+            string heading = status.State switch
+            {
+                ProgramState.Blocked => Strings.ProgramBlockedTitle,
+                ProgramState.Error => Strings.ProgramFailedTitle,
+                _ => Strings.ProgramDoneTitle,
+            };
+            string detail = status.Message.Length > 0 ? status.Message
+                : status.Title.Length > 0 ? status.Title
+                : status.App.Length > 0 ? status.App
+                : pane.Title;
+            var builder = new AppNotificationBuilder().AddText(heading);
+            if (detail.Length > 0) builder.AddText(detail);
+            builder.AddArgument("session", pane.SessionId.ToString());
+            AppNotificationManager.Default.Show(builder.BuildNotification());
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.notify", error);
+            FlashWindow();
+        }
+    }
+
+    /// <summary>
     /// "confirm-close-surface": true asks only while a command is still running, false
     /// never asks, and always asks on every window close.
     /// </summary>

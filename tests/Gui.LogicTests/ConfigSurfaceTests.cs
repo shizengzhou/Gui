@@ -337,6 +337,25 @@ public class ConfigSurfaceTests : IDisposable
     }
 
     [Fact]
+    public void ProgramStatusNotificationsResolve()
+    {
+        Config defaults = Config.Load(Write(string.Empty));
+        Assert.True(defaults.NotifyOnProgramBlock);
+        Assert.True(defaults.NotifyOnProgramDone);
+        Assert.True(defaults.NotifyOnProgramFail);
+
+        Config config = Config.Load(Write("notify-on-program-status = no-done,fail\n"));
+        Assert.True(config.NotifyOnProgramBlock);
+        Assert.False(config.NotifyOnProgramDone);
+        Assert.True(config.NotifyOnProgramFail);
+
+        Config off = Config.Load(Write("notify-on-program-status = no-block,no-done,no-fail\n"));
+        Assert.False(off.NotifyOnProgramBlock);
+        Assert.False(off.NotifyOnProgramDone);
+        Assert.False(off.NotifyOnProgramFail);
+    }
+
+    [Fact]
     public void CopyFromCarriesShellIntegrationAndNotifications()
     {
         Config source = Config.Load(Write(
@@ -344,7 +363,8 @@ public class ConfigSurfaceTests : IDisposable
             "shell-integration-features = no-title\n" +
             "notify-on-command-finish = always\n" +
             "notify-on-command-finish-action = no-bell,notify\n" +
-            "notify-on-command-finish-after = 2s\n"));
+            "notify-on-command-finish-after = 2s\n" +
+            "notify-on-program-status = no-block\n"));
 
         var target = new Config();
         target.CopyFrom(source);
@@ -355,6 +375,9 @@ public class ConfigSurfaceTests : IDisposable
         Assert.False(target.NotifyOnCommandFinishBell);
         Assert.True(target.NotifyOnCommandFinishToast);
         Assert.Equal(TimeSpan.FromSeconds(2), target.NotifyOnCommandFinishAfter);
+        Assert.False(target.NotifyOnProgramBlock);
+        Assert.True(target.NotifyOnProgramDone);
+        Assert.True(target.NotifyOnProgramFail);
     }
 
     [Fact]

@@ -20,7 +20,6 @@ public sealed partial class MainWindow : Window
 
     private Term.Workspace? _workspace;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _geometryTimer;
-    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _focusTimer;
 
     /// <summary>Directory a second window starts in, from "window-inherit-working-directory".</summary>
     private readonly string? _inheritedDirectory;
@@ -376,51 +375,19 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Takes the foreground for a request that did not come from the shell's own activation:
-    /// a toast click is delivered to a second process, and by the time this one hears about it
-    /// Windows no longer lets it call SetForegroundWindow. Sharing the foreground thread's
-    /// input queue is what makes the call succeed anyway; it is detached straight afterwards
-    /// so the two threads do not stay tied together.
+    /// Brings this window forward for a request forwarded by another process (a toast click).
+    /// That process hands over the foreground right Windows gave it, so one attempt is enough;
+    /// if the user has moved to another window since, Windows flashes the taskbar instead of
+    /// letting this window take the foreground back.
     /// </summary>
     internal void BringToFront()
     {
         if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
             presenter.Restore();
 
+        DismissActionCenter();
         if (TryTakeForeground()) Activate();
-
-        // Winning the foreground once is not enough. The Action Center can still be up and
-        // deny the call, or take the foreground back right after we won it, so keep watching
-        // until this window has held it for a moment.
-        Microsoft.UI.Dispatching.DispatcherQueue? queue = RootGrid.DispatcherQueue;
-        if (queue is null) return;
-
-        IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        _focusTimer?.Stop();
-        var timer = queue.CreateTimer();
-        _focusTimer = timer;
-        timer.Interval = TimeSpan.FromMilliseconds(200);
-        int ticks = 0, held = 0;
-        timer.Tick += (_, _) =>
-        {
-            ticks++;
-            if (GetForegroundWindow() == hwnd)
-            {
-                held++;
-            }
-            else
-            {
-                held = 0;
-                DismissActionCenter();
-                if (TryTakeForeground()) Activate();
-            }
-            if (held >= 2 || ticks >= 12)
-            {
-                timer.Stop();
-                if (held < 2) Diag.Warn("focus", "the window did not reach the foreground");
-            }
-        };
-        timer.Start();
+        else Diag.Warn("focus", "the window did not reach the foreground");
     }
 
     /// <summary>

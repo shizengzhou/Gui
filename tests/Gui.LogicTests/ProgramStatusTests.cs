@@ -1,4 +1,5 @@
-﻿using Gui.Term;
+﻿using System.Collections.Generic;
+using Gui.Term;
 using Xunit;
 
 namespace Gui.LogicTests;
@@ -142,6 +143,37 @@ public class ProgramStatusTests
         ProgramStatusInfo current = tracker.Current!.Value;
         Assert.Equal("Apply?", current.Message);
         Assert.Equal("deploy", current.App);
+    }
+
+    [Fact]
+    public void AttentionFiresOnNewOutcomesButNotRepeats()
+    {
+        var tracker = new ProgramStatusTracker();
+        var seen = new List<ProgramStatusInfo>();
+        tracker.Attention = seen.Add;
+
+        tracker.Apply(Info(ProgramState.Working, id: "job", progress: 10));
+        Assert.Empty(seen);
+
+        tracker.Apply(Info(ProgramState.Done, id: "job", title: "built"));
+        Assert.Single(seen);
+        Assert.Equal(ProgramState.Done, seen[0].State);
+
+        // An identical repeat has nothing new to say.
+        tracker.Apply(Info(ProgramState.Done, id: "job", title: "built"));
+        Assert.Single(seen);
+
+        // A second record's outcome fires even while another record outranks it.
+        tracker.Apply(Info(ProgramState.Blocked, id: "ask", kind: ProgramKind.Permission));
+        tracker.Apply(Info(ProgramState.Error, id: "other", message: "boom"));
+        Assert.Equal(3, seen.Count);
+        Assert.Equal(ProgramState.Blocked, seen[1].State);
+        Assert.Equal(ProgramState.Error, seen[2].State);
+
+        // Working and idle never fire.
+        tracker.Apply(Info(ProgramState.Working, id: "job", progress: 50));
+        tracker.Apply(Info(ProgramState.Idle, id: "rest"));
+        Assert.Equal(3, seen.Count);
     }
 
     [Fact]
