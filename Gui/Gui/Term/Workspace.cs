@@ -666,9 +666,13 @@ public sealed partial class Workspace
                 pane.ApplyKeybinds();
             });
 
-        // The chrome is rebuilt here, so a failure must not take the app down with it.
+        // The chrome is rebuilt here, so a failure must not take the app down with it:
+        // ApplyTabPlacement logs its failing phase itself and puts the previous chrome back.
         SetSidebarWidth(SidebarWidthFromConfig());
-        Diag.Guard("ws.placement", () => ApplyTabPlacement(PlacementFrom(fresh.TabPosition)));
+        // _config, not the file's "fresh": the drop-down was normalized back to the top rail
+        // just above, and reading the file here would drag the user's "tab-position" onto it --
+        // a side rail inside the drop-down, and a rebuild that leaves it without a pane.
+        ApplyTabPlacement(PlacementFrom(_config.TabPosition));
 
         // The quick terminal's hotkeys and its edge come from the same file, so a reload has
         // to re-register them here. Every window does this; registering again replaces the
@@ -776,59 +780,113 @@ public sealed partial class Workspace
     /// Moves the tab rail to the top, the left or the right. The chrome (header, tab rail,
     /// sidebar) is rebuilt for the new placement; the tabs, their chips and the running
     /// shells are carried over to it.
+    ///
+    /// The rebuild takes the whole root apart, so a failure halfway through would leave a
+    /// window with chrome and no terminal in it -- and because the new placement is already
+    /// the current one, no later reload would rebuild it. The phases name themselves in the
+    /// log and the previous chrome is put back when one of them fails.
     /// </summary>
     private void ApplyTabPlacement(TabPlacement placement)
     {
         if (placement == _placement) return;
+
+        TabPlacement previous = _placement;
+        try
+        {
+            RebuildChrome(placement);
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("ws.placement.rollback", error);
+            _placement = previous;
+            try
+            {
+                RebuildChrome(previous);
+            }
+            catch (Exception restoreError)
+            {
+                Diag.LogException("ws.placement.restore", restoreError);
+            }
+        }
+    }
+
+    /// <summary>One chrome rebuild for <paramref name="placement"/>; throws on failure.</summary>
+    private void RebuildChrome(TabPlacement placement)
+    {
         _placement = placement;
-
-        // Each side keeps its own width and its own floor: a right-hand rail shares its top
-        // row with the caption buttons. Read the new side's saved width and clamp it with the
-        // *new* placement before the chrome is rebuilt, otherwise a left rail dragged down to
-        // 160 lands on the right at 160 and its buttons collide with the caption buttons.
-        SetSidebarWidth(SidebarWidthFromConfig());
-        if (SidebarWidthFromConfig() != _sidebarWidth) SaveSidebarWidth();
-
-        // The chips belong to the tabs, so they travel with them; they have to leave their
-        // old host first, an element can only have one parent.
-        var chips = new List<UIElement>();
-        foreach (Tab tab in _tabs)
-        {
-            UIElement chip = tab.ChipFocus;
-            if (VisualTreeHelper.GetParent(chip) is Panel owner) owner.Children.Remove(chip);
-            chips.Add(chip);
-        }
-
-        // The mounted shell has to leave the old chrome as well: an element that is
-        // unloaded together with its tree cannot be added to a new one afterwards.
-        if (_tabs.Count > 0 &&
-            VisualTreeHelper.GetParent(_tabs[_active].Surface) is Panel surfaceOwner)
-        {
-            surfaceOwner.Children.Remove(_tabs[_active].Surface);
-        }
 
         // The strip scroll offset belongs to the old rail.
         _stripOffset = 0;
         bool settingsActive = _settingsActive;
 
-        _root.Children.Clear();
-        BuildChrome();
+        PlacementStep("ws.placement.build", () =>
+        {
+            // Each side keeps its own width and its own floor: a right-hand rail shares its
+            // top row with the caption buttons. Read the new side's saved width and clamp it
+            // with the *new* placement before the chrome is rebuilt, otherwise a left rail
+            // dragged down to 160 lands on the right at 160 and its buttons collide with the
+            // caption buttons.
+            SetSidebarWidth(SidebarWidthFromConfig());
+            if (SidebarWidthFromConfig() != _sidebarWidth) SaveSidebarWidth();
 
-        foreach (UIElement chip in chips) _chipHost.Children.Add(chip);
-        foreach (Tab tab in _tabs) StyleChip(tab);
+            // The mounted shell has to leave the old chrome as well: an element that is
+            // unloaded together with its tree cannot be added to a new one afterwards.
+            if (_tabs.Count > 0 &&
+                VisualTreeHelper.GetParent(_tabs[_active].Surface) is Panel surfaceOwner)
+            {
+                surfaceOwner.Children.Remove(_tabs[_active].Surface);
+            }
 
-        // The running shells move into the new surface host.
-        if (_tabs.Count > 0) Activate(_active);
+            _root.Children.Clear();
+            BuildChrome();
+        });
 
-        // The page survives a rail move; Activate above is for the terminal underneath.
-        if (settingsActive) ActivateSettingsTab();
+        PlacementStep("ws.placement.chips", () =>
+        {
+            // The chips belong to the tabs, so they travel with them; they have to leave their
+            // old host first, an element can only have one parent.
+            foreach (Tab tab in _tabs)
+            {
+                UIElement chip = tab.ChipFocus;
+                if (VisualTreeHelper.GetParent(chip) is Panel owner) owner.Children.Remove(chip);
+                _chipHost.Children.Add(chip);
+                StyleChip(tab);
+            }
+        });
 
-        if (_placement != TabPlacement.Top) SetSidebarCollapsed(_sidebarCollapsed);
+        PlacementStep("ws.placement.activate", () =>
+        {
+            // The running shells move into the new surface host.
+            if (_tabs.Count > 0) Activate(_active);
 
-        UpdateHeaders();
-        UpdateInputAnchor();
-        ApplyTabBarVisibility();
+            // The page survives a rail move; Activate above is for the terminal underneath.
+            if (settingsActive) ActivateSettingsTab();
+
+            if (_placement != TabPlacement.Top) SetSidebarCollapsed(_sidebarCollapsed);
+
+            UpdateHeaders();
+            UpdateInputAnchor();
+            ApplyTabBarVisibility();
+        });
+
         Diag.Log("tab", $"placement {_placement}");
+    }
+
+    /// <summary>
+    /// Runs one phase of a chrome rebuild. The phase is logged before the exception is passed
+    /// on: a WinRT failure arrives with a single managed frame and names no step by itself.
+    /// </summary>
+    private static void PlacementStep(string where, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception error)
+        {
+            Diag.LogException(where, error);
+            throw;
+        }
     }
 
     /// <summary>
