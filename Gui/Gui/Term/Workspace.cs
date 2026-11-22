@@ -288,6 +288,7 @@ public sealed partial class Workspace
     private List<PaletteItem>? _paletteSelectedList;
     private TextBlock? _paletteThemeValue;
     private readonly List<(string Value, FontIcon Check)> _paletteWindowThemeChecks = new();
+    private readonly List<(string Value, FontIcon Check)> _paletteTabPlacementChecks = new();
 
     private TextBox _imeSink = null!;
     private bool _composing;
@@ -837,19 +838,25 @@ public sealed partial class Workspace
                 surfaceOwner.Children.Remove(_tabs[_active].Surface);
             }
 
+            // Same for the chips, for the same reason: taken out by an ancestor's Clear() they
+            // keep a stale XamlRoot and every later add fails with 0x800F1000.
+            foreach (Tab tab in _tabs)
+            {
+                if (VisualTreeHelper.GetParent(tab.ChipFocus) is Panel chipOwner)
+                    chipOwner.Children.Remove(tab.ChipFocus);
+            }
+
             _root.Children.Clear();
             BuildChrome();
         });
 
         PlacementStep("ws.placement.chips", () =>
         {
-            // The chips belong to the tabs, so they travel with them; they have to leave their
-            // old host first, an element can only have one parent.
+            // The chips belong to the tabs, so they travel with them; the build above took
+            // them out of the old host, so they only have to enter the new one.
             foreach (Tab tab in _tabs)
             {
-                UIElement chip = tab.ChipFocus;
-                if (VisualTreeHelper.GetParent(chip) is Panel owner) owner.Children.Remove(chip);
-                _chipHost.Children.Add(chip);
+                _chipHost.Children.Add(tab.ChipFocus);
                 StyleChip(tab);
             }
         });
