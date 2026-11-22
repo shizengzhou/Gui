@@ -108,6 +108,10 @@ en.NeedsDotNet8=Gui needs the .NET 10 runtime, which this package does not carry
 zh.NeedsDotNet8=Gui 需要 .NET 10 运行时，而这个安装包不带它。
 en.OpenDotNetDownload=Open the download page now?
 zh.OpenDotNetDownload=现在打开下载页面吗？
+en.CloseRunningApp=Gui is running. Setup has to close it before it can replace the program files. Close it now and continue?
+zh.CloseRunningApp=Gui 正在运行。安装程序需要先关闭它才能替换程序文件。现在关闭并继续吗？
+en.CloseRunningAppFailed=Gui is still running. Exit it manually, then run Setup again.
+zh.CloseRunningAppFailed=Gui 仍在运行。请手动退出后重新运行安装程序。
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked
@@ -124,8 +128,27 @@ Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 ; The lite payload carries no .NET runtime. Leftover runtime files from an earlier
 ; self-contained install would be picked up instead of the shared ones (a private
 ; hostfxr wins) and would survive an uninstall as tens of MB of orphans, so the lite
-; setup clears the app directory and lays its own payload down again a moment later.
-Type: filesandordirs; Name: "{app}\*"
+; setup removes them first.
+;
+; Only those runtime files are deleted: clearing "{app}\*" failed with "Access is denied"
+; while Setup recreated "bin", because a running instance (or its ConPTY host, or a shell
+; whose working directory sits in the install folder) still held a handle in the tree and
+; a half-deleted directory refuses to be created again.
+Type: files; Name: "{app}\coreclr.dll"
+Type: files; Name: "{app}\clr*.dll"
+Type: files; Name: "{app}\createdump.exe"
+Type: files; Name: "{app}\dbgshim.dll"
+Type: files; Name: "{app}\hostfxr.dll"
+Type: files; Name: "{app}\hostpolicy.dll"
+Type: files; Name: "{app}\mscord*.dll"
+Type: files; Name: "{app}\mscorlib.dll"
+Type: files; Name: "{app}\msquic.dll"
+Type: files; Name: "{app}\sni.dll"
+Type: files; Name: "{app}\System.*.dll"
+Type: files; Name: "{app}\Microsoft.CSharp.dll"
+Type: files; Name: "{app}\Microsoft.VisualBasic*.dll"
+Type: files; Name: "{app}\Microsoft.Win32.*.dll"
+Type: files; Name: "{app}\netstandard.dll"
 #endif
 
 
@@ -221,6 +244,127 @@ begin
   begin
     RemovePathEntry(ExpandConstant('{app}\bin'));
   end;
+end;
+
+// Setup cannot replace Gui.exe, its ConPTY host or the CLI while they are running, and the
+// lite variant also has to drop runtime files from the payload directory. Ask to close the
+// app (or close it silently in an unattended install) and wait for the handles to go away
+// before Setup deletes or writes anything.
+function VariantPath(Process: Variant): String;
+begin
+  try
+    Result := Process.ExecutablePath;
+  except
+    Result := '';
+  end;
+end;
+
+function VariantPid(Process: Variant): String;
+begin
+  try
+    Result := Process.ProcessId;
+  except
+    Result := '';
+  end;
+end;
+
+// Comma-separated PIDs of Gui processes running from the directory being installed into.
+function FindRunningAppPids: String;
+var
+  Locator, Wmi, Processes, Process: Variant;
+  I: Integer;
+  AppDir, ExePath, Pid: String;
+begin
+  Result := '';
+  AppDir := ExpandConstant('{app}');
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Wmi := Locator.ConnectServer('.', 'root\cimv2');
+    Processes := Wmi.ExecQuery(
+      'SELECT ProcessId, ExecutablePath FROM Win32_Process WHERE Name = ''Gui.exe'' OR ' +
+      'Name = ''OpenConsole.exe'' OR Name = ''gui-cli.exe''');
+    for I := 0 to Processes.Count - 1 do
+    begin
+      Process := Processes.Item(I);
+      ExePath := VariantPath(Process);
+      Pid := VariantPid(Process);
+      if (Pid <> '') and (ExePath <> '') and
+         (CompareText(Copy(ExePath, 1, Length(AppDir) + 1), AppDir + '\') = 0) then
+      begin
+        if Result <> '' then
+          Result := Result + ',';
+        Result := Result + Pid;
+      end;
+    end;
+  except
+    // WMI is unavailable on a stripped system; Setup's own Restart Manager check still
+    // reports files that are in use.
+  end;
+end;
+
+procedure KillPids(Pids: String);
+var
+  Rest, Pid: String;
+  P, Code: Integer;
+begin
+  Rest := Pids;
+  while Rest <> '' do
+  begin
+    P := Pos(',', Rest);
+    if P = 0 then
+    begin
+      Pid := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Pid := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end;
+    if Pid <> '' then
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/PID ' + Pid + ' /T /F', '',
+           SW_HIDE, ewWaitUntilTerminated, Code);
+  end;
+end;
+
+function WaitForAppExit(TimeoutMs: Integer): Boolean;
+var
+  Waited: Integer;
+begin
+  Waited := 0;
+  while FindRunningAppPids <> '' do
+  begin
+    if Waited >= TimeoutMs then
+    begin
+      Result := False;
+      Exit;
+    end;
+    Sleep(200);
+    Waited := Waited + 200;
+  end;
+  Result := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Pids: String;
+begin
+  Result := '';
+  NeedsRestart := False;
+  Pids := FindRunningAppPids;
+  if Pids = '' then exit;
+
+  if not WizardSilent then
+    if MsgBox(CustomMessage('CloseRunningApp'), mbConfirmation, MB_YESNO) = IDNO then
+    begin
+      Result := CustomMessage('CloseRunningAppFailed');
+      Exit;
+    end;
+
+  Log('Closing the running app before installing: ' + Pids);
+  KillPids(Pids);
+  if not WaitForAppExit(5000) then
+    Result := CustomMessage('CloseRunningAppFailed');
 end;
 
 #ifdef Lite
