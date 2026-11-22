@@ -35,6 +35,7 @@ internal sealed class ChromeButton : Button
     private Func<Color>? _hoverFillColor;
     private Func<Color>? _pressedFillColor;
     private bool _hovered;
+    private bool _active;
 
     public ChromeButton(UIElement icon, double width, double height, CornerRadius radius)
     {
@@ -105,15 +106,28 @@ internal sealed class ChromeButton : Button
     /// <summary>The name accessibility tools read out; the tooltip shows the same words.</summary>
     public void SetAccessibleName(string name) => AutomationProperties.SetName(this, name);
 
+    /// <summary>
+    /// Keeps the button in its hover fill while what it opened (a menu) is still on screen,
+    /// the way a pressed caption or menu button stays lit until the flyout closes.
+    /// </summary>
+    public void SetActive(bool active)
+    {
+        if (_active == active) return;
+        _active = active;
+        ApplyTheme();
+    }
+
     /// <summary>Re-reads every colour. Called from the chrome's theme pass.</summary>
     public void ApplyTheme()
     {
         _fill.Color = _fillColor?.Invoke() ?? Colors.Transparent;
         _hoverFill.Color = _hoverFillColor?.Invoke() ?? _fill.Color;
         _pressedFill.Color = _pressedFillColor?.Invoke() ?? _hoverFill.Color;
+        // An active button owns the open menu: its resting state is the hover state.
+        if (_active) _fill.Color = _hoverFill.Color;
         _iconBrush.Color = _icon();
         _hoverIconBrush.Color = _hoverIcon?.Invoke() ?? _iconBrush.Color;
-        PaintIcon(_hovered && _hoverIcon is not null ? _hoverIconBrush : _iconBrush);
+        PaintIcon((_active || _hovered) && _hoverIcon is not null ? _hoverIconBrush : _iconBrush);
     }
 
     private void PaintIcon(Brush brush)

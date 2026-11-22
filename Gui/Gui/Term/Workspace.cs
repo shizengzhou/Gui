@@ -1657,7 +1657,7 @@ public sealed partial class Workspace
             ChromeButton mainMenu = ToolButton('\uE712', Theme.ChromeIconFaint, Theme.ChromeChipHover);
             mainMenu.Width = 28;
             mainMenu.SetAccessibleName(Strings.MainMenu);
-            mainMenu.Click += (_, _) => BuildMainMenu().ShowAt(mainMenu);
+            mainMenu.Click += (_, _) => ShowMainMenu(mainMenu);
             topTools.Children.Add(mainMenu);
 
             Grid.SetColumn(topTools, 1);
@@ -1830,14 +1830,14 @@ public sealed partial class Workspace
         // next to it, so the menu only carries the shared items while the row has room.
         ChromeButton mainMenu = ToolButton('\uE712', Theme.ChromeIconFaint, Theme.ChipHover);
         mainMenu.SetAccessibleName(Strings.MainMenu);
-        mainMenu.Click += (_, _) => BuildMainMenu().ShowAt(mainMenu);
+        mainMenu.Click += (_, _) => ShowMainMenu(mainMenu);
         tools.Children.Add(mainMenu);
 
         // When the rail's top row cannot hold the buttons, the new-tab action folds into the
         // overflow menu, where File > New tab still reaches it.
         ChromeButton menu = ToolButton('\uE712', Theme.ChromeIconFaint, Theme.ChipHover);
         menu.SetAccessibleName(Strings.MainMenu);
-        menu.Click += (_, _) => BuildMainMenu().ShowAt(menu);
+        menu.Click += (_, _) => ShowMainMenu(menu);
         tools.Children.Add(menu);
 
         void UpdateRailTools()

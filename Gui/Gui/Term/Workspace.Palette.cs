@@ -1607,6 +1607,18 @@ public sealed partial class Workspace
     }
 
     /// <summary>
+    /// Opens the main menu under its hamburger and keeps that button lit until the menu
+    /// closes, the way a native menu button holds its pressed state.
+    /// </summary>
+    private void ShowMainMenu(ChromeButton button)
+    {
+        MenuFlyout menu = BuildMainMenu();
+        button.SetActive(true);
+        menu.Closed += (_, _) => button.SetActive(false);
+        menu.ShowAt(button);
+    }
+
+    /// <summary>
     /// The hamburger menu shared by the title bar and the rail.
     /// </summary>
     private MenuFlyout BuildMainMenu()
