@@ -1379,10 +1379,12 @@ public sealed unsafe class TerminalRenderer
     private void DrawSymbolRun(CanvasDrawingSession ds, Run run, int face, float cellW, float textY)
     {
         var elements = StringInfo.GetTextElementEnumerator(run.Text);
-        int cell = 0;
-        while (elements.MoveNext())
+        var graphemes = new List<string>();
+        while (elements.MoveNext()) graphemes.Add(elements.GetTextElement());
+
+        for (int cell = 0; cell < graphemes.Count; cell++)
         {
-            string grapheme = elements.GetTextElement();
+            string grapheme = graphemes[cell];
             if (grapheme.Length == 0) continue;
 
             int codepoint = CodepointAt(grapheme, 0);
@@ -1391,10 +1393,26 @@ public sealed unsafe class TerminalRenderer
             if (IsPrivateUse(codepoint))
             {
                 string family = FamilyForGrapheme(grapheme, face);
-                float scale = IconScale(codepoint, face, family);
+                // A symbol followed by a space has room to overdraw into that cell, the way
+                // Windows Terminal does: keep it full size instead of shrinking its ink to
+                // fit one cell. Only shrink when the next cell is occupied (or unknown because
+                // it belongs to another run), where the ink would cover a real character.
+                bool hasRoom = cell + 1 < run.Cols && cell + 1 < graphemes.Count &&
+                               string.IsNullOrWhiteSpace(graphemes[cell + 1]);
+                float scale = hasRoom ? 1f : IconScale(codepoint, face, family);
                 CachedLayout? symbol = scale < 0.999f ? GetSymbolLayout(grapheme, face, family, scale) : null;
                 if (symbol is not null)
-                    ds.DrawTextLayout(symbol.Layout, x, textY + _primaryBaseline - symbol.Baseline, run.Fg);
+                {
+                    // The reduced font still has its own baseline; sharing it with the line
+                    // puts the small glyph at the bottom of the cell. Center its ink on the
+                    // line's ink instead, leaving the icon's size untouched.
+                    // Full ink-centering overcorrects for a glyph whose DrawBounds covers the
+                    // font's line box rather than visible ink, so apply half of it: enough to
+                    // lift the icon off the baseline without floating above the text.
+                    float inkCenter = (float)((symbol.Layout.DrawBounds.Height - _asciiHeight) * 0.25);
+                    ds.DrawTextLayout(symbol.Layout, x,
+                        textY + _primaryBaseline - symbol.Baseline + inkCenter, run.Fg);
+                }
                 else
                     DrawTextRun(ds, grapheme, x, textY, run.Fg, run.Bold, run.Italic, family);
             }
@@ -1402,7 +1420,6 @@ public sealed unsafe class TerminalRenderer
             {
                 DrawTextRun(ds, grapheme, x, textY, run.Fg, run.Bold, run.Italic);
             }
-            cell++;
         }
     }
 
