@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -65,6 +65,7 @@
     <Compile Include="../../Gui/Gui/Term/EmojiPresentation.cs" Link="EmojiPresentation.cs" />
     <Compile Include="../../Gui/Gui/Term/WindowState.cs" Link="WindowState.cs" />
     <Compile Include="../../Gui/Gui/Term/RestoredCommand.cs" Link="RestoredCommand.cs" />
+    <Compile Include="../../Gui/Gui/Term/KeybindEdit.cs" Link="KeybindEdit.cs" />
     <Compile Include="../../Gui/Gui/Term/WordSelection.cs" Link="WordSelection.cs" />
   </ItemGroup>
 </Project>

@@ -267,9 +267,20 @@ public static class Theme
         CustomTheme ? Tint(Light ? (byte)0x1A : (byte)0x24, Terminal.Foreground)
                     : Light ? Rgba(0x1A, 0, 0, 0) : Rgba(0x24, 255, 255, 255);
 
-    /// <summary>Window caption close: the design uses a brighter red on light chrome.</summary>
-    public static Color CloseHover() =>
-        WindowLight ? Rgba(255, 0xE8, 0x11, 0x23) : Rgba(255, 0xC4, 0x2B, 0x1C);
+    /// <summary>
+    /// Window caption close: the same red WinUI's own close button uses
+    /// (CloseButtonBackgroundPointerOver) and the one the native Windows 10 frame paints,
+    /// on both light and dark chrome.
+    /// </summary>
+    public static Color CloseHover() => Rgba(255, 0xE8, 0x11, 0x23);
+
+    /// <summary>
+    /// Minimize/maximize hover: the native title bar's roughly 10% black (light) and 9%
+    /// white (dark), kept as a tint so a custom theme still colours the chrome.
+    /// </summary>
+    public static Color CaptionHover() =>
+        CustomTheme ? Tint(WindowLight ? (byte)0x1A : (byte)0x17, Terminal.Foreground)
+                    : WindowLight ? Rgba(0x1A, 0, 0, 0) : Rgba(0x17, 255, 255, 255);
 
     // --- command palette --------------------------------------------------------
     public static Color PaletteBg() =>

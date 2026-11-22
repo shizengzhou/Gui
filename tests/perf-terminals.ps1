@@ -118,7 +118,7 @@ public static class Win {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrEmpty($GuiExe)) {
-    $GuiExe = Join-Path $repoRoot 'Gui/Gui/bin/x64/Release/net8.0-windows10.0.19041.0/win-x64/Gui.exe'
+    $GuiExe = Join-Path $repoRoot 'Gui/Gui/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/Gui.exe'
 }
 if ([string]::IsNullOrEmpty($WtExe)) {
     $WtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
@@ -139,7 +139,7 @@ $Terminal = @($Terminal | Where-Object { $exeFor[$_] -and (Test-Path $exeFor[$_]
 if ($Terminal.Count -eq 0) { throw 'no terminal to measure' }
 
 $emitterProject = Join-Path $PSScriptRoot 'perf-emitter'
-$emitterExe = Join-Path $emitterProject 'bin/Release/net8.0/emit.exe'
+$emitterExe = Join-Path $emitterProject 'bin/Release/net10.0/emit.exe'
 if (-not (Test-Path $emitterExe)) {
     Write-Host 'building tests/perf-emitter...'
     & dotnet build $emitterProject -c Release -v q --nologo

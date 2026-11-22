@@ -231,6 +231,11 @@ public sealed partial class Workspace
     private TextBlock? _minimizeTip;
     private TextBlock? _maximizeTip;
     private TextBlock? _closeTip;
+
+    // The settings page carries its own copy of the three window buttons.
+    private FontIcon? _settingsMaximizeIcon;
+    private ChromeButton? _settingsMaximizeCaption;
+    private TextBlock? _settingsMaximizeTip;
     private Grid _surfaceHost = null!;
     private StackPanel? _topTabHost;
     private StackPanel? _tabColumn;
@@ -1091,13 +1096,16 @@ public sealed partial class Workspace
     {
         if (_minimizeTip is not null) _minimizeTip.Text = Strings.Minimize;
         if (_closeTip is not null) _closeTip.Text = Strings.CloseWindow;
-        if (_maximizeTip is null) return;
+        if (_maximizeTip is null && _settingsMaximizeTip is null) return;
 
         bool maximized = _window is not null &&
                          _window.AppWindow.Presenter is OverlappedPresenter presenter &&
                          presenter.State == OverlappedPresenterState.Maximized;
-        _maximizeTip.Text = maximized ? Strings.Restore : Strings.Maximize;
-        _maximizeCaption?.SetAccessibleName(_maximizeTip.Text);
+        string title = maximized ? Strings.Restore : Strings.Maximize;
+        if (_maximizeTip is not null) _maximizeTip.Text = title;
+        _maximizeCaption?.SetAccessibleName(title);
+        if (_settingsMaximizeTip is not null) _settingsMaximizeTip.Text = title;
+        _settingsMaximizeCaption?.SetAccessibleName(title);
     }
 
     private void UpdateCloseCorner()
@@ -1115,10 +1123,17 @@ public sealed partial class Workspace
             : new CornerRadius(0);
     }
 
+    /// <summary>
+    /// The height the main header gives its caption buttons. The settings page covers that
+    /// header and draws its own copy, so both use this one value.
+    /// </summary>
+    private double CaptionButtonHeight =>
+        _placement == TabPlacement.Top ? HeaderHeight : SideHeaderHeight;
+
     private ChromeButton CaptionButton(char code, double width, double height, Func<Color> icon)
     {
         var button = new ChromeButton(Glyph(code, 10, ThemedBrush(icon)), width, height, new CornerRadius(0));
-        button.SetColors(icon, Theme.ChromeIconStrong, hoverFill: Theme.ChromeChipHover);
+        button.SetColors(icon, Theme.ChromeIconStrong, hoverFill: Theme.CaptionHover);
         _chromeButtons.Add(button);
         return button;
     }
@@ -1529,7 +1544,7 @@ public sealed partial class Workspace
         // 6px below the window's top edge (the island's own margin) plus the pane frame's 1px
         // border is where the pane header's content starts; the caption buttons use that same
         // band so their glyphs share the action buttons' centre line.
-        double headerHeight = sideRail ? SideHeaderHeight : HeaderHeight;
+        double headerHeight = CaptionButtonHeight;
         _header = new Border
         {
             Height = headerHeight,

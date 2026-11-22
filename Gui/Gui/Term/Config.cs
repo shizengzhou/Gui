@@ -2797,6 +2797,88 @@ public sealed class Config
     }
 
     /// <summary>
+    /// Rewrites every line of a repeatable option ("keybind") at once. The values replace
+    /// the first line the key had, keeping its position; later lines of the same key are
+    /// folded into that spot. Comments and unrelated settings stay untouched.
+    /// </summary>
+    public static void SaveList(string key, IReadOnlyList<string> values) =>
+        SaveList(ConfigFile(), key, values);
+
+    /// <summary>The same, against an explicit file so tests do not touch the user's config.</summary>
+    public static void SaveList(string file, string key, IReadOnlyList<string> values)
+    {
+        if (string.IsNullOrEmpty(file)) return;
+        EnsureDefault(file);
+
+        var lines = new List<string>();
+        string newline = "\n";
+        try
+        {
+            string text = File.ReadAllText(file, Encoding.UTF8);
+            if (text.Contains("\r\n", StringComparison.Ordinal)) newline = "\r\n";
+            foreach (string raw in text.Split('\n')) lines.Add(raw.TrimEnd('\r'));
+        }
+        catch
+        {
+            // Treat an unreadable file as empty; the values are appended below.
+        }
+
+        var replacements = new List<string>(values.Count);
+        foreach (string value in values) replacements.Add(key + " = " + value);
+
+        string wanted = key.ToLowerInvariant();
+        var result = new List<string>(lines.Count + replacements.Count);
+        bool replaced = false;
+        foreach (string line in lines)
+        {
+            string trimmed = line.Trim(' ', '\t');
+            bool matches = false;
+            if (trimmed.Length > 0 && trimmed[0] != '#')
+            {
+                int separator = trimmed.IndexOf('=');
+                matches = separator >= 0 &&
+                    trimmed[..separator].Trim(' ', '\t').ToLowerInvariant() == wanted;
+            }
+
+            if (!matches)
+            {
+                result.Add(line);
+                continue;
+            }
+
+            if (!replaced)
+            {
+                result.AddRange(replacements);
+                replaced = true;
+            }
+        }
+
+        if (!replaced)
+        {
+            // Append after the last setting, so a trailing blank line stays trailing.
+            int insert = result.Count;
+            while (insert > 0 && result[insert - 1].Trim().Length == 0) insert--;
+            result.InsertRange(insert, replacements);
+        }
+
+        try
+        {
+            File.WriteAllText(file, string.Join(newline, result), new UTF8Encoding(false));
+        }
+        catch
+        {
+            // A failed save must not take the app down.
+        }
+    }
+
+    /// <summary>
+    /// Replaces one repeatable option's parsed values after the settings page rewrote them,
+    /// so a live rebuild sees the change without re-reading the file.
+    /// </summary>
+    public void ReplaceValues(string key, IReadOnlyList<string> values) =>
+        _values[key] = new List<string>(values);
+
+    /// <summary>
     /// Creates an empty config file when one does not exist yet. Every key falls back to its
     /// default until the user sets it, so the file needs no commented template.
     /// </summary>

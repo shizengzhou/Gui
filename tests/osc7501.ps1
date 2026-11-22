@@ -62,7 +62,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrEmpty($Exe)) {
-    $Exe = Join-Path $repo 'Gui/Gui/bin/x64/Release/net8.0-windows10.0.19041.0/win-x64/Gui.exe'
+    $Exe = Join-Path $repo 'Gui/Gui/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/Gui.exe'
 }
 if (-not (Test-Path $Exe)) {
     throw "Gui.exe not found at $Exe; build it or pass -Exe"

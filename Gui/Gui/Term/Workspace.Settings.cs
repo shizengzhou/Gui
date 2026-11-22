@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas.Text;
+using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -51,6 +52,10 @@ public sealed partial class Workspace
     /// </summary>
     private void BuildSettings()
     {
+        // The page is about to be replaced, so a row that is still waiting for a key has
+        // nowhere to paint its result.
+        CancelKeybindCapture(restore: false);
+
         Grid? previous = _settingsLayer;
         if (previous is not null && previous.Parent is Panel owner) owner.Children.Remove(previous);
         _settingsLayer = null;
@@ -69,6 +74,10 @@ public sealed partial class Workspace
         _settingsLayer.PointerPressed += (_, args) =>
         {
             args.Handled = true;
+            // A press outside the waiting row abandons the capture instead of leaving the
+            // next keystroke to change a shortcut the user has moved on from. The repaint
+            // is deferred because this handler runs inside the press.
+            DeferSettingsChange(() => CancelKeybindCapture());
             if (IsInertPress(args.OriginalSource, _settingsLayer)) FocusSettingsOwner();
         };
 
@@ -394,7 +403,8 @@ public sealed partial class Workspace
             Height = 44,
             BorderThickness = new Thickness(0, 0, 0, 1),
             BorderBrush = PanelStrokeBrush(),
-            Padding = new Thickness(16, 0, 16, 0),
+            // The window buttons own the card's top-right corner, so there is no right inset.
+            Padding = new Thickness(16, 0, 0, 0),
         };
 
         _settingsTitle = new TextBlock
@@ -404,7 +414,52 @@ public sealed partial class Workspace
             Foreground = TextStrongBrush(),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        head.Child = _settingsTitle;
+
+        // The page covers the window header, so it has to carry the three window buttons
+        // itself or a settings-only window could not be minimized, maximized or closed.
+        var headGrid = new Grid();
+        AddStarColumn(headGrid);
+        AddAutoColumn(headGrid);
+        headGrid.Children.Add(_settingsTitle);
+
+        // Same width and height as the caption buttons in the window header, and flush with
+        // the card's top edge like them.
+        double captionHeight = CaptionButtonHeight;
+        var captions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+
+        ChromeButton minimize = CaptionButton('\uE921', CaptionButtonWidth, captionHeight, Theme.ChromeIconBody);
+        ChromeButton maximize = CaptionButton('\uE922', CaptionButtonWidth, captionHeight, Theme.ChromeIconBody);
+        ChromeButton close = CaptionButton('\uE8BB', CaptionButtonWidth, captionHeight, Theme.ChromeIconBody);
+        close.SetColors(Theme.ChromeIconBody, () => Colors.White, hoverFill: Theme.CloseHover);
+        // Follow the card's rounded top-right corner, like the header's close button does.
+        close.CornerRadius = new CornerRadius(0, CompactDensity ? 0 : Theme.RadiusSurface, 0, 0);
+
+        _settingsMaximizeIcon = maximize.Content as FontIcon;
+        _settingsMaximizeCaption = maximize;
+        _settingsMaximizeTip = CaptionTip(maximize, string.Empty);
+        CaptionTip(minimize, Strings.Minimize);
+        CaptionTip(close, Strings.CloseWindow);
+        UpdateMaximizeIcon();
+
+        minimize.Click += (_, _) => MinimizeWindow();
+        maximize.Click += (_, _) => ToggleMaximize();
+        close.Click += (_, _) =>
+        {
+            if (_dispatcher is null) RequestClose();
+            else _dispatcher.TryEnqueue(RequestClose);
+        };
+
+        captions.Children.Add(minimize);
+        captions.Children.Add(maximize);
+        captions.Children.Add(close);
+        Grid.SetColumn(captions, 1);
+        headGrid.Children.Add(captions);
+
+        head.Child = headGrid;
         Grid.SetRow(head, 0);
         main.Children.Add(head);
 
@@ -506,6 +561,7 @@ public sealed partial class Workspace
 
     private void HideSettings()
     {
+        CancelKeybindCapture(restore: false);
         DeactivateSettings();
         if (_tabs.Count > 0) FocusKeyboardAnchor();
     }
@@ -1221,17 +1277,57 @@ public sealed partial class Workspace
 
     // ---------------- key bindings ----------------
 
+    /// <summary>The action whose shortcut cap is waiting for a key press, if any.</summary>
+    private string? _keybindCaptureAction;
+
+    /// <summary>The clicked chord, or null when the press adds one to an empty action.</summary>
+    private string? _keybindCaptureChord;
+
+    /// <summary>The cap panel of the row that started the capture.</summary>
+    private StackPanel? _keybindCaptureKeys;
+
+    /// <summary>The leading "+" that turned into the prompt, when it started the capture.</summary>
+    private Border? _keybindCaptureAdd;
+
+    /// <summary>Re-runs the keys page search, because an edit can change which rows match.</summary>
+    private Action? _keybindFilter;
+
     private FrameworkElement BuildKeysSettingsPage()
     {
         var page = SettingsPageStack();
+        page.Children.Add(Label(Strings.SettingsKeysHint, Theme.FontCaption, TextFaintBrush()));
+
+        var search = new TextBox
+        {
+            PlaceholderText = Strings.SettingsKeysSearch,
+            Height = 30,
+            MinHeight = 30,
+            FontSize = Theme.FontSmall,
+            // Same field shape as the other settings inputs; the 7 DIP top inset centres
+            // an 11 px line in the 30 DIP box.
+            Padding = new Thickness(9, 7, 9, 0),
+            BorderBrush = PanelStrokeBrush(),
+            Background = ClearBrush(),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        page.Children.Add(search);
+
+        var list = new StackPanel { Spacing = 16 };
+        page.Children.Add(list);
+
+        TextBlock noMatch = Label(Strings.SettingsKeysNoMatch, Theme.FontBody, TextFaintBrush());
+        noMatch.Visibility = Visibility.Collapsed;
+        page.Children.Add(noMatch);
 
         Dictionary<string, string> labels = KeybindActionLabels();
         var listed = new HashSet<string>(StringComparer.Ordinal);
+        var groups = new List<(FrameworkElement View, List<(FrameworkElement Row, Func<string> Text)> Rows)>();
 
         // Every action this build can run, grouped the way the commands are used. The action
         // ids are the ones a "keybind" line names; the labels and the chords both come from
         // the live configuration, so the page always shows what is actually bound.
-        (string Title, string[] Actions)[] groups =
+        (string Title, string[] Actions)[] definitions =
         {
             (Strings.SettingsKeysGroupTabs, new[]
             {
@@ -1287,31 +1383,97 @@ public sealed partial class Workspace
             }),
         };
 
-        foreach ((string title, string[] actions) in groups)
+        foreach ((string title, string[] actions) in definitions)
         {
-            var rows = new List<FrameworkElement>();
+            var rows = new List<(FrameworkElement Row, Func<string> Text)>();
+            var elements = new List<FrameworkElement>();
             foreach (string action in actions)
             {
                 listed.Add(action);
-                rows.Add(KeybindRow(KeybindLabel(labels, action), action));
+                FrameworkElement row = KeybindRow(KeybindLabel(labels, action), action);
+                elements.Add(row);
+                // The chords are read when the query runs, so editing a shortcut is matched
+                // by its new keys without rebuilding the page.
+                rows.Add((row, () => KeybindSearchText(labels, action)));
             }
-            page.Children.Add(SettingsGroup(title, SettingsCard(rows.ToArray())));
+            FrameworkElement group = SettingsGroup(title, SettingsCard(elements.ToArray()));
+            list.Children.Add(group);
+            groups.Add((group, rows));
         }
 
         // Safety net: a bindable action the groups above forgot still shows up instead of
         // disappearing from the page. Only bound ones are added, so the section stays empty
         // in the normal case.
-        var extra = new List<FrameworkElement>();
+        var extraActions = new List<string>();
         foreach (KeyValuePair<string, string> entry in labels)
         {
             if (listed.Contains(entry.Key) || _keybinds.Chords(entry.Key).Count == 0) continue;
-            extra.Add(KeybindRow(entry.Value, entry.Key));
+            extraActions.Add(entry.Key);
         }
-        if (extra.Count > 0)
-            page.Children.Add(SettingsGroup(Strings.SettingsKeysGroupOther, SettingsCard(extra.ToArray())));
+        if (extraActions.Count > 0)
+        {
+            var rows = new List<(FrameworkElement Row, Func<string> Text)>();
+            var elements = new List<FrameworkElement>();
+            foreach (string action in extraActions)
+            {
+                FrameworkElement row = KeybindRow(KeybindLabel(labels, action), action);
+                elements.Add(row);
+                rows.Add((row, () => KeybindSearchText(labels, action)));
+            }
+            FrameworkElement group = SettingsGroup(Strings.SettingsKeysGroupOther,
+                SettingsCard(elements.ToArray()));
+            list.Children.Add(group);
+            groups.Add((group, rows));
+        }
+
+        // Filtering hides rows instead of rebuilding them: the caps keep their capture
+        // state, and a page with ~100 rows stays cheap on every keystroke.
+        Action applyFilter = () =>
+        {
+            string query = search.Text.Trim();
+            int visible = 0;
+            foreach ((FrameworkElement view, List<(FrameworkElement Row, Func<string> Text)> rows) in groups)
+            {
+                // Rows after the first sit inside a Border that draws the separator line.
+                // Hiding only the row would leave that line (and its height) behind, so the
+                // wrapper is hidden too and the first visible row drops its top line: the
+                // card then looks exactly like one rebuilt from the matches.
+                bool firstVisible = true;
+                int shown = 0;
+                foreach ((FrameworkElement row, Func<string> text) in rows)
+                {
+                    bool match = query.Length == 0 ||
+                        text().Contains(query, StringComparison.OrdinalIgnoreCase);
+                    row.Visibility = match ? Visibility.Visible : Visibility.Collapsed;
+                    if (row.Parent is Border separator)
+                    {
+                        separator.Visibility = match ? Visibility.Visible : Visibility.Collapsed;
+                        // Only the line between two visible rows is kept: the wrapper itself
+                        // has to stay visible, or it would take the row down with it.
+                        separator.BorderThickness = match && !firstVisible
+                            ? new Thickness(0, 1, 0, 0)
+                            : new Thickness(0);
+                    }
+                    if (!match) continue;
+
+                    firstVisible = false;
+                    shown++;
+                }
+                view.Visibility = shown > 0 ? Visibility.Visible : Visibility.Collapsed;
+                visible += shown;
+            }
+            noMatch.Visibility = visible == 0 ? Visibility.Visible : Visibility.Collapsed;
+        };
+
+        _keybindFilter = applyFilter;
+        search.TextChanged += (_, _) => applyFilter();
 
         return page;
     }
+
+    /// <summary>The text a shortcut row is matched against: label, action id and current chords.</summary>
+    private string KeybindSearchText(Dictionary<string, string> labels, string action) =>
+        KeybindLabel(labels, action) + " " + action + " " + string.Join(' ', _keybinds.Chords(action));
 
     /// <summary>
     /// Action id to the label the palette shows for it. The palette rows are the one place
@@ -1342,25 +1504,244 @@ public sealed partial class Workspace
     private static string KeybindLabel(Dictionary<string, string> labels, string action) =>
         labels.TryGetValue(action, out string? label) ? label : action;
 
-    /// <summary>One shortcut row: the action's label and every chord the config leaves bound.</summary>
+    /// <summary>
+    /// One shortcut row: the action's label, a leading "+" and every chord the config
+    /// leaves bound. Each cap is its own target, so a press replaces or clears only that
+    /// chord; the "+" only appears while the pointer is over the row.
+    /// </summary>
     private FrameworkElement KeybindRow(string label, string action)
     {
-        List<string> chords = _keybinds.Chords(action);
-        if (chords.Count == 0)
-        {
-            TextBlock none = Label(Strings.SettingsKeysUnbound, 10.5, TextFaintBrush());
-            none.VerticalAlignment = VerticalAlignment.Center;
-            return SettingsRow(label, null, none);
-        }
-
         var keys = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        foreach (string chord in chords) keys.Children.Add(SettingsKbd(chord));
-        return SettingsRow(label, null, keys);
+        FillKeybindChips(keys, action);
+
+        // Kept in the layout at zero opacity, so revealing it does not shift the caps. The
+        // transparent wrapper keeps its slot hoverable while the cap itself is invisible.
+        Border add = SettingsKbd("+", KeybindAddWidth);
+        ShowAddChip(add, false);
+        add.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            if (!IsPrimaryPress(args, add)) return;
+            BeginAddKeybindCapture(action, keys, add);
+        };
+
+        var addArea = new Border
+        {
+            Background = ClearBrush(),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = add,
+        };
+
+        var host = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        host.Children.Add(addArea);
+        host.Children.Add(keys);
+
+        // The "+" belongs to its own slot and to the caps, not to the whole row: hovering
+        // the label leaves it hidden. Tag remembers the state for the post-capture restore.
+        bool overAdd = false, overCaps = false;
+        void RefreshAdd()
+        {
+            bool hovered = overAdd || overCaps;
+            // The tag keeps the plain hover state; the cap also stays visible while it is
+            // the capture target, but that must not survive into the post-capture restore.
+            add.Tag = hovered;
+            ShowAddChip(add, hovered || ReferenceEquals(_keybindCaptureAdd, add));
+        }
+
+        addArea.PointerEntered += (_, _) =>
+        {
+            overAdd = true;
+            RefreshAdd();
+        };
+        addArea.PointerExited += (_, _) =>
+        {
+            overAdd = false;
+            RefreshAdd();
+        };
+        keys.PointerEntered += (_, _) =>
+        {
+            overCaps = true;
+            RefreshAdd();
+        };
+        keys.PointerExited += (_, _) =>
+        {
+            overCaps = false;
+            RefreshAdd();
+        };
+
+        return SettingsRow(label, null, host);
+    }
+
+    /// <summary>
+    /// Paints one row's chords. <paramref name="pendingChord"/> is the clicked cap, which
+    /// turns into the prompt while its siblings stay exactly as they were.
+    /// </summary>
+    private void FillKeybindChips(StackPanel keys, string action, string? pendingChord = null,
+        bool capturing = false)
+    {
+        keys.Children.Clear();
+        List<string> chords = _keybinds.CanonicalChords(action);
+        if (chords.Count == 0)
+        {
+            // The cap keeps the column aligned and is a target that adds a shortcut. The
+            // leading "+" is the other one, and shows the prompt when it was clicked.
+            bool waiting = capturing && pendingChord is null && _keybindCaptureAdd is null;
+            keys.Children.Add(KeybindChip(
+                waiting ? Strings.SettingsKeysPress : Strings.SettingsKeysUnbound,
+                action, null, keys));
+            return;
+        }
+
+        foreach (string chord in chords)
+        {
+            bool waiting = capturing && string.Equals(chord, pendingChord, StringComparison.Ordinal);
+            string text = waiting ? Strings.SettingsKeysPress : Keybinds.Display(chord);
+            keys.Children.Add(KeybindChip(text, action, chord, keys));
+        }
+    }
+
+    /// <summary>One clickable cap; its chord is what the next key press replaces.</summary>
+    private Border KeybindChip(string text, string action, string? chord, StackPanel keys)
+    {
+        Border cap = SettingsKbd(text);
+        cap.PointerPressed += (_, args) =>
+        {
+            args.Handled = true;
+            if (!IsPrimaryPress(args, cap)) return;
+            BeginKeybindCapture(action, chord, keys);
+        };
+        return cap;
+    }
+
+    private void BeginKeybindCapture(string action, string? chord, StackPanel keys)
+    {
+        // Repainting the row inside its own pointer handler can fail-fast WinUI, so the
+        // capture starts on the next dispatcher turn like every other chrome rebuild here.
+        DeferSettingsChange(() =>
+        {
+            CancelKeybindCapture();
+            _keybindCaptureAction = action;
+            _keybindCaptureChord = chord;
+            _keybindCaptureKeys = keys;
+            _keybindCaptureAdd = null;
+            FillKeybindChips(keys, action, chord, capturing: true);
+            FocusSettingsOwner();
+        });
+    }
+
+    /// <summary>Starts the capture from the leading "+", which becomes the prompt itself.</summary>
+    private void BeginAddKeybindCapture(string action, StackPanel keys, Border add)
+    {
+        DeferSettingsChange(() =>
+        {
+            CancelKeybindCapture();
+            _keybindCaptureAction = action;
+            _keybindCaptureChord = null;
+            _keybindCaptureKeys = keys;
+            _keybindCaptureAdd = add;
+            ShowAddChip(add, true);
+            SetAddChip(add, Strings.SettingsKeysPress, KeybindCapWidth);
+            FillKeybindChips(keys, action, null, capturing: true);
+            FocusSettingsOwner();
+        });
+    }
+
+    private void CancelKeybindCapture(bool restore = true)
+    {
+        string? action = _keybindCaptureAction;
+        StackPanel? keys = _keybindCaptureKeys;
+        Border? add = _keybindCaptureAdd;
+        _keybindCaptureAction = null;
+        _keybindCaptureChord = null;
+        _keybindCaptureKeys = null;
+        _keybindCaptureAdd = null;
+
+        if (add is not null) RestoreAddChip(add);
+        if (restore && action is not null && keys is not null) FillKeybindChips(keys, action);
+    }
+
+    /// <summary>Returns the "+" to its narrow, hover-only form after a capture ends.</summary>
+    private static void RestoreAddChip(Border add)
+    {
+        SetAddChip(add, "+", KeybindAddWidth);
+        ShowAddChip(add, add.Tag is true);
+    }
+
+    private static void SetAddChip(Border add, string text, double width)
+    {
+        if (add.Child is TextBlock label) label.Text = text;
+        add.Width = width;
+    }
+
+    private static void ShowAddChip(Border add, bool show)
+    {
+        add.Opacity = show ? 1.0 : 0.0;
+        add.IsHitTestVisible = show;
+    }
+
+    /// <summary>
+    /// The key press that answers an open shortcut capture: Esc cancels, Delete clears the
+    /// clicked cap, and any other key replaces that cap. Returns true because the settings
+    /// page must not also treat the key as navigation.
+    /// </summary>
+    private bool OnKeybindCaptureKey(KeyRoutedEventArgs args)
+    {
+        if (args.Key == VirtualKey.Escape)
+        {
+            CancelKeybindCapture();
+            return true;
+        }
+
+        // A modifier alone never completes a shortcut.
+        if (IsModifierKey(args.Key)) return true;
+
+        string action = _keybindCaptureAction!;
+        string? oldChord = _keybindCaptureChord;
+        if (args.Key == VirtualKey.Back || args.Key == VirtualKey.Delete)
+        {
+            ApplyKeybind(action, oldChord, null);
+            return true;
+        }
+
+        string? chord = Keybinds.Format(CurrentMods(), args.Key, KeyMap.UnshiftedCodepoint(args.Key));
+        if (chord is not null) ApplyKeybind(action, oldChord, chord);
+        return true;
+    }
+
+    /// <summary>
+    /// Replaces (or clears, when <paramref name="chord"/> is null) one chord of an action;
+    /// the action's other chords stay bound.
+    /// </summary>
+    private void ApplyKeybind(string action, string? oldChord, string? chord)
+    {
+        StackPanel? keys = _keybindCaptureKeys;
+        CancelKeybindCapture(restore: false);
+
+        var lines = new List<string>();
+        if (_config.Values.TryGetValue("keybind", out List<string>? current)) lines.AddRange(current);
+        lines = KeybindEdit.SetBinding(lines, action, oldChord, chord);
+
+        Config.SaveList("keybind", lines);
+        _config.ReplaceValues("keybind", lines);
+        RefreshKeybinds();
+
+        // The edited row can now match a different query (the new chord was nowhere on the
+        // page before), so the filter runs again instead of leaving stale results.
+        DeferSettingsChange(() =>
+        {
+            if (keys is not null) FillKeybindChips(keys, action);
+            _keybindFilter?.Invoke();
+        });
     }
 
     // ---------------- about ----------------
@@ -2179,19 +2560,31 @@ public sealed partial class Workspace
         return button;
     }
 
-    private Border SettingsKbd(string text)
+    /// <summary>Width shared by every shortcut cap, so the column lines up row to row.</summary>
+    private const double KeybindCapWidth = 128;
+
+    /// <summary>Width of the narrow "+" cap that adds another chord to an action.</summary>
+    private const double KeybindAddWidth = 30;
+
+    private Border SettingsKbd(string text, double width = KeybindCapWidth)
     {
+        // A key cap sitting on the card: the same subtle fill and RadiusControl corner the
+        // segmented controls use, and one fixed width so every shortcut covers one column.
         var label = new TextBlock
         {
             Text = text,
-            FontSize = Theme.FontCaption,
-            FontFamily = new FontFamily("Cascadia Mono"),
-            Foreground = TextFaintBrush(),
+            FontSize = Theme.FontSmall,
+            Foreground = TextStrongBrush(),
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         return new Border
         {
-            CornerRadius = new CornerRadius(Theme.RadiusChip),
-            Padding = new Thickness(5, 3, 5, 3),
+            Width = width,
+            CornerRadius = new CornerRadius(Theme.RadiusControl),
+            BorderThickness = new Thickness(1),
+            BorderBrush = PanelStrokeBrush(),
+            Padding = new Thickness(8, 4, 8, 4),
             Background = ChipHoverBrush(),
             Child = label,
             VerticalAlignment = VerticalAlignment.Center,

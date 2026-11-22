@@ -241,6 +241,12 @@ public static class Strings
     public static string SettingsBellVolume => Pick("Volume", "音量");
 
     public static string SettingsKeysUnbound => Pick("None", "未绑定");
+    public static string SettingsKeysPress => Pick("Press keys…", "请按快捷键…");
+    public static string SettingsKeysHint => Pick(
+        "Click a shortcut to replace it, or + to add another. Esc cancels, Delete clears the clicked one.",
+        "点击快捷键可修改，点击 + 可添加；Esc 取消，Delete 清除所点的绑定。");
+    public static string SettingsKeysSearch => Pick("Search shortcuts", "搜索快捷键");
+    public static string SettingsKeysNoMatch => Pick("No shortcuts match", "没有匹配的快捷键");
     public static string SettingsKeysGroupTabs => Pick("Tabs", "标签页");
     public static string SettingsKeysGroupPanes => Pick("Panes", "窗格");
     public static string SettingsKeysGroupTerminal => Pick("Terminal", "终端");

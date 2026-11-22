@@ -114,10 +114,13 @@ public sealed partial class Workspace
     /// </summary>
     private void UpdateMaximizeIcon()
     {
-        if (_maximizeIcon is null || _window is null) return;
+        if (_window is null) return;
         bool maximized = _window.AppWindow.Presenter is OverlappedPresenter presenter &&
                          presenter.State == OverlappedPresenterState.Maximized;
-        _maximizeIcon.Glyph = ((char)(maximized ? 0xE923 : 0xE922)).ToString();
+        string glyph = ((char)(maximized ? 0xE923 : 0xE922)).ToString();
+        if (_maximizeIcon is not null) _maximizeIcon.Glyph = glyph;
+        // The settings page draws its own copy of the buttons over the covered header.
+        if (_settingsMaximizeIcon is not null) _settingsMaximizeIcon.Glyph = glyph;
         UpdateCaptionTips();
     }
 
@@ -725,6 +728,10 @@ public sealed partial class Workspace
         // reach its TextBox, not be consumed here as terminal input.
         if (_textPromptOpen) return false;
 
+        // The keys page is waiting for the press that becomes a new shortcut; it must not
+        // reach the page's own Esc handling or the shell.
+        if (_keybindCaptureAction is not null) return OnKeybindCaptureKey(args);
+
         // Esc aborts a split drag before any other shortcut or the shell sees the key.
         if (_dragPane is not null && args.Key == VirtualKey.Escape)
         {
@@ -986,7 +993,7 @@ public sealed partial class Workspace
 
         // Windows Terminal font zoom: Ctrl+Plus / Ctrl+Minus resize the focused pane's font
         // by one point; Ctrl+0 restores the configured size. Ghostty's Ctrl+Enter toggles
-        // fullscreen and Ctrl+PageUp/PageDown switch tabs here too.
+        // fullscreen here too.
         if (ctrl && !alt)
         {
             int keyCode = (int)args.Key;
@@ -1020,12 +1027,6 @@ public sealed partial class Workspace
                     case VirtualKey.K:
                         // Prefix of the Ctrl+K Ctrl+O chord that opens a directory.
                         _openDirectoryChord = Environment.TickCount64;
-                        return true;
-                    case VirtualKey.PageUp:
-                        CycleTab(-1);
-                        return true;
-                    case VirtualKey.PageDown:
-                        CycleTab(1);
                         return true;
                 }
             }
@@ -1139,12 +1140,6 @@ public sealed partial class Workspace
                     return true;
                 case VirtualKey.B:
                     ToggleSidebar();
-                    return true;
-                case VirtualKey.Left:
-                    CycleTab(-1);
-                    return true;
-                case VirtualKey.Right:
-                    CycleTab(1);
                     return true;
                 case VirtualKey.PageUp:
                     MoveTab(_active, _active - 1);
