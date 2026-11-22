@@ -8,10 +8,10 @@
     payload, checks it for the files a broken publish drops, and finally hands it to
     Inno Setup.
 
-    Two packages come out of one version because the .NET 8 runtime is the larger half
+    Two packages come out of one version because the .NET 10 runtime is the larger half
     of the payload:
       full   self-contained, runs on a machine with nothing installed
-      lite   framework-dependent, needs the .NET 8 runtime, so its download is smaller
+      lite   framework-dependent, needs the .NET 10 runtime, so its download is smaller
              and its setup refuses to run when that runtime is missing
     Both are the same product (one AppId, one install directory), so installing one
     over the other keeps the installation and the user picks the download that suits
@@ -159,7 +159,7 @@ if ($SkipTests) {
 
 # ---------------- publish and installer ----------------
 
-# One version, two packages: "full" carries the .NET 8 runtime in the payload, "lite" is
+# One version, two packages: "full" carries the .NET 10 runtime in the payload, "lite" is
 # framework-dependent and so smaller to download, but it needs that runtime installed.
 # Both are the same product - one AppId, one install directory - so installing either
 # over the other keeps the installation.
@@ -179,7 +179,7 @@ foreach ($name in $variants) {
     # holds a self-contained one keeps hostfxr.dll and the runtime DLLs around and
     # silently produces a hybrid payload.
     $folder = if ($lite) { "publish-fdd" } else { "publish" }
-    $publishDir = Join-Path $repo "Gui/Gui/bin/$Configuration/net8.0-windows10.0.19041.0/$rid/$folder"
+    $publishDir = Join-Path $repo "Gui/Gui/bin/$Configuration/net10.0-windows10.0.19041.0/$rid/$folder"
     if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 
     # The profile is what sets SelfContained, and -p:Version stamps the assembly so that

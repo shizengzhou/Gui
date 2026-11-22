@@ -3,9 +3,9 @@
     <!-- A console-subsystem companion so stdout reaches the calling shell (a WinExe/GUI
          subsystem binary cannot write to a parent console). Ships next to Gui.exe. -->
     <OutputType>Exe</OutputType>
-    <!-- The Windows TFM, not plain net8.0: Term/Keybinds.cs reads VirtualKey, which comes
+    <!-- The Windows TFM, not plain net10.0: Term/Keybinds.cs reads VirtualKey, which comes
          from the Windows SDK projection. No Windows App SDK or WinUI package is involved. -->
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <AssemblyName>gui-cli</AssemblyName>
     <RootNamespace>Gui.Cli</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -20,7 +20,7 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
     <!-- Config.cs uses the Windows registry under Resolve(), which the CLI never calls.
-         Under a plain net8.0 TFM the platform analyzer still flags those call sites. -->
+         Under a plain net10.0 TFM the platform analyzer still flags those call sites. -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
 
     <!-- Follow the solution's Platform so the RID (and therefore the output folder) matches

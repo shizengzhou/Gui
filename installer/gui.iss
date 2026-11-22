@@ -5,10 +5,10 @@
 ;   iscc installer/gui.iss /DAppVersion=1.0.0
 ;
 ; Two payloads can be packaged from this one script:
-;   (no define)  self-contained: the payload carries the .NET 8 runtime, so a target
+;   (no define)  self-contained: the payload carries the .NET 10 runtime, so a target
 ;                machine needs nothing installed
 ;   /DLite=1     framework-dependent: the payload leaves the .NET runtime out, so the
-;                setup is smaller but the machine must already have .NET 8
+;                setup is smaller but the machine must already have .NET 10
 ; Both keep the Windows App SDK and ghostty-vt.dll in the payload either way, because an
 ; unpackaged WinUI app cannot start without them. Both use the same AppId and the same
 ; install directory: they are one product with two download sizes, so installing one
@@ -31,7 +31,7 @@
 ; folder, unlike a plain "dotnet publish -p:Platform=x64"; override with /DPublishDir=... if
 ; you published elsewhere.
 #ifndef PublishDir
-  #define PublishDir "..\Gui\Gui\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish"
+  #define PublishDir "..\Gui\Gui\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish"
 #endif
 
 ; The Setup.exe's own resource version: digits and dots only, so a pre-release suffix such as
@@ -101,8 +101,8 @@ en.AddToPath=Add gui to the PATH
 zh.AddToPath=将 gui 添加到 PATH
 en.LaunchGui=Launch Gui
 zh.LaunchGui=启动 Gui
-en.NeedsDotNet8=Gui needs the .NET 8 runtime, which this package does not carry.
-zh.NeedsDotNet8=Gui 需要 .NET 8 运行时，而这个安装包不带它。
+en.NeedsDotNet8=Gui needs the .NET 10 runtime, which this package does not carry.
+zh.NeedsDotNet8=Gui 需要 .NET 10 运行时，而这个安装包不带它。
 en.OpenDotNetDownload=Open the download page now?
 zh.OpenDotNetDownload=现在打开下载页面吗？
 
