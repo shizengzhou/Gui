@@ -21,6 +21,9 @@
 
 #define AppName "Gui"
 #define AppExe "Gui.exe"
+; Must match Program.AppUserModelId: the notification identity and the shortcuts have to
+; agree, or Windows shows the app twice and the taskbar splits the pinned and running icons.
+#define AppUserModelId "shizengzhou.Gui"
 
 #ifdef Lite
   #define VariantSuffix "-lite"
@@ -130,8 +133,8 @@ Type: filesandordirs; Name: "{app}\*"
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Tasks: addpath; Check: NeedsAddPath(ExpandConstant('{app}\bin'))
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "{#AppUserModelId}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; AppUserModelID: "{#AppUserModelId}"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchGui}"; Flags: nowait postinstall skipifsilent
