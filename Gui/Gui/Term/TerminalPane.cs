@@ -129,6 +129,8 @@ public sealed class TerminalPane
     private bool _updatingScrollbar;
     private bool _mouseReportedPress;
     private bool _anyMouseButton;
+    /// <summary>The right press went to a mouse-aware program; its release follows it there.</summary>
+    private bool _mouseReportedRight;
     private bool _cursorHidden;
     private string? _hoverUrl;
     private bool _hoverOsc8;
@@ -3643,9 +3645,16 @@ public sealed class TerminalPane
 
         if (point.Properties.IsRightButtonPressed)
         {
-            // Acting on press would let the pending right-button release light-dismiss
-            // the menu we open (and the IME sink also sees the press). The action runs
+            // A program in a mouse-tracking mode gets the button. Otherwise acting on
+            // press would let the pending right-button release light-dismiss the menu we
+            // open (and the IME sink also sees the press), so the configured action runs
             // from RightTapped, which fires after the press/release pair.
+            if (TryReportMouse(GhosttyNative.MOUSE_ACTION_PRESS, GhosttyNative.MOUSE_BUTTON_RIGHT,
+                    mods, point))
+            {
+                _mouseReportedRight = true;
+                _anyMouseButton = true;
+            }
             args.Handled = true;
             return;
         }
@@ -3722,8 +3731,10 @@ public sealed class TerminalPane
 
         // Hover feedback for links (with Ctrl held) and motion for mouse-aware programs.
         UpdateLinkHover(point.Position, mods);
-        TryReportMouse(GhosttyNative.MOUSE_ACTION_MOTION,
-            _anyMouseButton ? GhosttyNative.MOUSE_BUTTON_LEFT : 0, mods, point);
+        int heldButton = _mouseReportedRight
+            ? GhosttyNative.MOUSE_BUTTON_RIGHT
+            : _anyMouseButton ? GhosttyNative.MOUSE_BUTTON_LEFT : 0;
+        TryReportMouse(GhosttyNative.MOUSE_ACTION_MOTION, heldButton, mods, point);
     }
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs args)
@@ -3735,6 +3746,14 @@ public sealed class TerminalPane
         if (point.Properties.PointerUpdateKind == PointerUpdateKind.RightButtonReleased)
         {
             args.Handled = true;
+            if (_mouseReportedRight)
+            {
+                _mouseReportedRight = false;
+                _anyMouseButton = false;
+                TryReportMouse(GhosttyNative.MOUSE_ACTION_RELEASE,
+                    GhosttyNative.MOUSE_BUTTON_RIGHT, PointerMods(), point);
+                return;
+            }
             ApplyRightClickAction(point.Position);
             return;
         }
