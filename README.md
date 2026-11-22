@@ -67,7 +67,7 @@ dotnet run --project tests/Gui.PerfTests -c Release # parse / per-frame / scroll
 
 ## Thanks
 
-**[Ghostty](https://github.com/ghostty-org/ghostty)**.
+**[Ghostty](https://github.com/ghostty-org/ghostty)**
 
 Gui is not affiliated with or endorsed by the Ghostty project.
 

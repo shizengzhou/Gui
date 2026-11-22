@@ -64,7 +64,7 @@ dotnet run --project tests/Gui.PerfTests -c Release # 解析 / 每帧读路径 /
 
 ## 致谢
 
-**[Ghostty](https://github.com/ghostty-org/ghostty)**。
+**[Ghostty](https://github.com/ghostty-org/ghostty)**
 
 Gui 与 Ghostty 项目没有隶属关系，也未获其背书。
 
