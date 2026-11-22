@@ -10,29 +10,6 @@ https://github.com/user-attachments/assets/b5013ff2-d1bd-45a0-a6ec-2fb226c59656
 
 The config is Ghostty's own format, at `%APPDATA%\gui\config`.
 
-### Quick terminal
-
-**Quick terminal** in the command palette (or a `global:` keybind, see below) drops a
-terminal out of a screen edge over whatever you are doing, even while another application has
-the focus, and takes it away again on the next press or as soon as it loses focus. It is one surface of its own: hiding it keeps its shell
-and scrollback, and it is never part of the saved window session.
-
-| Setting | Values | Default |
-| --- | --- | --- |
-| `quick-terminal-position` | `top`, `bottom`, `left`, `right`, `center` | `top` |
-| `quick-terminal-size` | `50%`, `300px`, `40%,500px` (primary,secondary) | 400px on the primary axis, full on the other |
-| `quick-terminal-screen` | `mouse` (monitor under the pointer), `main` | `mouse` |
-| `quick-terminal-autohide` | `true`, `false` | `true` |
-| `quick-terminal-animation-duration` | seconds; `0` shows and hides it instantly | `0.2` |
-
-There is no default chord, so the palette row is the only way in until one is bound. A
-`global:` binding is registered with Windows, so it also works while another application has
-the focus:
-
-```
-keybind = global:ctrl+grave_accent=toggle_quick_terminal
-```
-
 ## Requirements
 
 - Windows 10 1809 (build 17763) or later, x64
