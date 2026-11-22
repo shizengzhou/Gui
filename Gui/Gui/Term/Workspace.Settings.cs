@@ -422,15 +422,18 @@ public sealed partial class Workspace
         AddAutoColumn(headGrid);
         headGrid.Children.Add(_settingsTitle);
 
+        // Same width and height as the caption buttons in the window header, and flush with
+        // the card's top edge like them.
+        double captionHeight = CaptionButtonHeight;
         var captions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Top,
         };
 
-        ChromeButton minimize = CaptionButton('\uE921', CaptionButtonWidth, 44, Theme.ChromeIconBody);
-        ChromeButton maximize = CaptionButton('\uE922', CaptionButtonWidth, 44, Theme.ChromeIconBody);
-        ChromeButton close = CaptionButton('\uE8BB', CaptionButtonWidth, 44, Theme.ChromeIconBody);
+        ChromeButton minimize = CaptionButton('\uE921', CaptionButtonWidth, captionHeight, Theme.ChromeIconBody);
+        ChromeButton maximize = CaptionButton('\uE922', CaptionButtonWidth, captionHeight, Theme.ChromeIconBody);
+        ChromeButton close = CaptionButton('\uE8BB', CaptionButtonWidth, captionHeight, Theme.ChromeIconBody);
         close.SetColors(Theme.ChromeIconBody, () => Colors.White, hoverFill: Theme.CloseHover);
         // Follow the card's rounded top-right corner, like the header's close button does.
         close.CornerRadius = new CornerRadius(0, CompactDensity ? 0 : Theme.RadiusSurface, 0, 0);

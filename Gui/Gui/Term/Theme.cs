@@ -274,6 +274,14 @@ public static class Theme
     /// </summary>
     public static Color CloseHover() => Rgba(255, 0xE8, 0x11, 0x23);
 
+    /// <summary>
+    /// Minimize/maximize hover: the native title bar's roughly 10% black (light) and 9%
+    /// white (dark), kept as a tint so a custom theme still colours the chrome.
+    /// </summary>
+    public static Color CaptionHover() =>
+        CustomTheme ? Tint(WindowLight ? (byte)0x1A : (byte)0x17, Terminal.Foreground)
+                    : WindowLight ? Rgba(0x1A, 0, 0, 0) : Rgba(0x17, 255, 255, 255);
+
     // --- command palette --------------------------------------------------------
     public static Color PaletteBg() =>
         CustomTheme ? Tint(Light ? (byte)247 : (byte)245, Tone(Light ? 0.02 : 0.11))
