@@ -625,4 +625,51 @@ public class KeybindTests : IDisposable
         Assert.Equal("close_window", action);
         Assert.Equal("Ctrl+Shift+Z", binds.Label("new_tab", string.Empty));
     }
+
+    [Fact]
+    public void FormatSpellsAPressedChordTheConfigWay()
+    {
+        Assert.Equal("ctrl+shift+t", Keybinds.Format(CtrlShift, VirtualKey.T));
+        Assert.Equal("ctrl+alt+left", Keybinds.Format(
+            GhosttyNative.MODS_CTRL | GhosttyNative.MODS_ALT, VirtualKey.Left));
+    }
+
+    [Fact]
+    public void CanonicalChordsListDefaultsAndUserLines()
+    {
+        Keybinds binds = Load("keybind = ctrl+shift+y=new_tab");
+
+        var chords = binds.CanonicalChords("new_tab");
+
+        Assert.Contains("ctrl+shift+t", chords);
+        Assert.Contains("ctrl+shift+y", chords);
+    }
+
+    [Fact]
+    public void CanonicalChordsSkipWhatTheConfigUnbound()
+    {
+        Keybinds binds = Load("keybind = ctrl+shift+t=");
+
+        Assert.Empty(binds.CanonicalChords("new_tab"));
+    }
+
+    [Fact]
+    public void RewrittenLinesResolveToTheNewChordAfterAReload()
+    {
+        string path = Path.Combine(_dir, "config");
+        File.WriteAllText(path, "keybind = ctrl+shift+y=new_tab\r\n");
+        Config config = Config.LoadRaw(path);
+
+        var edited = KeybindEdit.SetBinding(config.Values["keybind"], "new_tab",
+            "ctrl+shift+t", "ctrl+alt+n");
+        Config.SaveList(path, "keybind", edited);
+        Keybinds after = new Keybinds(Config.LoadRaw(path));
+
+        Assert.Equal(KeybindMatch.Action, after.Resolve(
+            GhosttyNative.MODS_CTRL | GhosttyNative.MODS_ALT, VirtualKey.N, out string? action));
+        Assert.Equal("new_tab", action);
+        Assert.Equal(KeybindMatch.Unbound, after.Resolve(CtrlShift, VirtualKey.T, out _));
+        // The user's other chord for the same action is still there.
+        Assert.Equal(KeybindMatch.Action, after.Resolve(CtrlShift, VirtualKey.Y, out _));
+    }
 }

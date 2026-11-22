@@ -231,6 +231,11 @@ public sealed partial class Workspace
     private TextBlock? _minimizeTip;
     private TextBlock? _maximizeTip;
     private TextBlock? _closeTip;
+
+    // The settings page carries its own copy of the three window buttons.
+    private FontIcon? _settingsMaximizeIcon;
+    private ChromeButton? _settingsMaximizeCaption;
+    private TextBlock? _settingsMaximizeTip;
     private Grid _surfaceHost = null!;
     private StackPanel? _topTabHost;
     private StackPanel? _tabColumn;
@@ -1091,13 +1096,16 @@ public sealed partial class Workspace
     {
         if (_minimizeTip is not null) _minimizeTip.Text = Strings.Minimize;
         if (_closeTip is not null) _closeTip.Text = Strings.CloseWindow;
-        if (_maximizeTip is null) return;
+        if (_maximizeTip is null && _settingsMaximizeTip is null) return;
 
         bool maximized = _window is not null &&
                          _window.AppWindow.Presenter is OverlappedPresenter presenter &&
                          presenter.State == OverlappedPresenterState.Maximized;
-        _maximizeTip.Text = maximized ? Strings.Restore : Strings.Maximize;
-        _maximizeCaption?.SetAccessibleName(_maximizeTip.Text);
+        string title = maximized ? Strings.Restore : Strings.Maximize;
+        if (_maximizeTip is not null) _maximizeTip.Text = title;
+        _maximizeCaption?.SetAccessibleName(title);
+        if (_settingsMaximizeTip is not null) _settingsMaximizeTip.Text = title;
+        _settingsMaximizeCaption?.SetAccessibleName(title);
     }
 
     private void UpdateCloseCorner()

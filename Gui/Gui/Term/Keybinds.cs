@@ -160,8 +160,8 @@ internal sealed class Keybinds
     {
         ["new_tab"] = new[] { "ctrl+shift+t" },
         ["new_window"] = new[] { "ctrl+shift+n" },
-        ["next_tab"] = new[] { "ctrl+tab", "ctrl+page_down", "ctrl+shift+right" },
-        ["previous_tab"] = new[] { "ctrl+shift+tab", "ctrl+page_up", "ctrl+shift+left" },
+        ["next_tab"] = new[] { "ctrl+tab" },
+        ["previous_tab"] = new[] { "ctrl+shift+tab" },
         ["move_tab:-1"] = new[] { "ctrl+shift+page_up" },
         ["move_tab:1"] = new[] { "ctrl+shift+page_down" },
         ["last_tab"] = new[] { "alt+9" },
@@ -640,14 +640,36 @@ internal sealed class Keybinds
     }
 
     /// <summary>
+    /// Every chord the config currently leaves bound to one action, in config spelling.
+    /// Unlike <see cref="Chords"/> these are not prettied: each one is the trigger a
+    /// shortcut cap edits when the user clicks it.
+    /// </summary>
+    public List<string> CanonicalChords(string actionId)
+    {
+        var chords = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach ((string chord, string action) in RootEffective())
+        {
+            if (action != actionId) continue;
+            // RootEffective spells user lines with their prefixes; an unbind line names the
+            // plain chord the parser normalises it to.
+            string canonical = StripPrefixes(chord, out _, out _, out _, out _, out _);
+            if (seen.Add(canonical)) chords.Add(canonical);
+        }
+        return chords;
+    }
+
+    /// <summary>The display spelling of a canonical chord, as the settings page shows it.</summary>
+    public static string Display(string chord) => Pretty(chord);
+
+    /// <summary>
     /// Every chord the config currently leaves active for one action, in display spelling.
     /// Empty when the action was never bound or the config unbound all of it.
     /// </summary>
     public List<string> Chords(string actionId)
     {
         var chords = new List<string>();
-        foreach ((string chord, string action) in RootEffective())
-            if (action == actionId) chords.Add(Pretty(chord));
+        foreach (string chord in CanonicalChords(actionId)) chords.Add(Pretty(chord));
         return chords;
     }
 
@@ -659,6 +681,24 @@ internal sealed class Keybinds
         if (_root.IsPrefix(chord)) return false;
         if (_root.Bindings.TryGetValue(chord, out string? bound)) return bound == actionId;
         return true;
+    }
+
+    /// <summary>
+    /// The config spelling of a key press, or null when this build cannot name the key. The
+    /// settings page uses it to turn a captured press into a "keybind" trigger.
+    /// </summary>
+    public static string? Format(int mods, VirtualKey key, uint codepoint = 0)
+    {
+        string? name = KeyName(key);
+        if (name is null)
+        {
+            if (codepoint == 0) return null;
+            int folded = FoldCodepoint(codepoint);
+            if (folded == 0) return null;
+            name = CodepointName(folded);
+        }
+
+        return ChordName(mods, name);
     }
 
     // ---------------- chord normalisation ----------------

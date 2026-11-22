@@ -147,11 +147,10 @@ public class CliListKeybindsTests : IDisposable
     [Fact]
     public void UnbindDropsTheDefaultButKeepsTheSiblings()
     {
-        IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = ctrl+tab=");
+        IReadOnlyList<ListKeybinds.Entry> entries = Snapshot("keybind = ctrl+insert=");
 
-        Assert.False(Has(entries, "ctrl+tab", "next_tab"));
-        Assert.True(Has(entries, "ctrl+page_down", "next_tab"));
-        Assert.True(Has(entries, "ctrl+shift+right", "next_tab"));
+        Assert.False(Has(entries, "ctrl+insert", "copy_to_clipboard"));
+        Assert.True(Has(entries, "ctrl+shift+c", "copy_to_clipboard"));
     }
 
     [Fact]

@@ -287,6 +287,42 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void SaveListReplacesEveryLineOfTheKey()
+    {
+        string path = Write(
+            "# keys\nkeybind = ctrl+shift+t=\nfont-size = 13\nkeybind = ctrl+shift+y=new_tab\n");
+
+        Config.SaveList(path, "keybind",
+            new[] { "ctrl+shift+t=", "ctrl+shift+y=", "ctrl+alt+n=new_tab" });
+
+        // The block keeps the position of the first line; the second one is folded into it
+        // instead of being left behind with an old binding.
+        Assert.Equal(
+            "# keys\nkeybind = ctrl+shift+t=\nkeybind = ctrl+shift+y=\nkeybind = ctrl+alt+n=new_tab\nfont-size = 13\n",
+            File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void SaveListAppendsWhenTheKeyIsMissing()
+    {
+        string path = Write("theme = light\n\n");
+
+        Config.SaveList(path, "keybind", new[] { "ctrl+shift+t=" });
+
+        Assert.Equal("theme = light\nkeybind = ctrl+shift+t=\n\n", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void SaveListRemovesTheKeyWhenTheListIsEmpty()
+    {
+        string path = Write("theme = light\nkeybind = clear\n");
+
+        Config.SaveList(path, "keybind", Array.Empty<string>());
+
+        Assert.Equal("theme = light\n", File.ReadAllText(path));
+    }
+
+    [Fact]
     public void EnsureDefaultWritesAnEmptyFile()
     {
         string path = Path.Combine(_dir, "fresh", "config");
