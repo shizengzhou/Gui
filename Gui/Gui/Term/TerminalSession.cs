@@ -38,7 +38,7 @@ public sealed unsafe class TerminalSession : IDisposable
     /// another window builds a new pane around this same session: the shell, its scrollback
     /// and this id all survive the handover. Version 7, so ids sort by creation time too.
     /// </summary>
-    public Guid Id { get; } = Uuid7.New();
+    public Guid Id { get; } = Guid.CreateVersion7();
 
     private readonly object _gate = new();
     private readonly object _pendingLock = new();
