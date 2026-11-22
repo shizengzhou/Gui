@@ -385,8 +385,8 @@ public sealed partial class Workspace
         if (label == Strings.ToggleQuickTerminal) return "toggle_quick_terminal";
         if (label == Strings.NewTab) return "new_tab";
         if (label == Strings.Settings) return "open_config";
-        if (label == Strings.MoveTabLeft) return "move_tab:-1";
-        if (label == Strings.MoveTabRight) return "move_tab:1";
+        if (label == Strings.MoveTabLeft || label == Strings.MoveTabUp) return "move_tab:-1";
+        if (label == Strings.MoveTabRight || label == Strings.MoveTabDown) return "move_tab:1";
         if (label == Strings.MoveTabToNewWindow) return "move_tab_to_new_window";
         if (label == Strings.NextTab) return "next_tab";
         if (label == Strings.PreviousTab) return "previous_tab";

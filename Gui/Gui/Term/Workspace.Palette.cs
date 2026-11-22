@@ -474,6 +474,7 @@ public sealed partial class Workspace
         _paletteThemeSelected = -1;
         _paletteThemeHovered = -1;
         _paletteWindowThemeChecks.Clear();
+        _paletteTabPlacementChecks.Clear();
 
         _paletteSubmenu = false;
         _paletteActiveSub = null;
@@ -723,8 +724,11 @@ public sealed partial class Workspace
         MakeRow(Strings.HelpCheckForUpdates, string.Empty, _paletteItems,
             () => _ = RunUpdateCheckAsync(userInitiated: true));
         MakeRow(Strings.Settings, "Ctrl+,", _paletteItems, ShowSettings);
-        MakeRow(Strings.MoveTabLeft, "Ctrl+Shift+PageUp", _paletteItems, () => MoveTab(_active, _active - 1));
-        MakeRow(Strings.MoveTabRight, "Ctrl+Shift+PageDown", _paletteItems, () => MoveTab(_active, _active + 1));
+        bool verticalTabs = _placement != TabPlacement.Top;
+        MakeRow(verticalTabs ? Strings.MoveTabUp : Strings.MoveTabLeft, "Ctrl+Shift+PageUp", _paletteItems,
+            () => MoveTab(_active, _active - 1));
+        MakeRow(verticalTabs ? Strings.MoveTabDown : Strings.MoveTabRight, "Ctrl+Shift+PageDown", _paletteItems,
+            () => MoveTab(_active, _active + 1));
         MakeRow(Strings.MoveTabToNewWindow, string.Empty, _paletteItems, () =>
         {
             // Moving the only tab would just recreate the window; the tab menu disables it.
@@ -845,10 +849,26 @@ public sealed partial class Workspace
             () => EnterPaletteSubmenu(Strings.Theme, Strings.ChooseTheme, _paletteThemeItems), out TextBlock themeValue);
         _paletteThemeValue = themeValue;
 
-        // Three flat commands for the tab rail.
-        MakeRow(Strings.TabBarTop, string.Empty, _paletteItems, () => SetTabPlacement("top"));
-        MakeRow(Strings.TabBarLeft, string.Empty, _paletteItems, () => SetTabPlacement("left"));
-        MakeRow(Strings.TabBarRight, string.Empty, _paletteItems, () => SetTabPlacement("right"));
+        // Three flat commands for the tab rail; the one in use carries a check at its end.
+        (string Label, string Value)[] tabPlacements =
+        {
+            (Strings.TabBarTop, "top"), (Strings.TabBarLeft, "left"), (Strings.TabBarRight, "right"),
+        };
+        foreach ((string label, string value) in tabPlacements)
+        {
+            string placementValue = value;
+            PaletteItem item = MakeRow(label, string.Empty, _paletteItems,
+                () => SetTabPlacement(placementValue));
+
+            FontIcon check = Glyph('\uE73E', 12, AccentBrush());
+            check.Visibility = Visibility.Collapsed;
+            check.HorizontalAlignment = HorizontalAlignment.Right;
+            check.VerticalAlignment = VerticalAlignment.Center;
+            check.Margin = new Thickness(6, 0, 0, 0);
+            Grid.SetColumn(check, 1);
+            if (item.Row.Child is Grid grid) grid.Children.Add(check);
+            _paletteTabPlacementChecks.Add((placementValue, check));
+        }
 
         // The design's compact mode: panes stop being islands and fill the content area.
         _densityRow = MakeRow(DensityLabel(), string.Empty, _paletteItems,
@@ -1238,6 +1258,16 @@ public sealed partial class Workspace
         string windowMode = _config.WindowThemeMode is "light" or "dark" ? _config.WindowThemeMode : "system";
         foreach ((string value, FontIcon check) in _paletteWindowThemeChecks)
             check.Visibility = value == windowMode ? Visibility.Visible : Visibility.Collapsed;
+
+        // Mark the tab rail placement in use.
+        string placement = _placement switch
+        {
+            TabPlacement.Left => "left",
+            TabPlacement.Right => "right",
+            _ => "top",
+        };
+        foreach ((string value, FontIcon check) in _paletteTabPlacementChecks)
+            check.Visibility = value == placement ? Visibility.Visible : Visibility.Collapsed;
 
         // Only the theme used by the current appearance is marked; the other half stays in
         // the config but is not offered by the list.

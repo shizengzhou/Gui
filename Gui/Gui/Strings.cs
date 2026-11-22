@@ -319,8 +319,11 @@ public static class Strings
     }
 
     // ---- window & tabs ----
+    // A top rail moves tabs sideways; a left/right rail moves them vertically.
     public static string MoveTabLeft => Pick("Move Tab Left", "标签页左移");
     public static string MoveTabRight => Pick("Move Tab Right", "标签页右移");
+    public static string MoveTabUp => Pick("Move Tab Up", "标签页上移");
+    public static string MoveTabDown => Pick("Move Tab Down", "标签页下移");
     public static string ChangeTerminalTitle => Pick("Change Terminal Title\u2026", "修改终端标题\u2026");
     public static string ChangeTabTitle => Pick("Change Tab Title\u2026", "修改标签页标题\u2026");
     public static string ChangeWindowTitle => Pick("Change Window Title\u2026", "修改窗口标题\u2026");
