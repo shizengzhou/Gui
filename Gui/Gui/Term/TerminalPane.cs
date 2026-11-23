@@ -934,9 +934,10 @@ public sealed class TerminalPane
             Content = _frame,
         };
 
-        _renderer.ApplyConfig(config);
-        // A background image decodes asynchronously; repaint once it is ready.
+        // Subscribe before the config lands: a cached background image is handed over
+        // synchronously, and the pane still has to repaint once it is ready.
         _renderer.NeedsRedraw += Redraw;
+        _renderer.ApplyConfig(config);
         // Shaders compile in the background, so the chain may arrive after ApplyConfig.
         _renderer.ShadersChanged += OnShadersChanged;
 

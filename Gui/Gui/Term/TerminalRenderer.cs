@@ -108,9 +108,11 @@ public sealed unsafe class TerminalRenderer
     /// </summary>
     private readonly Dictionary<(string Text, int Face), RunSegment[]?> _segments = new();
 
-    /// <summary>"background-image": decoded once and redrawn every frame.</summary>
+    /// <summary>"background-image": decoded once and shared by every pane that uses it.</summary>
     private CanvasBitmap? _backgroundImage;
+    private BackgroundImageLease? _backgroundImageLease;
     private string _backgroundImagePath = string.Empty;
+    private string _backgroundImageStamp = string.Empty;
 
     /// <summary>Kitty graphics placements read from the current render state.</summary>
     private readonly List<ImagePlacement> _imagePlacements = new();
@@ -3244,41 +3246,46 @@ public sealed unsafe class TerminalRenderer
         _typography?.Dispose();
         _typography = null;
         // The system font set is process-wide (FontCache); a pane dying must not release it.
-        _backgroundImage?.Dispose();
-        _backgroundImage = null;
-        _backgroundImagePath = string.Empty;
+        ReleaseBackgroundImage();
     }
 
     // ---------------- background image ----------------
 
     private void SetBackgroundImage(string path)
     {
-        if (string.Equals(path, _backgroundImagePath, StringComparison.Ordinal)) return;
+        string stamp = BackgroundImageCache.Stamp(path);
+        if (string.Equals(path, _backgroundImagePath, StringComparison.Ordinal) &&
+            string.Equals(stamp, _backgroundImageStamp, StringComparison.Ordinal))
+            return;
 
+        ReleaseBackgroundImage();
         _backgroundImagePath = path;
-        _backgroundImage?.Dispose();
-        _backgroundImage = null;
+        _backgroundImageStamp = stamp;
         if (path.Length == 0) return;
 
-        BackgroundImageLoader.Load(path, ApplyBackgroundImage);
+        BackgroundImageLease lease = BackgroundImageCache.Acquire(path);
+        _backgroundImageLease = lease;
+        lease.OnReady(bitmap =>
+        {
+            // The pane may have changed image or closed while the decode was in flight.
+            if (_disposed || !ReferenceEquals(_backgroundImageLease, lease))
+            {
+                lease.Dispose();
+                return;
+            }
+            _backgroundImage = bitmap;
+            if (bitmap is not null) NeedsRedraw?.Invoke();
+        });
     }
 
-    /// <summary>
-    /// Accepts the decoded bitmap, dropping it when the configured path changed while the
-    /// load was in flight.
-    /// </summary>
-    private void ApplyBackgroundImage(string path, CanvasBitmap? bitmap)
+    /// <summary>Drops this pane's reference to the shared background bitmap.</summary>
+    private void ReleaseBackgroundImage()
     {
-        // A load started before the pane closed can finish afterwards.
-        if (_disposed || !string.Equals(path, _backgroundImagePath, StringComparison.Ordinal))
-        {
-            bitmap?.Dispose();
-            return;
-        }
-
-        _backgroundImage?.Dispose();
-        _backgroundImage = bitmap;
-        if (bitmap is not null) NeedsRedraw?.Invoke();
+        _backgroundImageLease?.Dispose();
+        _backgroundImageLease = null;
+        _backgroundImage = null;
+        _backgroundImagePath = string.Empty;
+        _backgroundImageStamp = string.Empty;
     }
 
     /// <summary>
@@ -3594,35 +3601,5 @@ public sealed unsafe class TerminalRenderer
     {
         static byte Mix(byte a, byte b, float t) => (byte)(a + (b - a) * t);
         return Color.FromArgb(255, Mix(fg.R, bg.R, amount), Mix(fg.G, bg.G, amount), Mix(fg.B, bg.B, amount));
-    }
-}
-
-/// <summary>
-/// Decodes "background-image" without blocking the draw callback. It lives outside the
-/// renderer because Win2D loads images asynchronously and an await is not allowed inside
-/// the renderer's unsafe context.
-/// </summary>
-internal static class BackgroundImageLoader
-{
-    public static async void Load(string path, Action<string, CanvasBitmap?> completed)
-    {
-        CanvasBitmap? bitmap = null;
-        try
-        {
-            bitmap = await CanvasBitmap.LoadAsync(CanvasDevice.GetSharedDevice(), path);
-        }
-        catch
-        {
-            // A missing or undecodable file leaves the plain background color in place.
-        }
-
-        try
-        {
-            completed(path, bitmap);
-        }
-        catch
-        {
-            bitmap?.Dispose();
-        }
     }
 }

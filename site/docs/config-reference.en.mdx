@@ -467,12 +467,8 @@ The background image is currently per-terminal, not per-window. If
 you are a heavy split user, the background image will be repeated across
 splits. A future improvement to Gui will address this.
 
-<Warning>
- Background images are currently duplicated in VRAM per-terminal.
-For sufficiently large images, this could lead to a large increase in
-memory usage (specifically VRAM usage). A future Gui improvement
-will resolve this by sharing image textures across terminals.
-</Warning>
+The decoded image is shared by every pane in the process, so splits draw
+the same bitmap instead of duplicating it in VRAM.
 
 ## `background-image-opacity`
 
