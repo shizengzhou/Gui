@@ -640,6 +640,24 @@ internal sealed class Keybinds
     }
 
     /// <summary>
+    /// True when a built-in binding uses this canonical chord. Removing a user's line for
+    /// such a chord would let the default fire again, so the settings page has to write an
+    /// explicit "trigger=" unbind instead.
+    /// </summary>
+    public static bool IsDefaultChord(string chord)
+    {
+        foreach (string[] triggers in Defaults.Values)
+        {
+            foreach (string trigger in triggers)
+            {
+                if (string.Equals(NormalizeTrigger(trigger), chord, StringComparison.Ordinal))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Every chord the config currently leaves bound to one action, in config spelling.
     /// Unlike <see cref="Chords"/> these are not prettied: each one is the trigger a
     /// shortcut cap edits when the user clicks it.

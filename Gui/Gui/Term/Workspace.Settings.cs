@@ -9,6 +9,7 @@ using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -774,14 +775,17 @@ public sealed partial class Workspace
         imagePath.MaxWidth = 130;
         imagePath.TextTrimming = TextTrimming.CharacterEllipsis;
 
-        Border remove = SettingsTextButton(Strings.SettingsRemove, () =>
+        Button remove = null!;
+        remove = SettingsTextButton(Strings.SettingsRemove, () =>
         {
             imagePath.Text = "—";
             ApplyBackgroundImageChoice(string.Empty);
+            // The path is gone, so this action has nothing left to remove.
+            remove.Visibility = Visibility.Collapsed;
         });
         remove.Visibility = _config.BackgroundImage.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        Border browse = SettingsTextButton(Strings.SettingsBrowse, async () =>
+        Button browse = SettingsTextButton(Strings.SettingsBrowse, async () =>
         {
             string? path = await PickBackgroundImageAsync();
             if (path is null) return;
@@ -1147,14 +1151,17 @@ public sealed partial class Workspace
         path.MaxWidth = 150;
         path.TextTrimming = TextTrimming.CharacterEllipsis;
 
-        Border remove = SettingsTextButton(Strings.SettingsRemove, () =>
+        Button remove = null!;
+        remove = SettingsTextButton(Strings.SettingsRemove, () =>
         {
             path.Text = "—";
             ApplyBellAudioPathChoice(string.Empty);
+            // The path is gone, so this action has nothing left to remove.
+            remove.Visibility = Visibility.Collapsed;
         });
         remove.Visibility = _config.BellAudioPath.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        Border browse = SettingsTextButton(Strings.SettingsBrowse, async () =>
+        Button browse = SettingsTextButton(Strings.SettingsBrowse, async () =>
         {
             string? picked = await PickBellAudioAsync();
             if (picked is null) return;
@@ -1283,11 +1290,17 @@ public sealed partial class Workspace
     /// <summary>The clicked chord, or null when the press adds one to an empty action.</summary>
     private string? _keybindCaptureChord;
 
-    /// <summary>The cap panel of the row that started the capture.</summary>
+    /// <summary>The row that owns the field being edited, so a cancel can repaint it.</summary>
     private StackPanel? _keybindCaptureKeys;
 
-    /// <summary>The leading "+" that turned into the prompt, when it started the capture.</summary>
-    private Border? _keybindCaptureAdd;
+    /// <summary>The read-only field swapped in for the clicked shortcut while editing.</summary>
+    private TextBox? _keybindCaptureBox;
+
+    /// <summary>The "+" cap swapped out of its slot while a chord is being added.</summary>
+    private Button? _keybindCaptureAdd;
+
+    /// <summary>The slot that holds the "+" cap and the field replacing it.</summary>
+    private Border? _keybindCaptureAddArea;
 
     /// <summary>Re-runs the keys page search, because an edit can change which rows match.</summary>
     private Action? _keybindFilter;
@@ -1506,8 +1519,9 @@ public sealed partial class Workspace
 
     /// <summary>
     /// One shortcut row: the action's label, a leading "+" and every chord the config
-    /// leaves bound. Each cap is its own target, so a press replaces or clears only that
-    /// chord; the "+" only appears while the pointer is over the row.
+    /// leaves bound, each drawn as the usual key cap. Clicking a cap swaps it for a
+    /// read-only field; only that focused field records the next press. The "+" only
+    /// appears while the pointer is over the row.
     /// </summary>
     private FrameworkElement KeybindRow(string label, string action)
     {
@@ -1520,15 +1534,9 @@ public sealed partial class Workspace
         FillKeybindChips(keys, action);
 
         // Kept in the layout at zero opacity, so revealing it does not shift the caps. The
-        // transparent wrapper keeps its slot hoverable while the cap itself is invisible.
-        Border add = SettingsKbd("+", KeybindAddWidth);
+        // transparent wrapper keeps its slot hoverable while the button itself is invisible.
+        Button add = SettingsKbd("+", KeybindAddWidth);
         ShowAddChip(add, false);
-        add.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, add)) return;
-            BeginAddKeybindCapture(action, keys, add);
-        };
 
         var addArea = new Border
         {
@@ -1536,11 +1544,17 @@ public sealed partial class Workspace
             VerticalAlignment = VerticalAlignment.Center,
             Child = add,
         };
+        add.Click += (_, _) => BeginAddKeybindCapture(action, keys, add, addArea);
+        // Keep the page's inert-press handler from cancelling a capture the click started.
+        add.PointerPressed += (_, args) => args.Handled = true;
 
+        // The add slot, the gap after it and the caps are one hover surface: moving from
+        // "+" to a cap must not cross dead space where the button would disappear.
         var host = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
+            Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
         };
         host.Children.Add(addArea);
@@ -1548,142 +1562,192 @@ public sealed partial class Workspace
 
         // The "+" belongs to its own slot and to the caps, not to the whole row: hovering
         // the label leaves it hidden. Tag remembers the state for the post-capture restore.
-        bool overAdd = false, overCaps = false;
+        bool overRow = false, addFocused = false;
         void RefreshAdd()
         {
-            bool hovered = overAdd || overCaps;
-            // The tag keeps the plain hover state; the cap also stays visible while it is
-            // the capture target, but that must not survive into the post-capture restore.
-            add.Tag = hovered;
-            ShowAddChip(add, hovered || ReferenceEquals(_keybindCaptureAdd, add));
+            bool shown = overRow || addFocused;
+            // The tag keeps the plain pointer state; the button also stays visible while it
+            // is the capture target, but that must not survive into the restore.
+            add.Tag = shown;
+            ShowAddChip(add, shown || ReferenceEquals(_keybindCaptureAdd, add));
         }
 
-        addArea.PointerEntered += (_, _) =>
+        add.GotFocus += (_, _) =>
         {
-            overAdd = true;
+            addFocused = true;
             RefreshAdd();
         };
-        addArea.PointerExited += (_, _) =>
+        add.LostFocus += (_, _) =>
         {
-            overAdd = false;
+            addFocused = false;
             RefreshAdd();
         };
-        keys.PointerEntered += (_, _) =>
+
+        // A Button marks its pointer events handled, so the panel's ordinary "+=" handler
+        // never sees them; listen with handledEventsToo so the caps keep "+" visible too.
+        host.AddHandler(UIElement.PointerEnteredEvent, new PointerEventHandler((_, _) =>
         {
-            overCaps = true;
+            overRow = true;
             RefreshAdd();
-        };
-        keys.PointerExited += (_, _) =>
+        }), true);
+        host.AddHandler(UIElement.PointerExitedEvent, new PointerEventHandler((_, _) =>
         {
-            overCaps = false;
+            overRow = false;
             RefreshAdd();
-        };
+        }), true);
 
         return SettingsRow(label, null, host);
     }
 
-    /// <summary>
-    /// Paints one row's chords. <paramref name="pendingChord"/> is the clicked cap, which
-    /// turns into the prompt while its siblings stay exactly as they were.
-    /// </summary>
-    private void FillKeybindChips(StackPanel keys, string action, string? pendingChord = null,
-        bool capturing = false)
+    /// <summary>Paints one row's chords as key caps; a click swaps one for the editor.</summary>
+    private void FillKeybindChips(StackPanel keys, string action)
     {
         keys.Children.Clear();
         List<string> chords = _keybinds.CanonicalChords(action);
         if (chords.Count == 0)
         {
-            // The cap keeps the column aligned and is a target that adds a shortcut. The
-            // leading "+" is the other one, and shows the prompt when it was clicked.
-            bool waiting = capturing && pendingChord is null && _keybindCaptureAdd is null;
-            keys.Children.Add(KeybindChip(
-                waiting ? Strings.SettingsKeysPress : Strings.SettingsKeysUnbound,
-                action, null, keys));
+            // The cap keeps the column aligned and is the target that adds a shortcut.
+            keys.Children.Add(KeybindChip(Strings.SettingsKeysUnbound, action, null, keys));
             return;
         }
 
         foreach (string chord in chords)
         {
-            bool waiting = capturing && string.Equals(chord, pendingChord, StringComparison.Ordinal);
-            string text = waiting ? Strings.SettingsKeysPress : Keybinds.Display(chord);
-            keys.Children.Add(KeybindChip(text, action, chord, keys));
+            keys.Children.Add(KeybindChip(Keybinds.Display(chord), action, chord, keys));
         }
     }
 
-    /// <summary>One clickable cap; its chord is what the next key press replaces.</summary>
-    private Border KeybindChip(string text, string action, string? chord, StackPanel keys)
+    /// <summary>One clickable cap; its chord is what the editor replaces.</summary>
+    private Button KeybindChip(string text, string action, string? chord, StackPanel keys)
     {
-        Border cap = SettingsKbd(text);
-        cap.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, cap)) return;
-            BeginKeybindCapture(action, chord, keys);
-        };
+        Button cap = SettingsKbd(text);
+        cap.Click += (_, _) => BeginKeybindCapture(action, chord, text, keys, cap);
+        // Keep the page's inert-press handler from cancelling a capture the click started.
+        cap.PointerPressed += (_, args) => args.Handled = true;
         return cap;
     }
 
-    private void BeginKeybindCapture(string action, string? chord, StackPanel keys)
+    /// <summary>
+    /// Swaps the clicked cap for a focused read-only field. The field owns the capture:
+    /// keys only count while it has focus, and its LostFocus puts the cap back.
+    /// </summary>
+    private void BeginKeybindCapture(string action, string? chord, string text, StackPanel keys, Button cap)
     {
-        // Repainting the row inside its own pointer handler can fail-fast WinUI, so the
-        // capture starts on the next dispatcher turn like every other chrome rebuild here.
+        int index = keys.Children.IndexOf(cap);
+        if (index < 0) return;
+
+        // Swapping inside the cap's own click can fail-fast WinUI, so it lands on the next
+        // dispatcher turn like every other chrome rebuild here.
         DeferSettingsChange(() =>
         {
-            CancelKeybindCapture();
+            if (keys.Children.IndexOf(cap) != index) return;
+            TextBox field = KeybindEditor(cap.ActualWidth, cap.ActualHeight);
+            field.LostFocus += (_, _) => DeferSettingsChange(() =>
+            {
+                // Restore only this slot: another cap in the same row may already be under
+                // the pointer, and repainting the row would destroy it before its Click.
+                if (ReferenceEquals(_keybindCaptureBox, field)) CancelKeybindCapture(restore: false);
+                RestoreKeybindChip(field, text, action, chord, keys);
+            });
+            keys.Children.RemoveAt(index);
+            keys.Children.Insert(index, field);
             _keybindCaptureAction = action;
             _keybindCaptureChord = chord;
             _keybindCaptureKeys = keys;
+            _keybindCaptureBox = field;
             _keybindCaptureAdd = null;
-            FillKeybindChips(keys, action, chord, capturing: true);
-            FocusSettingsOwner();
+            _keybindCaptureAddArea = null;
+            field.Focus(FocusState.Programmatic);
         });
     }
 
     /// <summary>Starts the capture from the leading "+", which becomes the prompt itself.</summary>
-    private void BeginAddKeybindCapture(string action, StackPanel keys, Border add)
+    private void BeginAddKeybindCapture(string action, StackPanel keys, Button add, Border addArea)
     {
         DeferSettingsChange(() =>
         {
-            CancelKeybindCapture();
+            TextBox field = KeybindEditor(KeybindCapWidth, add.ActualHeight);
+            field.LostFocus += (_, _) => DeferSettingsChange(() =>
+            {
+                if (ReferenceEquals(_keybindCaptureBox, field)) CancelKeybindCapture(restore: false);
+                else if (ReferenceEquals(addArea.Child, field))
+                {
+                    addArea.Child = add;
+                    RestoreAddChip(add);
+                }
+            });
+            addArea.Child = field;
             _keybindCaptureAction = action;
             _keybindCaptureChord = null;
             _keybindCaptureKeys = keys;
+            _keybindCaptureBox = field;
             _keybindCaptureAdd = add;
-            ShowAddChip(add, true);
-            SetAddChip(add, Strings.SettingsKeysPress, KeybindCapWidth);
-            FillKeybindChips(keys, action, null, capturing: true);
-            FocusSettingsOwner();
+            _keybindCaptureAddArea = addArea;
+            field.Focus(FocusState.Programmatic);
         });
+    }
+
+    /// <summary>
+    /// The read-only prompt shown only while a shortcut is being recorded. It takes the
+    /// clicked cap's width and height so the row does not move when the field appears, and
+    /// the text sits in the same centre the cap uses.
+    /// </summary>
+    private TextBox KeybindEditor(double width, double height)
+    {
+        TextBox field = KeybindBox(Strings.SettingsKeysPress, width);
+        // The template's default minimum would make the field taller than the cap.
+        field.MinWidth = 0;
+        field.MinHeight = 0;
+        if (height > 0) field.Height = height;
+        field.Padding = new Thickness(8, 4, 8, 4);
+        field.HorizontalContentAlignment = HorizontalAlignment.Center;
+        field.VerticalContentAlignment = VerticalAlignment.Center;
+        field.TextAlignment = TextAlignment.Center;
+        // A press on the field must not reach the page's inert-press handler, which would
+        // cancel the capture the press just started.
+        field.PointerPressed += (_, args) => args.Handled = true;
+        return field;
     }
 
     private void CancelKeybindCapture(bool restore = true)
     {
         string? action = _keybindCaptureAction;
         StackPanel? keys = _keybindCaptureKeys;
-        Border? add = _keybindCaptureAdd;
+        Button? add = _keybindCaptureAdd;
+        Border? addArea = _keybindCaptureAddArea;
         _keybindCaptureAction = null;
         _keybindCaptureChord = null;
         _keybindCaptureKeys = null;
+        _keybindCaptureBox = null;
         _keybindCaptureAdd = null;
+        _keybindCaptureAddArea = null;
 
-        if (add is not null) RestoreAddChip(add);
+        if (add is not null && addArea is not null)
+        {
+            addArea.Child = add;
+            RestoreAddChip(add);
+        }
         if (restore && action is not null && keys is not null) FillKeybindChips(keys, action);
     }
 
-    /// <summary>Returns the "+" to its narrow, hover-only form after a capture ends.</summary>
-    private static void RestoreAddChip(Border add)
+    /// <summary>Puts the caps back when an editor lost focus without a commit.</summary>
+    private void RestoreKeybindChip(TextBox field, string text, string action, string? chord, StackPanel keys)
     {
-        SetAddChip(add, "+", KeybindAddWidth);
+        int index = keys.Children.IndexOf(field);
+        if (index < 0) return;
+        keys.Children.RemoveAt(index);
+        keys.Children.Insert(index, KeybindChip(text, action, chord, keys));
+    }
+
+    /// <summary>Returns the "+" to its narrow, hover-only form after a capture ends.</summary>
+    private static void RestoreAddChip(Button add)
+    {
+        if (add.Content is TextBlock label) label.Text = "+";
+        add.Width = KeybindAddWidth;
         ShowAddChip(add, add.Tag is true);
     }
 
-    private static void SetAddChip(Border add, string text, double width)
-    {
-        if (add.Child is TextBlock label) label.Text = text;
-        add.Width = width;
-    }
-
-    private static void ShowAddChip(Border add, bool show)
+    private static void ShowAddChip(FrameworkElement add, bool show)
     {
         add.Opacity = show ? 1.0 : 0.0;
         add.IsHitTestVisible = show;
@@ -1691,14 +1755,23 @@ public sealed partial class Workspace
 
     /// <summary>
     /// The key press that answers an open shortcut capture: Esc cancels, Delete clears the
-    /// clicked cap, and any other key replaces that cap. Returns true because the settings
-    /// page must not also treat the key as navigation.
+    /// focused chord, and any other key replaces it. Tab is left to the page so focus moves
+    /// on, which ends the capture through the field's LostFocus.
     /// </summary>
     private bool OnKeybindCaptureKey(KeyRoutedEventArgs args)
     {
+        // Tab moves focus out of the field instead of becoming a shortcut. Only the capture
+        // is dropped, with no repaint: the field's LostFocus puts its cap back.
+        if (args.Key == VirtualKey.Tab)
+        {
+            CancelKeybindCapture(restore: false);
+            return false;
+        }
+
         if (args.Key == VirtualKey.Escape)
         {
             CancelKeybindCapture();
+            FocusSettingsOwner();
             return true;
         }
 
@@ -1741,7 +1814,23 @@ public sealed partial class Workspace
         {
             if (keys is not null) FillKeybindChips(keys, action);
             _keybindFilter?.Invoke();
+            // The field that recorded the press is gone after the repaint; hand the keyboard
+            // back to the page rather than leaving focus on a detached element.
+            FocusSettingsOwner();
         });
+    }
+
+    /// <summary>True while the field that started the capture still owns keyboard focus.</summary>
+    private bool IsKeybindCaptureFocused()
+    {
+        if (_keybindCaptureBox is null || _root.XamlRoot is null) return false;
+        object? focused = FocusManager.GetFocusedElement(_root.XamlRoot);
+        for (DependencyObject? node = focused as DependencyObject; node is not null;
+             node = VisualTreeHelper.GetParent(node))
+        {
+            if (ReferenceEquals(node, _keybindCaptureBox)) return true;
+        }
+        return false;
     }
 
     // ---------------- about ----------------
@@ -2527,49 +2616,97 @@ public sealed partial class Workspace
         return box;
     }
 
-    private Border SettingsTextButton(string text, Action clicked)
+    /// <summary>
+    /// A small text button on the card (Browse/Remove style). It is a Button so it can take
+    /// focus and run from the keyboard; the Fluent brushes are overridden to the card's own
+    /// colours so it keeps the quiet look.
+    /// </summary>
+    private Button SettingsTextButton(string text, Action clicked)
     {
-        var label = Label(text, 11, TextBodyBrush());
-        label.VerticalAlignment = VerticalAlignment.Center;
-        var button = new Border
+        var label = new TextBlock
         {
+            Text = text,
+            FontSize = 11,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        Brush fill = ChipHoverBrush();
+        Brush clear = ClearBrush();
+        Brush stroke = PanelStrokeBrush();
+        var button = new Button
+        {
+            Content = label,
+            MinWidth = 0,
+            MinHeight = 0,
             Padding = new Thickness(9, 4, 9, 4),
             CornerRadius = new CornerRadius(Theme.RadiusControl),
             BorderThickness = new Thickness(1),
-            BorderBrush = PanelStrokeBrush(),
-            Background = ClearBrush(),
-            Child = label,
+            BorderBrush = stroke,
+            Background = clear,
+            Foreground = TextBodyBrush(),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        button.PointerEntered += (_, _) =>
+
+        // The template swaps in its own theme brushes for hover and press; point them at
+        // the card's colours instead of a stock grey button.
+        foreach (string key in new[]
+                 {
+                     "ButtonBackground", "ButtonBackgroundDisabled",
+                 })
         {
-            button.Background = ChipHoverBrush();
-            label.Foreground = TextStrongBrush();
-        };
-        button.PointerExited += (_, _) =>
+            button.Resources[key] = clear;
+        }
+        foreach (string key in new[]
+                 {
+                     "ButtonBackgroundPointerOver", "ButtonBackgroundPressed",
+                 })
         {
-            button.Background = ClearBrush();
-            label.Foreground = TextBodyBrush();
-        };
-        button.PointerPressed += (_, args) =>
+            button.Resources[key] = fill;
+        }
+        foreach (string key in new[]
+                 {
+                     "ButtonBorderBrush", "ButtonBorderBrushPointerOver",
+                     "ButtonBorderBrushPressed", "ButtonBorderBrushDisabled",
+                 })
         {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, button)) return;
-            clicked();
-        };
+            button.Resources[key] = stroke;
+        }
+        foreach (string key in new[]
+                 {
+                     "ButtonForeground", "ButtonForegroundDisabled",
+                 })
+        {
+            button.Resources[key] = TextBodyBrush();
+        }
+        foreach (string key in new[]
+                 {
+                     "ButtonForegroundPointerOver", "ButtonForegroundPressed",
+                 })
+        {
+            button.Resources[key] = TextStrongBrush();
+        }
+
+        button.Click += (_, _) => clicked();
+        AutomationProperties.SetName(button, text);
         return button;
     }
 
-    /// <summary>Width shared by every shortcut cap, so the column lines up row to row.</summary>
+    /// <summary>Width shared by every shortcut field, so the column lines up row to row.</summary>
     private const double KeybindCapWidth = 128;
 
-    /// <summary>Width of the narrow "+" cap that adds another chord to an action.</summary>
+    /// <summary>Width of the narrow "+" field that adds another chord to an action.</summary>
     private const double KeybindAddWidth = 30;
 
-    private Border SettingsKbd(string text, double width = KeybindCapWidth)
+    /// <summary>
+    /// One key cap on the card, used whenever a shortcut is not being edited. It is a
+    /// Button so it can take focus and be activated from the keyboard; its Fluent brushes
+    /// are overridden so the normal state still looks like the original cap.
+    /// </summary>
+    private Button SettingsKbd(string text, double width = KeybindCapWidth)
     {
-        // A key cap sitting on the card: the same subtle fill and RadiusControl corner the
-        // segmented controls use, and one fixed width so every shortcut covers one column.
         var label = new TextBlock
         {
             Text = text,
@@ -2578,15 +2715,75 @@ public sealed partial class Workspace
             TextAlignment = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        return new Border
+
+        Brush fill = ChipHoverBrush();
+        Brush stroke = PanelStrokeBrush();
+        var button = new Button
         {
+            Content = label,
             Width = width,
+            MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(8, 4, 8, 4),
+            CornerRadius = new CornerRadius(Theme.RadiusControl),
+            BorderThickness = new Thickness(1),
+            BorderBrush = stroke,
+            Background = fill,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        // The template swaps in its own theme brushes for hover, press and focus; point
+        // them at the cap's colours so it never repaints as a stock grey button.
+        foreach (string key in new[]
+                 {
+                     "ButtonBackground", "ButtonBackgroundPointerOver",
+                     "ButtonBackgroundPressed", "ButtonBackgroundDisabled",
+                 })
+        {
+            button.Resources[key] = fill;
+        }
+        foreach (string key in new[]
+                 {
+                     "ButtonBorderBrush", "ButtonBorderBrushPointerOver",
+                     "ButtonBorderBrushPressed", "ButtonBorderBrushDisabled",
+                 })
+        {
+            button.Resources[key] = stroke;
+        }
+        foreach (string key in new[]
+                 {
+                     "ButtonForeground", "ButtonForegroundPointerOver",
+                     "ButtonForegroundPressed", "ButtonForegroundDisabled",
+                 })
+        {
+            button.Resources[key] = TextStrongBrush();
+        }
+
+        AutomationProperties.SetName(button, text);
+        return button;
+    }
+
+    /// <summary>The read-only field shown only while a shortcut is being recorded.</summary>
+    private TextBox KeybindBox(string text, double width)
+    {
+        return new TextBox
+        {
+            Text = text,
+            IsReadOnly = true,
+            IsTabStop = true,
+            Width = width,
+            FontSize = Theme.FontSmall,
+            TextAlignment = TextAlignment.Center,
+            Padding = new Thickness(8, 0, 8, 0),
+            VerticalContentAlignment = VerticalAlignment.Center,
             CornerRadius = new CornerRadius(Theme.RadiusControl),
             BorderThickness = new Thickness(1),
             BorderBrush = PanelStrokeBrush(),
-            Padding = new Thickness(8, 4, 8, 4),
-            Background = ChipHoverBrush(),
-            Child = label,
+            Background = ClearBrush(),
+            IsSpellCheckEnabled = false,
+            IsTextPredictionEnabled = false,
             VerticalAlignment = VerticalAlignment.Center,
         };
     }

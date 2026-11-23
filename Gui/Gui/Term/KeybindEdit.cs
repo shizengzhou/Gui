@@ -14,11 +14,15 @@ internal static class KeybindEdit
     /// The lines that bind <paramref name="action"/> to <paramref name="chord"/> in place of
     /// <paramref name="oldChord"/>. A null old chord adds one; a null new chord clears the
     /// clicked one. Other chords of the same action, and every other line, stay as they were.
+    /// The old chord only gets an unbind line when a built-in default would otherwise come
+    /// back, and duplicate "trigger=" lines are folded into the first one, so repeated edits
+    /// do not grow the file.
     /// </summary>
     public static List<string> SetBinding(IReadOnlyList<string> lines, string action,
         string? oldChord, string? chord)
     {
         var result = new List<string>(lines.Count + 2);
+        var unbound = new HashSet<string>(StringComparer.Ordinal);
         string prefix = string.Empty;
         bool replaced = false;
 
@@ -31,10 +35,13 @@ internal static class KeybindEdit
                 replaced = true;
                 continue;
             }
+
+            if (UnboundChord(line) is string already && !unbound.Add(already)) continue;
             result.Add(line);
         }
 
-        if (oldChord is not null && !string.Equals(oldChord, chord, StringComparison.Ordinal))
+        if (oldChord is not null && !string.Equals(oldChord, chord, StringComparison.Ordinal)
+            && !unbound.Contains(oldChord) && Keybinds.IsDefaultChord(oldChord))
             result.Add(oldChord + "=");
 
         // Reusing a chord the action already has must not leave a duplicate line behind.
@@ -42,6 +49,20 @@ internal static class KeybindEdit
             result.Add(prefix + chord + "=" + action);
 
         return result;
+    }
+
+    /// <summary>The canonical chord of a plain "trigger=" unbind line, or null for any other line.</summary>
+    private static string? UnboundChord(string line)
+    {
+        string text = line.Trim();
+        int equals = text.IndexOf('=');
+        if (equals < 0) return null;
+        if (text[(equals + 1)..].Trim().Length != 0) return null;
+
+        string trigger = text[..equals].Trim();
+        // A table binding ("foo/ctrl+a=") unbinds only inside that table.
+        if (trigger.Length == 0 || trigger.Contains('/')) return null;
+        return Canonical(trigger);
     }
 
     /// <summary>True when one default-set "trigger=action" line binds this chord to the action.</summary>

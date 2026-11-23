@@ -729,8 +729,13 @@ public sealed partial class Workspace
         if (_textPromptOpen) return false;
 
         // The keys page is waiting for the press that becomes a new shortcut; it must not
-        // reach the page's own Esc handling or the shell.
-        if (_keybindCaptureAction is not null) return OnKeybindCaptureKey(args);
+        // reach the page's own Esc handling or the shell. Only the focused field records;
+        // a capture left behind by a focus change is dropped instead of swallowing the key.
+        if (_keybindCaptureAction is not null)
+        {
+            if (IsKeybindCaptureFocused()) return OnKeybindCaptureKey(args);
+            CancelKeybindCapture();
+        }
 
         // Esc aborts a split drag before any other shortcut or the shell sees the key.
         if (_dragPane is not null && args.Key == VirtualKey.Escape)
