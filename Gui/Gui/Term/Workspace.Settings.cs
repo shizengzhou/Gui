@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -706,134 +707,76 @@ public sealed partial class Workspace
             SettingsRow(Strings.SettingsLightTheme, null, lightBox),
             SettingsRow(Strings.SettingsDarkTheme, null, darkBox))));
 
-        var opacityValue = new NumberBox
+        FrameworkElement opacityRow = SettingsPercentSlider(
+            Math.Clamp(_config.BackgroundOpacity * 100.0, 0.0, 100.0),
+            percent => ApplyBackgroundOpacityChoice(percent / 100.0));
+
+        string[] positionValues =
         {
-            Value = Math.Clamp(Math.Round(_config.BackgroundOpacity * 100), 0, 100),
-            Minimum = 0,
-            Maximum = 100,
-            SmallChange = 1,
-            LargeChange = 5,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden,
-            // Wide enough that the value stays readable while the clear button is showing.
-            Width = 80,
-            FontSize = Theme.FontSmall,
+            "top-left", "top-center", "top-right",
+            "center-left", "center", "center-right",
+            "bottom-left", "bottom-center", "bottom-right",
+        };
+        string[] positionLabels =
+        {
+            Strings.SettingsBackgroundImagePositionTopLeft, Strings.SettingsBackgroundImagePositionTop,
+            Strings.SettingsBackgroundImagePositionTopRight, Strings.SettingsBackgroundImagePositionLeft,
+            Strings.SettingsBackgroundImagePositionCenter, Strings.SettingsBackgroundImagePositionRight,
+            Strings.SettingsBackgroundImagePositionBottomLeft, Strings.SettingsBackgroundImagePositionBottom,
+            Strings.SettingsBackgroundImagePositionBottomRight,
+        };
+        int positionIndex = Array.IndexOf(positionValues, _config.BackgroundImagePosition);
+        if (positionIndex < 0) positionIndex = 4;
+        ComboBox imagePosition = SettingsSelect(
+            positionLabels, positionIndex, 150,
+            index => ApplyBackgroundImagePositionChoice(positionValues[index]));
+
+        string[] fitValues = { "contain", "cover", "stretch", "none" };
+        string[] fitLabels =
+        {
+            Strings.SettingsBackgroundImageFitContain, Strings.SettingsBackgroundImageFitCover,
+            Strings.SettingsBackgroundImageFitStretch, Strings.SettingsBackgroundImageFitNone,
+        };
+        int fitIndex = Array.IndexOf(fitValues, _config.BackgroundImageFit);
+        if (fitIndex < 0) fitIndex = 0;
+        ComboBox imageFit = SettingsSelect(
+            fitLabels, fitIndex, 150,
+            index => ApplyBackgroundImageFitChoice(fitValues[index]));
+
+        FrameworkElement imageOpacityRow = SettingsPercentSlider(
+            Math.Clamp(_config.BackgroundImageOpacity * 100.0, 0.0, 100.0),
+            percent => ApplyBackgroundImageOpacityChoice(percent / 100.0));
+
+        // The image options only mean anything with a picture chosen, so they ride along with
+        // the path row and come and go with it. The block carries its own top separator; the
+        // card's separator before it belongs to the path row and stays whether it is shown.
+        var imageOptions = new Border
+        {
+            BorderThickness = new Thickness(0, 1, 0, 0),
             BorderBrush = PanelStrokeBrush(),
-            CornerRadius = new CornerRadius(Theme.RadiusField),
-            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = _config.BackgroundImage.Length > 0 ? Visibility.Visible : Visibility.Collapsed,
+            Child = SettingsRowStack(
+                SettingsRow(Strings.SettingsBackgroundImageOpacity, null, imageOpacityRow),
+                SettingsRow(Strings.SettingsBackgroundImagePosition, null, imagePosition),
+                SettingsRow(Strings.SettingsBackgroundImageFit, null, imageFit),
+                SettingsRow(Strings.SettingsBackgroundImageRepeat, null,
+                    SettingsSwitch(_config.BackgroundImageRepeat, ApplyBackgroundImageRepeatChoice))),
         };
-        CenterSettingsValue(opacityValue);
-        var opacitySlider = new Slider
-        {
-            Minimum = 0,
-            Maximum = 100,
-            Value = Math.Clamp(_config.BackgroundOpacity * 100.0, 0.0, 100.0),
-            StepFrequency = 1,
-            Width = 150,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        // The stock slider paints its value from the system accent, which follows Windows'
-        // personalisation, and the plate under its thumb from Fluent's fixed whites; neither
-        // follows a Ghostty theme. Take the theme's accent for everything that reads as the
-        // value (the same brush the switch takes when it is on) and the card's own surface and
-        // stroke for the plate around the thumb and its rim.
-        Brush sliderAccent = AccentBrush();
-        Brush sliderPlate = TermBgBrush();
-        Brush sliderRim = PanelStrokeBrush();
-        opacitySlider.Foreground = sliderAccent;
-        foreach (string key in new[]
-                 {
-                     "SliderTrackValueFill", "SliderTrackValueFillPointerOver",
-                     "SliderTrackValueFillPressed", "SliderThumbBackground",
-                     "SliderThumbBackgroundPointerOver", "SliderThumbBackgroundPressed",
-                     "SliderThumbBackgroundThemeBrush", "SliderThumbPointerOverBackgroundThemeBrush",
-                     "SliderThumbPressedBackgroundThemeBrush",
-                 })
-        {
-            opacitySlider.Resources[key] = sliderAccent;
-        }
-        foreach (string key in new[]
-                 {
-                     "SliderOuterThumbBackground", "SliderOuterThumbBackgroundPointerOver",
-                     "SliderOuterThumbBackgroundPressed",
-                 })
-        {
-            opacitySlider.Resources[key] = sliderPlate;
-        }
-        foreach (string key in new[] { "SliderThumbBorderBrush", "SliderThumbBorderThemeBrush" })
-        {
-            opacitySlider.Resources[key] = sliderRim;
-        }
-        // The slider and the field drive the same setting; each guards against echoing the
-        // other's update back into it.
-        bool syncingOpacity = false;
-        opacitySlider.ValueChanged += (_, e) =>
-        {
-            if (syncingOpacity) return;
-            syncingOpacity = true;
-            opacityValue.Value = Math.Round(e.NewValue);
-            syncingOpacity = false;
-            ApplyBackgroundOpacityChoice(e.NewValue / 100.0);
-        };
-        opacityValue.ValueChanged += (_, e) =>
-        {
-            // A cleared or half-typed field evaluates to NaN; keep the last good value.
-            if (syncingOpacity || double.IsNaN(e.NewValue)) return;
-            double percent = Math.Round(e.NewValue);
-            if (percent == e.OldValue) return;
-            syncingOpacity = true;
-            opacitySlider.Value = percent;
-            syncingOpacity = false;
-            ApplyBackgroundOpacityChoice(percent / 100.0);
-        };
-        var opacityRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        opacityRow.Children.Add(opacitySlider);
-        opacityRow.Children.Add(opacityValue);
-        opacityRow.Children.Add(Label("%", Theme.FontCaption, TextFaintBrush()));
 
-        TextBlock imagePath = Label(
-            _config.BackgroundImage.Length > 0 ? _config.BackgroundImage : "—", 10.5, TextFaintBrush());
-        imagePath.MaxWidth = 130;
-        imagePath.TextTrimming = TextTrimming.CharacterEllipsis;
-
-        Button remove = null!;
-        remove = SettingsTextButton(Strings.SettingsRemove, () =>
-        {
-            imagePath.Text = "—";
-            ApplyBackgroundImageChoice(string.Empty);
-            // The path is gone, so this action has nothing left to remove.
-            remove.Visibility = Visibility.Collapsed;
-        });
-        remove.Visibility = _config.BackgroundImage.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-
-        Button browse = SettingsTextButton(Strings.SettingsBrowse, async () =>
-        {
-            string? path = await PickBackgroundImageAsync();
-            if (path is null) return;
-            imagePath.Text = path;
-            remove.Visibility = Visibility.Visible;
-            ApplyBackgroundImageChoice(path);
-        });
-
-        var imageActions = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        imageActions.Children.Add(imagePath);
-        imageActions.Children.Add(browse);
-        imageActions.Children.Add(remove);
+        var imageSection = new StackPanel();
+        imageSection.Children.Add(SettingsRow(Strings.SettingsBackgroundImage, null,
+            SettingsPathChoice(_config.BackgroundImage, PickBackgroundImageAsync, path =>
+            {
+                ApplyBackgroundImageChoice(path);
+                imageOptions.Visibility = path.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            })));
+        imageSection.Children.Add(imageOptions);
 
         page.Children.Add(SettingsGroup(Strings.SettingsBackground, SettingsCard(
             SettingsRow(Strings.SettingsBackgroundOpacity, null, opacityRow),
             SettingsRow(Strings.SettingsBackgroundBlur, null,
                 SettingsSwitch(_config.BackgroundBlur, ApplyBackgroundBlurChoice)),
-            SettingsRow(Strings.SettingsBackgroundImage, null, imageActions))));
+            imageSection)));
 
         return page;
     }
@@ -859,9 +802,8 @@ public sealed partial class Workspace
         var box = new AutoSuggestBox
         {
             Width = width,
-            MinHeight = 26,
-            FontSize = Theme.FontSmall,
-            Padding = new Thickness(9, 0, 9, 0),
+            MinHeight = 32,
+            FontSize = Theme.FontBody,
             BorderBrush = PanelStrokeBrush(),
             Background = ClearBrush(),
             CornerRadius = new CornerRadius(Theme.RadiusField),
@@ -1057,6 +999,13 @@ public sealed partial class Workspace
             SettingsRow(Strings.SettingsRightClickAction, null,
                 SettingsSelect(rightClickActions, rightClickIndex, 180, ApplyRightClickActionChoice)))));
 
+        page.Children.Add(SettingsGroup(Strings.SettingsScrolling, SettingsCard(
+            SettingsRow(Strings.SettingsScrollbar, null,
+                SettingsSegmented(
+                    new[] { Strings.SettingsScrollbarSystem, Strings.SettingsScrollbarNever },
+                    _config.Scrollbar == "never" ? 1 : 0,
+                    index => ApplyScrollbarChoice(index == 1 ? "never" : "system"))))));
+
         return page;
     }
 
@@ -1134,7 +1083,8 @@ public sealed partial class Workspace
         // group follows that switch (the switch flips its Visibility below). Declared first so
         // the audio switch's handler can capture it.
         FrameworkElement bellAudioGroup = SettingsGroup(Strings.SettingsBellAudioGroup, SettingsCard(
-            SettingsRow(Strings.SettingsBellAudioPath, null, BellAudioPathRow()),
+            SettingsRow(Strings.SettingsBellAudioPath, null,
+                SettingsPathChoice(_config.BellAudioPath, PickBellAudioAsync, ApplyBellAudioPathChoice)),
             SettingsRow(Strings.SettingsBellVolume, null,
                 SettingsUnit(SettingsNumber(
                     Math.Round(_config.BellAudioVolume * 100), 0, 100, ApplyBellVolumeChoice), "%"))));
@@ -1168,43 +1118,129 @@ public sealed partial class Workspace
             SaveBellFeatures();
         });
 
-    /// <summary>Path display with Browse/Remove, like the background image field.</summary>
-    private FrameworkElement BellAudioPathRow()
+    /// <summary>
+    /// A file path with Browse/Remove, shared by the background image and bell audio rows.
+    /// The path is a value preview, so it takes the small token and one width on both rows;
+    /// clicking it selects the file in Explorer.
+    /// </summary>
+    private FrameworkElement SettingsPathChoice(string path, Func<Task<string?>> pick, Action<string> apply)
     {
-        TextBlock path = Label(
-            _config.BellAudioPath.Length > 0 ? _config.BellAudioPath : "—", 10.5, TextFaintBrush());
-        path.MaxWidth = 150;
-        path.TextTrimming = TextTrimming.CharacterEllipsis;
+        string current = path;
+        TextBlock label = Label(path.Length > 0 ? path : "—", Theme.FontSmall, TextFaintBrush());
+        label.MaxWidth = 150;
+
+        Brush faint = TextFaintBrush();
+        Brush body = TextBodyBrush();
+        var link = new HyperlinkButton
+        {
+            Content = label,
+            // A link-sized hit target, not the 32 DIP field height the Fluent button keeps
+            // around its text: the row already carries that height.
+            MinHeight = 32,
+            Height = 32,
+            MinWidth = 0,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            Background = ClearBrush(),
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = path.Length > 0,
+        };
+        // The path reads as quiet metadata, not an accent link; the same faint colour in
+        // every state keeps the template's accent off it, and hover only lifts the text.
+        foreach (string key in new[]
+                 {
+                     "HyperlinkButtonForeground", "HyperlinkButtonForegroundPointerOver",
+                     "HyperlinkButtonForegroundPressed", "HyperlinkButtonForegroundDisabled",
+                     "HyperlinkButtonBorderBrush", "HyperlinkButtonBorderBrushPointerOver",
+                     "HyperlinkButtonBorderBrushPressed", "HyperlinkButtonBorderBrushDisabled",
+                 })
+        {
+            link.Resources[key] = key.Contains("Border") ? ClearBrush() : faint;
+        }
+        foreach (string key in new[]
+                 {
+                     "HyperlinkButtonBackground", "HyperlinkButtonBackgroundPointerOver",
+                     "HyperlinkButtonBackgroundPressed", "HyperlinkButtonBackgroundDisabled",
+                 })
+        {
+            link.Resources[key] = ClearBrush();
+        }
+        link.PointerEntered += (_, _) =>
+        {
+            if (current.Length > 0) label.Foreground = body;
+        };
+        link.PointerExited += (_, _) => label.Foreground = faint;
+        link.Click += (_, _) =>
+        {
+            if (current.Length > 0) RevealPath(current);
+        };
 
         Button remove = null!;
         remove = SettingsTextButton(Strings.SettingsRemove, () =>
         {
-            path.Text = "—";
-            ApplyBellAudioPathChoice(string.Empty);
+            current = string.Empty;
+            label.Text = "—";
+            label.Foreground = faint;
+            link.IsEnabled = false;
+            apply(string.Empty);
             // The path is gone, so this action has nothing left to remove.
             remove.Visibility = Visibility.Collapsed;
         });
-        remove.Visibility = _config.BellAudioPath.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        remove.Visibility = path.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         Button browse = SettingsTextButton(Strings.SettingsBrowse, async () =>
         {
-            string? picked = await PickBellAudioAsync();
+            string? picked = await pick();
             if (picked is null) return;
-            path.Text = picked;
+            current = picked;
+            label.Text = picked;
+            link.IsEnabled = true;
             remove.Visibility = Visibility.Visible;
-            ApplyBellAudioPathChoice(picked);
+            apply(picked);
         });
 
-        var actions = new StackPanel
+        var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        actions.Children.Add(path);
-        actions.Children.Add(browse);
-        actions.Children.Add(remove);
-        return actions;
+        row.Children.Add(link);
+        row.Children.Add(browse);
+        row.Children.Add(remove);
+        return row;
+    }
+
+    /// <summary>Selects the file in Explorer, or opens its folder when the file is gone.</summary>
+    private static void RevealPath(string path)
+    {
+        try
+        {
+            // Explorer only accepts /select when the quote starts after the comma, which is
+            // why the command line is spelled out instead of using ArgumentList.
+            if (File.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe")
+                {
+                    UseShellExecute = true,
+                    Arguments = "/select,\"" + path.Replace("\"", string.Empty) + "\"",
+                });
+                return;
+            }
+            string? folder = Path.GetDirectoryName(path);
+            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
+            Process.Start(new ProcessStartInfo("explorer.exe")
+            {
+                UseShellExecute = true,
+                Arguments = "\"" + folder.Replace("\"", string.Empty) + "\"",
+            });
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.RevealPath", error);
+        }
     }
 
     private async System.Threading.Tasks.Task<string?> PickBellAudioAsync()
@@ -1338,12 +1374,9 @@ public sealed partial class Workspace
         var search = new TextBox
         {
             PlaceholderText = Strings.SettingsKeysSearch,
-            Height = 30,
-            MinHeight = 30,
-            FontSize = Theme.FontSmall,
-            // Same field shape as the other settings inputs; the 7 DIP top inset centres
-            // an 11 px line in the 30 DIP box.
-            Padding = new Thickness(9, 7, 9, 0),
+            Height = 32,
+            MinHeight = 32,
+            FontSize = Theme.FontBody,
             BorderBrush = PanelStrokeBrush(),
             Background = ClearBrush(),
             CornerRadius = new CornerRadius(Theme.RadiusField),
@@ -1878,10 +1911,10 @@ public sealed partial class Workspace
             Visibility = Visibility.Collapsed,
         };
 
-        var body = new StackPanel();
-        body.Children.Add(SettingsRow(Strings.AboutRepository, null, RepositoryControl()));
-        body.Children.Add(SettingsRow(Strings.AboutLicense, null,
-            Label("MIT License", Theme.FontBody, TextFaintBrush())));
+        var body = SettingsRowStack(
+            SettingsRow(Strings.AboutRepository, null, RepositoryControl()),
+            SettingsRow(Strings.AboutLicense, null,
+                Label("MIT License", Theme.FontBody, TextFaintBrush())));
         content.Child = body;
 
         var icon = new Image
@@ -1904,7 +1937,7 @@ public sealed partial class Workspace
         FontIcon chevron = Glyph('\uE76C', 10, TextFaintBrush());
         chevron.VerticalAlignment = VerticalAlignment.Center;
 
-        var headerGrid = new Grid { Padding = new Thickness(13, 10, 13, 10), ColumnSpacing = 10 };
+        var headerGrid = new Grid { Padding = new Thickness(13, 11, 13, 11), ColumnSpacing = 10 };
         AddAutoColumn(headerGrid);
         AddStarColumn(headerGrid);
         AddAutoColumn(headerGrid);
@@ -1931,6 +1964,11 @@ public sealed partial class Workspace
             if (!IsPrimaryPress(args, header)) return;
             bool open = content.Visibility != Visibility.Visible;
             content.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            // The header is the whole card while closed; with the body open it is only its
+            // top edge, so the fill and hover should be square where the separator follows.
+            header.CornerRadius = open
+                ? new CornerRadius(Theme.RadiusField, Theme.RadiusField, 0, 0)
+                : new CornerRadius(Theme.RadiusField);
             chevron.Glyph = open ? "\uE70D" : "\uE76C";
         };
 
@@ -2106,6 +2144,35 @@ public sealed partial class Workspace
         RefreshPaneVisuals();
     }
 
+    private void ApplyBackgroundImageOpacityChoice(double opacity)
+    {
+        _config.BackgroundImageOpacity = (float)Math.Clamp(opacity, 0.0, 1.0);
+        Config.SaveValue("background-image-opacity",
+            _config.BackgroundImageOpacity.ToString("0.##", CultureInfo.InvariantCulture));
+        RefreshPaneVisuals();
+    }
+
+    private void ApplyBackgroundImagePositionChoice(string position)
+    {
+        _config.BackgroundImagePosition = position;
+        Config.SaveValue("background-image-position", position);
+        RefreshPaneVisuals();
+    }
+
+    private void ApplyBackgroundImageFitChoice(string fit)
+    {
+        _config.BackgroundImageFit = fit;
+        Config.SaveValue("background-image-fit", fit);
+        RefreshPaneVisuals();
+    }
+
+    private void ApplyBackgroundImageRepeatChoice(bool repeat)
+    {
+        _config.BackgroundImageRepeat = repeat;
+        Config.SaveValue("background-image-repeat", repeat ? "true" : "false");
+        RefreshPaneVisuals();
+    }
+
     private void ApplyFontFamilyChoice(string family)
     {
         string name = family.Length > 0 ? family : DefaultFontFamily;
@@ -2178,6 +2245,14 @@ public sealed partial class Workspace
         // reads it at copy time, so it just has to be pushed across.
         foreach (Tab tab in _tabs)
             ForEachPane(tab, pane => pane.SyncConfig(_config));
+    }
+
+    private void ApplyScrollbarChoice(string value)
+    {
+        _config.Scrollbar = value;
+        Config.SaveValue("scrollbar", value);
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane => pane.ApplyScrollSettings());
     }
 
     private void ApplyRightClickActionChoice(int index)
@@ -2272,6 +2347,21 @@ public sealed partial class Workspace
 
     private Border SettingsCard(params FrameworkElement[] rows)
     {
+        return new Border
+        {
+            CornerRadius = new CornerRadius(Theme.RadiusField),
+            BorderThickness = new Thickness(1),
+            BorderBrush = PanelStrokeBrush(),
+            Child = SettingsRowStack(rows),
+        };
+    }
+
+    /// <summary>
+    /// Stacks rows with the 1 DIP separator the cards use between neighbours, for surfaces
+    /// that already own their border (a card, the About page's expanded body).
+    /// </summary>
+    private StackPanel SettingsRowStack(params FrameworkElement[] rows)
+    {
         var stack = new StackPanel();
         for (int i = 0; i < rows.Length; i++)
         {
@@ -2287,14 +2377,7 @@ public sealed partial class Workspace
                 Child = rows[i],
             });
         }
-
-        return new Border
-        {
-            CornerRadius = new CornerRadius(Theme.RadiusField),
-            BorderThickness = new Thickness(1),
-            BorderBrush = PanelStrokeBrush(),
-            Child = stack,
-        };
+        return stack;
     }
 
     private Grid SettingsRow(string title, string? description, FrameworkElement? control)
@@ -2373,13 +2456,14 @@ public sealed partial class Workspace
             var text = new TextBlock
             {
                 Text = options[i],
-                FontSize = Theme.FontSmall,
+                FontSize = Theme.FontBody,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             };
             var button = new Border
             {
-                Height = 22,
+                // With the host's 2 DIP padding this is the page's 32 DIP control height.
+                Height = 28,
                 Padding = new Thickness(10, 0, 10, 0),
                 CornerRadius = new CornerRadius(Theme.RadiusControl),
                 Background = ClearBrush(),
@@ -2440,9 +2524,8 @@ public sealed partial class Workspace
         var box = new ComboBox
         {
             Width = width,
-            MinHeight = 26,
-            FontSize = Theme.FontSmall,
-            Padding = new Thickness(9, 0, 26, 0),
+            MinHeight = 32,
+            FontSize = Theme.FontBody,
             BorderBrush = PanelStrokeBrush(),
             CornerRadius = new CornerRadius(Theme.RadiusField),
             VerticalAlignment = VerticalAlignment.Center,
@@ -2462,9 +2545,8 @@ public sealed partial class Workspace
         var box = new ComboBox
         {
             Width = width,
-            MinHeight = 26,
-            FontSize = Theme.FontSmall,
-            Padding = new Thickness(9, 0, 26, 0),
+            MinHeight = 32,
+            FontSize = Theme.FontBody,
             BorderBrush = PanelStrokeBrush(),
             CornerRadius = new CornerRadius(Theme.RadiusField),
             IsEditable = true,
@@ -2505,41 +2587,37 @@ public sealed partial class Workspace
 
     private FrameworkElement SettingsSwitch(bool value, Action<bool> changed)
     {
-        bool on = value;
-        var knob = new Border
+        var toggle = new ToggleSwitch
         {
-            Width = 14,
-            Height = 14,
-            // Half the side: the knob is a circle, so it is not on the radius scale.
-            CornerRadius = new CornerRadius(7),
-            // White in both palettes: it sits on the accent when on and on ControlFillOff
-            // when off, and both keep 3:1 against it.
-            Background = new SolidColorBrush(Microsoft.UI.Colors.White),
-            HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(on ? 0 : 3, 0, on ? 3 : 0, 0),
-        };
-        var track = new Border
-        {
-            Width = 36,
-            Height = 20,
-            // Half the height: the track is a pill, so it is not on the radius scale.
-            CornerRadius = new CornerRadius(10),
-            Background = on ? AccentBrush() : ControlFillOffBrush(),
-            Child = knob,
+            IsOn = value,
+            // The card has no room for the On/Off captions the stock switch carries.
+            OnContent = string.Empty,
+            OffContent = string.Empty,
+            // The template keeps a 12 DIP column for that caption; pin the width to the
+            // 40 DIP pill so the switch still ends flush with the fields above it.
+            Width = 40,
+            MinWidth = 0,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        track.PointerPressed += (_, args) =>
+        // The template puts 10 DIP above and below the 20 DIP track. Trim both to 6 so
+        // the control is 32 DIP high like the fields in the rows around it.
+        toggle.Resources["ToggleSwitchPreContentMargin"] = 6.0;
+        toggle.Resources["ToggleSwitchPostContentMargin"] = 6.0;
+        // The off state keeps Fluent's own neutral fill and stroke; only the on state takes
+        // the terminal theme's accent, so the switch matches the rest of the chrome. These
+        // six keys are brushes in the template, so a brush override is the right type.
+        Brush accent = AccentBrush();
+        foreach (string key in new[]
+                 {
+                     "ToggleSwitchFillOn", "ToggleSwitchFillOnPointerOver",
+                     "ToggleSwitchFillOnPressed", "ToggleSwitchStrokeOn",
+                     "ToggleSwitchStrokeOnPointerOver", "ToggleSwitchStrokeOnPressed",
+                 })
         {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, track)) return;
-            on = !on;
-            track.Background = on ? AccentBrush() : ControlFillOffBrush();
-            knob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-            knob.Margin = new Thickness(on ? 0 : 3, 0, on ? 3 : 0, 0);
-            changed(on);
-        };
-        return track;
+            toggle.Resources[key] = accent;
+        }
+        toggle.Toggled += (_, _) => changed(toggle.IsOn);
+        return toggle;
     }
 
     private NumberBox SettingsNumber(double value, double min, double max, Action<double> changed)
@@ -2553,7 +2631,7 @@ public sealed partial class Workspace
             LargeChange = 5,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
             Width = 150,
-            FontSize = Theme.FontSmall,
+            FontSize = Theme.FontBody,
             BorderBrush = PanelStrokeBrush(),
             CornerRadius = new CornerRadius(Theme.RadiusField),
             VerticalAlignment = VerticalAlignment.Center,
@@ -2583,6 +2661,102 @@ public sealed partial class Workspace
     }
 
     /// <summary>
+    /// A 0..100 slider paired with a small number field, for percentage settings. The slider
+    /// and the field drive the same value; each guards against echoing the other's update.
+    /// </summary>
+    private FrameworkElement SettingsPercentSlider(double percent, Action<double> changed)
+    {
+        var value = new NumberBox
+        {
+            Value = Math.Clamp(Math.Round(percent), 0, 100),
+            Minimum = 0,
+            Maximum = 100,
+            SmallChange = 1,
+            LargeChange = 5,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden,
+            // Wide enough that the value stays readable while the clear button is showing.
+            Width = 80,
+            FontSize = Theme.FontBody,
+            BorderBrush = PanelStrokeBrush(),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        CenterSettingsValue(value);
+        var slider = new Slider
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Value = Math.Clamp(percent, 0.0, 100.0),
+            StepFrequency = 1,
+            Width = 150,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        // The stock slider paints its value from the system accent, which follows Windows'
+        // personalisation, and the plate under its thumb from Fluent's fixed whites; neither
+        // follows a Ghostty theme. Take the theme's accent for everything that reads as the
+        // value (the same brush the switch takes when it is on) and the card's own surface and
+        // stroke for the plate around the thumb and its rim.
+        Brush sliderAccent = AccentBrush();
+        Brush sliderPlate = TermBgBrush();
+        Brush sliderRim = PanelStrokeBrush();
+        slider.Foreground = sliderAccent;
+        foreach (string key in new[]
+                 {
+                     "SliderTrackValueFill", "SliderTrackValueFillPointerOver",
+                     "SliderTrackValueFillPressed", "SliderThumbBackground",
+                     "SliderThumbBackgroundPointerOver", "SliderThumbBackgroundPressed",
+                     "SliderThumbBackgroundThemeBrush", "SliderThumbPointerOverBackgroundThemeBrush",
+                     "SliderThumbPressedBackgroundThemeBrush",
+                 })
+        {
+            slider.Resources[key] = sliderAccent;
+        }
+        foreach (string key in new[]
+                 {
+                     "SliderOuterThumbBackground", "SliderOuterThumbBackgroundPointerOver",
+                     "SliderOuterThumbBackgroundPressed",
+                 })
+        {
+            slider.Resources[key] = sliderPlate;
+        }
+        foreach (string key in new[] { "SliderThumbBorderBrush", "SliderThumbBorderThemeBrush" })
+        {
+            slider.Resources[key] = sliderRim;
+        }
+
+        bool syncing = false;
+        slider.ValueChanged += (_, e) =>
+        {
+            if (syncing) return;
+            syncing = true;
+            value.Value = Math.Round(e.NewValue);
+            syncing = false;
+            changed(e.NewValue);
+        };
+        value.ValueChanged += (_, e) =>
+        {
+            // A cleared or half-typed field evaluates to NaN; keep the last good value.
+            if (syncing || double.IsNaN(e.NewValue)) return;
+            double percentValue = Math.Round(e.NewValue);
+            if (percentValue == e.OldValue) return;
+            syncing = true;
+            slider.Value = percentValue;
+            syncing = false;
+            changed(percentValue);
+        };
+
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        row.Children.Add(slider);
+        row.Children.Add(SettingsUnit(value, "%"));
+        return row;
+    }
+
+    /// <summary>
     /// Every installed family DirectWrite marks as monospaced, sorted by name, with the bundled
     /// Nerd Font always present. The enumeration is done once in FontCache and shared with the
     /// renderer, so opening Settings only reads that cached list.
@@ -2605,21 +2779,14 @@ public sealed partial class Workspace
             Text = value,
             PlaceholderText = placeholder,
             Width = width,
-            Height = 26,
-            MinHeight = 26,
-            FontSize = Theme.FontSmall,
-            // The stock control lays single-line text out from the top of its content box;
-            // a 5 DIP top inset is what centres an 11 px line in the 26 DIP field.
-            Padding = new Thickness(9, 5, 9, 0),
+            Height = 32,
+            MinHeight = 32,
+            FontSize = Theme.FontBody,
             BorderBrush = PanelStrokeBrush(),
             Background = ClearBrush(),
             CornerRadius = new CornerRadius(Theme.RadiusField),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
-        // The stock template reserves a 32 DIP content box, which would push the text up
-        // again in a shorter field; drop that floor.
-        box.Resources["TextControlThemeMinHeight"] = 0.0;
-        box.Resources["TextControlThemePadding"] = new Thickness(9, 5, 9, 0);
 
         // Commit only a real edit: leaving the field untouched must not rewrite the key, or
         // opening the page would persist a stale, inherited value.
@@ -2651,7 +2818,7 @@ public sealed partial class Workspace
         var label = new TextBlock
         {
             Text = text,
-            FontSize = 11,
+            FontSize = Theme.FontBody,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -2663,7 +2830,8 @@ public sealed partial class Workspace
         {
             Content = label,
             MinWidth = 0,
-            MinHeight = 0,
+            Height = 32,
+            MinHeight = 32,
             Padding = new Thickness(9, 4, 9, 4),
             CornerRadius = new CornerRadius(Theme.RadiusControl),
             BorderThickness = new Thickness(1),
@@ -2735,7 +2903,7 @@ public sealed partial class Workspace
         var label = new TextBlock
         {
             Text = text,
-            FontSize = Theme.FontSmall,
+            FontSize = Theme.FontBody,
             Foreground = TextStrongBrush(),
             TextAlignment = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -2799,7 +2967,7 @@ public sealed partial class Workspace
             IsReadOnly = true,
             IsTabStop = true,
             Width = width,
-            FontSize = Theme.FontSmall,
+            FontSize = Theme.FontBody,
             TextAlignment = TextAlignment.Center,
             Padding = new Thickness(8, 0, 8, 0),
             VerticalContentAlignment = VerticalAlignment.Center,
