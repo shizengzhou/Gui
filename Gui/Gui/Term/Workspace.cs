@@ -752,7 +752,11 @@ public sealed partial class Workspace
         _contentCard.Margin = ContentCardMargin();
         _contentCard.CornerRadius = new CornerRadius(CompactDensity ? 0 : Theme.RadiusSurface);
         _surfaceHost.Margin = SurfaceMargin();
-        if (_sidebar is not null) _sidebar.Padding = SidebarPadding();
+        if (_sidebar is not null)
+        {
+            _sidebar.Padding = SidebarPadding();
+            _sidebar.Margin = SidebarMargin();
+        }
         if (_header is not null)
             _header.Margin = HeaderMargin(_placement != TabPlacement.Top);
         if (_headerSideTools is not null)
@@ -1826,6 +1830,13 @@ public sealed partial class Workspace
     /// </summary>
     private Thickness SidebarPadding() => new Thickness(6, CompactDensity ? 0 : 7, 6, 8);
 
+    /// <summary>
+    /// The rail leaves an 8px gap under it in the floating-island layout to match the
+    /// island's own bottom inset. Compact mode squares the island flush to the window edge,
+    /// so the rail has to reach the bottom too instead of exposing the backdrop there.
+    /// </summary>
+    private Thickness SidebarMargin() => new Thickness(0, 0, 0, CompactDensity ? 0 : 8);
+
     private void BuildSidebar()
     {
         // A rebuild replaces the rail, so a slide targeting the old one has to stop first.
@@ -1839,7 +1850,7 @@ public sealed partial class Workspace
             Width = _sidebarWidth,
             // No horizontal margin on either side: the rail's padding is the gap to the
             // window edge and to the island, so both sides read as 6.
-            Margin = new Thickness(0, 0, 0, 8),
+            Margin = SidebarMargin(),
             Background = ClearBrush(),
             BorderThickness = new Thickness(0),
             Padding = SidebarPadding(),
