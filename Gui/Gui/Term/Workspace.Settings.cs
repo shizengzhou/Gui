@@ -706,20 +706,27 @@ public sealed partial class Workspace
             SettingsRow(Strings.SettingsLightTheme, null, lightBox),
             SettingsRow(Strings.SettingsDarkTheme, null, darkBox))));
 
-        var opacityValue = new TextBlock
+        var opacityValue = new NumberBox
         {
-            Text = Math.Round(_config.BackgroundOpacity * 100).ToString(CultureInfo.InvariantCulture) + "%",
-            FontSize = Theme.FontCaption,
-            Foreground = TextFaintBrush(),
-            Width = 38,
-            TextAlignment = TextAlignment.Right,
+            Value = Math.Clamp(Math.Round(_config.BackgroundOpacity * 100), 0, 100),
+            Minimum = 0,
+            Maximum = 100,
+            SmallChange = 1,
+            LargeChange = 5,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden,
+            // Wide enough that the value stays readable while the clear button is showing.
+            Width = 80,
+            FontSize = Theme.FontSmall,
+            BorderBrush = PanelStrokeBrush(),
+            CornerRadius = new CornerRadius(Theme.RadiusField),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        CenterSettingsValue(opacityValue);
         var opacitySlider = new Slider
         {
-            Minimum = 30,
+            Minimum = 0,
             Maximum = 100,
-            Value = Math.Clamp(_config.BackgroundOpacity * 100.0, 30.0, 100.0),
+            Value = Math.Clamp(_config.BackgroundOpacity * 100.0, 0.0, 100.0),
             StepFrequency = 1,
             Width = 150,
             VerticalAlignment = VerticalAlignment.Center,
@@ -756,10 +763,27 @@ public sealed partial class Workspace
         {
             opacitySlider.Resources[key] = sliderRim;
         }
+        // The slider and the field drive the same setting; each guards against echoing the
+        // other's update back into it.
+        bool syncingOpacity = false;
         opacitySlider.ValueChanged += (_, e) =>
         {
-            opacityValue.Text = Math.Round(e.NewValue).ToString(CultureInfo.InvariantCulture) + "%";
+            if (syncingOpacity) return;
+            syncingOpacity = true;
+            opacityValue.Value = Math.Round(e.NewValue);
+            syncingOpacity = false;
             ApplyBackgroundOpacityChoice(e.NewValue / 100.0);
+        };
+        opacityValue.ValueChanged += (_, e) =>
+        {
+            // A cleared or half-typed field evaluates to NaN; keep the last good value.
+            if (syncingOpacity || double.IsNaN(e.NewValue)) return;
+            double percent = Math.Round(e.NewValue);
+            if (percent == e.OldValue) return;
+            syncingOpacity = true;
+            opacitySlider.Value = percent;
+            syncingOpacity = false;
+            ApplyBackgroundOpacityChoice(percent / 100.0);
         };
         var opacityRow = new StackPanel
         {
@@ -769,6 +793,7 @@ public sealed partial class Workspace
         };
         opacityRow.Children.Add(opacitySlider);
         opacityRow.Children.Add(opacityValue);
+        opacityRow.Children.Add(Label("%", Theme.FontCaption, TextFaintBrush()));
 
         TextBlock imagePath = Label(
             _config.BackgroundImage.Length > 0 ? _config.BackgroundImage : "—", 10.5, TextFaintBrush());
