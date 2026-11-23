@@ -463,9 +463,7 @@ Background image for the terminal.
 This should be a path to a PNG or JPEG file, other image formats are
 not yet supported.
 
-The background image is currently per-terminal, not per-window. If
-you are a heavy split user, the background image will be repeated across
-splits. A future improvement to Gui will address this.
+The background image is currently per-terminal, not per-window.
 
 The decoded image is shared by every pane in the process, so splits draw
 the same bitmap instead of duplicating it in VRAM.
@@ -476,19 +474,19 @@ Background image opacity.
 
 This is relative to the value of `background-opacity`.
 
-A value of `1.0` (the default) will result in the background image being
-placed on top of the general background color, and then the combined result
-will be adjusted to the opacity specified by `background-opacity`.
+Gui handles this differently from Ghostty. The value accepts `0.0` to
+`1.0`; anything above `1.0` is treated as `1.0`. The image is drawn at
+this opacity multiplied by `background-opacity`, layered on top of the
+pane surface.
 
-A value less than `1.0` will result in the background image being mixed
-with the general background color before the combined result is adjusted
-to the configured `background-opacity`.
+With the default `background-opacity = 1.0` the image is simply placed
+on top of the background color. At lower background opacities the image
+is layered over the already translucent pane, so it ends up noticeably
+more opaque than the pane background itself.
 
-A value greater than `1.0` will result in the background image having a
-higher opacity than the general background color. For instance, if the
-configured `background-opacity` is `0.5` and `background-image-opacity`
-is set to `1.5`, then the final opacity of the background image will be
-`0.5 * 1.5 = 0.75`.
+Ghostty instead composites the image with the background color first and
+then applies `background-opacity`, and it also accepts values above
+`1.0`.
 
 ## `background-image-position`
 

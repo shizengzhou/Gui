@@ -27,7 +27,7 @@
  "background": "窗口的背景色。写成十六进制（`#RRGGBB` 或 `RRGGBB`），或 11 个具名颜色之一。",
  "foreground": "窗口的前景色。写成十六进制（`#RRGGBB` 或 `RRGGBB`），或 11 个具名颜色之一。",
  "background-image": "终端的背景图片。应是 PNG 或 JPEG 文件路径，其它格式暂不支持。\n\n背景图片目前是「每个终端」而不是「每个窗口」：经常分屏时，背景图会在各个分屏里各画一份。解码后的位图由同一进程内的所有分屏共享，不会在显存中重复一份。将来的版本会改进「每窗口」效果。",
- "background-image-opacity": "背景图片的不透明度，相对于 `background-opacity` 的值：\n\n`1.0`（默认）时，图片先铺在背景色之上，再把合成结果整体按 `background-opacity` 调整。\n\n小于 `1.0` 时，图片先与背景色混合，合成结果再按 `background-opacity` 调整。\n\n大于 `1.0` 时，图片比背景色更不透明：例如 `background-opacity` 是 `0.5`、这里写 `1.5`，图片最终的不透明度是 `0.5 * 1.5 = 0.75`。",
+ "background-image-opacity": "背景图片的不透明度，相对于 `background-opacity` 的值。\n\nGui 的处理与 Ghostty 不同：取值限定在 `0.0` 到 `1.0`，大于 `1.0` 会按 `1.0` 处理。图片会以「本值 × `background-opacity`」的不透明度，叠加在面板背景之上。\n\n默认 `background-opacity = 1.0` 时，图片就是直接盖在背景色上。背景不透明度较低时，图片叠在已经半透明的面板之上，因此看起来会比面板背景明显更不透明。\n\nGhostty 则是先把图片与背景色合成，再整体应用 `background-opacity`，并且允许大于 `1.0` 的取值。",
  "background-image-position": "背景图片的位置。取值：`top-left`、`top-center`、`top-right`、`center-left`、`center`、`center-right`、`bottom-left`、`bottom-center`、`bottom-right`。默认 `center`。",
  "background-image-fit": "背景图片的缩放方式。取值：\n\n * `contain` - 保持宽高比，缩放到能完整放进终端的最大尺寸，整张图可见。\n\n * `cover` - 保持宽高比，缩放到刚好盖住终端的最小尺寸，图片边缘可能被裁掉。\n\n * `stretch` - 不保持宽高比，拉伸到整个终端。\n\n * `none` - 不缩放。\n\n默认 `contain`。",
  "background-image-repeat": "是否平铺背景图片。为 true 时，图片没铺满而留下空白的地方会用图片重复填满。默认 `false`。",

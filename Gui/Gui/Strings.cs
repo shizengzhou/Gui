@@ -165,7 +165,7 @@ public static class Strings
     public static string SettingsLightTheme => Pick("Light theme", "浅色主题");
     public static string SettingsDarkTheme => Pick("Dark theme", "深色主题");
     public static string SettingsBackground => Pick("Background", "背景");
-    public static string SettingsBackgroundOpacity => Pick("Background opacity", "背景透明度");
+    public static string SettingsBackgroundOpacity => Pick("Background opacity", "背景不透明度");
     public static string SettingsBackgroundBlur => Pick("Background blur", "背景模糊");
     public static string SettingsBackgroundImage => Pick("Background image", "背景图片");
     public static string SettingsBrowse => Pick("Browse…", "浏览…");
