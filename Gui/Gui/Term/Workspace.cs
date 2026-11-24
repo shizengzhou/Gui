@@ -2929,7 +2929,7 @@ public sealed partial class Workspace
 
         chipGrid.Children.Add(iconSlot);
 
-        tab.ChipText = Label(tab.Title, 12, ChromeTextBodyBrush());
+        tab.ChipText = Label(tab.Title, Theme.FontBody, ChromeTextBodyBrush());
         tab.ChipText.FontFamily = TitleFontFamily();
         tab.ChipText.Margin = new Thickness(0, 0, 8, 0);
         Grid.SetColumn(tab.ChipText, 1);

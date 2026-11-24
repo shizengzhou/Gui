@@ -241,6 +241,33 @@ public sealed partial class Workspace
         return true;
     }
 
+    /// <summary>
+    /// The settings layer covers the normal drag strip, so its inert chrome owns the same
+    /// drag. Buttons keep their own presses; blank space and the page title move the window.
+    /// </summary>
+    private void WireSettingsDrag(Border strip)
+    {
+        strip.PointerPressed += (_, args) =>
+        {
+            if (!IsInertPress(args.OriginalSource, strip)) return;
+            OnHeaderPointerPressed(strip, args);
+        };
+        strip.PointerMoved += (_, args) =>
+        {
+            if (!_dragging) return;
+            args.Handled = true;
+            DragTo();
+        };
+        strip.PointerReleased += (_, args) =>
+        {
+            if (!_dragging) return;
+            args.Handled = true;
+            strip.ReleasePointerCapture(args.Pointer);
+            EndDrag();
+        };
+        strip.PointerCaptureLost += (_, _) => EndDrag();
+    }
+
     private Border BuildSettingsNav()
     {
         var nav = new Border
@@ -259,7 +286,7 @@ public sealed partial class Workspace
             VerticalAlignment = VerticalAlignment.Center,
         };
         backRow.Children.Add(Glyph('\uE72B', 14, SurfaceIconFaintBrush()));
-        backRow.Children.Add(Label(Strings.SettingsBack, 12, TextBodyBrush()));
+        backRow.Children.Add(Label(Strings.SettingsBack, Theme.FontBody, TextBodyBrush()));
 
         // The page closes on release, not on press: collapsing it under the pointer would
         // leave the release to hit-test whatever the page covered. A button already works
@@ -302,7 +329,7 @@ public sealed partial class Workspace
             VerticalAlignment = VerticalAlignment.Center,
         };
         footRow.Children.Add(Glyph('\uE8E5', 14, SurfaceIconFaintBrush()));
-        footRow.Children.Add(Label(Strings.SettingsOpenConfig, 12, TextBodyBrush()));
+        footRow.Children.Add(Label(Strings.SettingsOpenConfig, Theme.FontBody, TextBodyBrush()));
 
         var foot = new ChromeButton(footRow, double.NaN, 32, new CornerRadius(Theme.RadiusField))
         {
@@ -325,6 +352,7 @@ public sealed partial class Workspace
         Grid.SetRow(foot, 1);
         layout.Children.Add(foot);
         nav.Child = layout;
+        WireSettingsDrag(nav);
 
         return nav;
     }
@@ -343,7 +371,7 @@ public sealed partial class Workspace
             VerticalAlignment = VerticalAlignment.Center,
         };
         FontIcon icon = Glyph(glyph, 14, SurfaceIconFaintBrush());
-        TextBlock text = Label(label, 12, TextBodyBrush());
+        TextBlock text = Label(label, Theme.FontBody, TextBodyBrush());
         text.VerticalAlignment = VerticalAlignment.Center;
 
         var row = new StackPanel
@@ -453,6 +481,7 @@ public sealed partial class Workspace
         headGrid.Children.Add(captions);
 
         head.Child = headGrid;
+        WireSettingsDrag(head);
         Grid.SetRow(head, 0);
         main.Children.Add(head);
 
@@ -1917,7 +1946,7 @@ public sealed partial class Workspace
         };
 
         var titles = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
-        titles.Children.Add(Label("Gui", Theme.FontBody, TextStrongBrush()));
+        titles.Children.Add(Label("Gui", Theme.FontTitle, TextStrongBrush()));
         titles.Children.Add(Label(Strings.AboutCopyright(DateTime.Now.Year), Theme.FontCaption, TextFaintBrush()));
 
         // The version sits at the end of the header row, where the toolkit expander put its

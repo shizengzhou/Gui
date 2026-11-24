@@ -61,6 +61,8 @@ public sealed partial class Workspace
 
         public bool Light { get; }
 
+        public double FontSize => Theme.FontBody;
+
         /// <summary>1 while this is the committed theme, 0 otherwise.</summary>
         public double CheckOpacity
         {
@@ -367,7 +369,7 @@ public sealed partial class Workspace
         AddStarColumn(grid);
         AddAutoColumn(grid);
 
-        TextBlock title = Label(text, 12.5, TextBodyBrush());
+        TextBlock title = Label(text, Theme.FontBody, TextBodyBrush());
         grid.Children.Add(title);
 
         if (shortcut.Length > 0)
@@ -380,7 +382,7 @@ public sealed partial class Workspace
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            TextBlock key = Label(shortcut, 9.5, TextFaintBrush());
+            TextBlock key = Label(shortcut, Theme.FontCaption, TextFaintBrush());
             key.FontFamily = new FontFamily("Cascadia Mono");
             keyChip.Child = key;
             Grid.SetColumn(keyChip, 1);
@@ -432,7 +434,7 @@ public sealed partial class Workspace
         AddAutoColumn(grid);
         AddAutoColumn(grid);
 
-        TextBlock title = Label(text, 12.5, TextBodyBrush());
+        TextBlock title = Label(text, Theme.FontBody, TextBodyBrush());
         grid.Children.Add(title);
 
         var valueChip = new Border
@@ -443,7 +445,7 @@ public sealed partial class Workspace
             VerticalAlignment = VerticalAlignment.Center,
             MaxWidth = 180,
         };
-        TextBlock value = Label(string.Empty, 9.5, TextFaintBrush());
+        TextBlock value = Label(string.Empty, Theme.FontCaption, TextFaintBrush());
         valueChip.Child = value;
         Grid.SetColumn(valueChip, 1);
         grid.Children.Add(valueChip);
@@ -623,7 +625,7 @@ public sealed partial class Workspace
             Margin = new Thickness(0, 0, 8, 0),
             Visibility = Visibility.Collapsed,
         };
-        _paletteChipText = Label(string.Empty, 10.5, TextBodyBrush());
+        _paletteChipText = Label(string.Empty, Theme.FontSmall, TextBodyBrush());
         _paletteChip.Child = _paletteChipText;
         Grid.SetColumn(_paletteChip, 1);
         searchGrid.Children.Add(_paletteChip);
@@ -881,7 +883,7 @@ public sealed partial class Workspace
         // Every row has registered its handler by now; aliases need the final table.
         LinkKeybindAliases();
 
-        _paletteEmpty = Label(Strings.NoMatchingCommands, 12, TextFaintBrush());
+        _paletteEmpty = Label(Strings.NoMatchingCommands, Theme.FontBody, TextFaintBrush());
         _paletteEmpty.Margin = new Thickness(12, 22, 12, 22);
         _paletteEmpty.TextWrapping = TextWrapping.Wrap;
         _paletteEmpty.HorizontalAlignment = HorizontalAlignment.Center;
@@ -921,14 +923,14 @@ public sealed partial class Workspace
             Margin = new Thickness(14, 0, 14, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        hints.Children.Add(Label(Strings.HintSelect, 10.5, TextFaintBrush()));
-        hints.Children.Add(Label(Strings.HintRun, 10.5, TextFaintBrush()));
-        hints.Children.Add(Label(Strings.HintClose, 10.5, TextFaintBrush()));
+        hints.Children.Add(Label(Strings.HintSelect, Theme.FontCaption, TextFaintBrush()));
+        hints.Children.Add(Label(Strings.HintRun, Theme.FontCaption, TextFaintBrush()));
+        hints.Children.Add(Label(Strings.HintClose, Theme.FontCaption, TextFaintBrush()));
 
         // "Backspace back" follows "Esc close" on the same hint line. It is not part of the
         // list and is only visible while a second level is open; like the other hints it
         // only describes the key and is not a click target.
-        _paletteBackRow = Label(Strings.HintBack, 10.5, TextFaintBrush());
+        _paletteBackRow = Label(Strings.HintBack, Theme.FontCaption, TextFaintBrush());
         _paletteBackRow.Visibility = Visibility.Collapsed;
         hints.Children.Add(_paletteBackRow);
 
@@ -1027,7 +1029,7 @@ public sealed partial class Workspace
             ApplyThemeRowStyle(row, args.ItemIndex);
         };
 
-        _paletteThemeEmpty = Label(Strings.NoMatchingCommands, 12, TextFaintBrush());
+        _paletteThemeEmpty = Label(Strings.NoMatchingCommands, Theme.FontBody, TextFaintBrush());
         _paletteThemeEmpty.Margin = new Thickness(12, 22, 12, 22);
         _paletteThemeEmpty.TextWrapping = TextWrapping.Wrap;
         _paletteThemeEmpty.HorizontalAlignment = HorizontalAlignment.Center;
@@ -1055,7 +1057,7 @@ public sealed partial class Workspace
             "<Grid.ColumnDefinitions>" +
             "<ColumnDefinition Width=\"*\"/><ColumnDefinition Width=\"Auto\"/>" +
             "</Grid.ColumnDefinitions>" +
-            "<TextBlock Text=\"{Binding Name}\" FontSize=\"12.5\" VerticalAlignment=\"Center\"/>" +
+            "<TextBlock Text=\"{Binding Name}\" FontSize=\"{Binding FontSize}\" VerticalAlignment=\"Center\"/>" +
             "<FontIcon Grid.Column=\"1\" Glyph=\"&#xE73E;\" FontSize=\"12\" VerticalAlignment=\"Center\"" +
             " Opacity=\"{Binding CheckOpacity}\"/>" +
             "</Grid></Border></DataTemplate>";
@@ -2083,18 +2085,18 @@ public sealed partial class Workspace
             identity.Children.Add(new TextBlock
             {
                 Text = "Gui",
-                FontSize = 18,
+                FontSize = Theme.FontTitle,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             });
             identity.Children.Add(new TextBlock
             {
                 Text = Strings.AboutVersion(AppVersion()),
-                FontSize = 12,
+                FontSize = Theme.FontBody,
             });
             identity.Children.Add(new TextBlock
             {
                 Text = Strings.AboutCopyright(DateTime.Now.Year),
-                FontSize = 12,
+                FontSize = Theme.FontCaption,
                 TextWrapping = TextWrapping.Wrap,
             });
 
@@ -2108,14 +2110,14 @@ public sealed partial class Workspace
             {
                 Content = RepositoryUrl,
                 NavigateUri = new Uri(RepositoryUrl),
-                FontSize = 12,
+                FontSize = Theme.FontBody,
                 Padding = new Thickness(0),
                 MinWidth = 0,
             });
             body.Children.Add(new TextBlock
             {
                 Text = Strings.AboutLicense + ": MIT License",
-                FontSize = 12,
+                FontSize = Theme.FontBody,
                 TextWrapping = TextWrapping.Wrap,
             });
 
