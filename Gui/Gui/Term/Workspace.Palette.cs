@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
 using Windows.System;
@@ -925,17 +926,10 @@ public sealed partial class Workspace
         hints.Children.Add(Label(Strings.HintClose, 10.5, TextFaintBrush()));
 
         // "Backspace back" follows "Esc close" on the same hint line. It is not part of the
-        // list and is only visible while a second level is open.
+        // list and is only visible while a second level is open; like the other hints it
+        // only describes the key and is not a click target.
         _paletteBackRow = Label(Strings.HintBack, 10.5, TextFaintBrush());
         _paletteBackRow.Visibility = Visibility.Collapsed;
-        _paletteBackRow.PointerEntered += (_, _) => _paletteBackRow.Foreground = TextBodyBrush();
-        _paletteBackRow.PointerExited += (_, _) => _paletteBackRow.Foreground = TextFaintBrush();
-        _paletteBackRow.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, _paletteBackRow)) return;
-            LeavePaletteSubmenu();
-        };
         hints.Children.Add(_paletteBackRow);
 
         footer.Child = hints;
@@ -2114,7 +2108,6 @@ public sealed partial class Workspace
             {
                 Content = RepositoryUrl,
                 NavigateUri = new Uri(RepositoryUrl),
-                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono"),
                 FontSize = 12,
                 Padding = new Thickness(0),
                 MinWidth = 0,
@@ -2151,11 +2144,16 @@ public sealed partial class Workspace
     private TextBlock? _updatePillText;
     private FontIcon? _updatePillIcon;
     private FontIcon? _updatePillCloseIcon;
+    private RotateTransform? _updatePillSpinTransform;
+    private Storyboard? _updatePillSpinStoryboard;
+    private Storyboard? _updatePillEnterStoryboard;
+    private Storyboard? _updatePillExitStoryboard;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _updatePillTimer;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _updateDelayTimer;
     private bool _updateCheckInFlight;
     private bool _updatePillClickable;
     private bool _updatePillVisible;
+    private bool _updatePillSpinning;
     private string _updatePillUrl = string.Empty;
     private string _updatePillMessage = string.Empty;
     private char _updatePillGlyph;
@@ -2167,18 +2165,29 @@ public sealed partial class Workspace
     {
         if (_quickTerminal) return;
 
+        // A chrome rebuild replaces the pill; drop the old animations before their targets go.
+        _updatePillSpinStoryboard?.Stop();
+        _updatePillSpinStoryboard = null;
+        _updatePillEnterStoryboard?.Stop();
+        _updatePillEnterStoryboard = null;
+        _updatePillExitStoryboard?.Stop();
+        _updatePillExitStoryboard = null;
+
         _updatePillText = new TextBlock
         {
-            FontSize = Theme.FontSmall,
+            FontSize = Theme.FontBody,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = 420,
         };
+        _updatePillSpinTransform = new RotateTransform();
         _updatePillIcon = new FontIcon
         {
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
             FontSize = Theme.FontSmall,
             VerticalAlignment = VerticalAlignment.Center,
+            RenderTransform = _updatePillSpinTransform,
+            RenderTransformOrigin = new Point(0.5, 0.5),
         };
         var row = new StackPanel
         {
@@ -2195,24 +2204,16 @@ public sealed partial class Workspace
             FontSize = 8,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var close = new Border
+        var close = new ChromeButton(_updatePillCloseIcon, 18, 18, new CornerRadius(9))
         {
-            Width = 18,
-            Height = 18,
-            CornerRadius = new CornerRadius(9),
-            Background = ClearBrush(),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(2, 0, -2, 0),
-            Child = _updatePillCloseIcon,
         };
-        close.PointerEntered += (_, _) => close.Background = new SolidColorBrush(Theme.ChipHover());
-        close.PointerExited += (_, _) => close.Background = ClearBrush();
-        close.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, close)) return;
-            HideUpdatePill();
-        };
+        close.SetColors(Theme.TextFaint, hoverFill: Theme.ChipHover);
+        close.SetAccessibleName(Strings.UpdateDismiss);
+        Tips.Set(close, Strings.UpdateDismiss);
+        close.Click += (_, _) => HideUpdatePill();
+        _chromeButtons.Add(close);
 
         row.Children.Add(_updatePillIcon);
         row.Children.Add(_updatePillText);
@@ -2229,11 +2230,14 @@ public sealed partial class Workspace
             Child = row,
             Shadow = new ThemeShadow(),
             Translation = new System.Numerics.Vector3(0, 0, 32),
+            RenderTransform = new CompositeTransform(),
         };
-        _updatePill.PointerPressed += (_, args) =>
+        _updatePill.PointerReleased += (_, args) =>
         {
+            if (!IsPrimaryRelease(args, _updatePill!)) return;
+            // A release on the close button belongs to that button, not to the notice.
+            if (IsWithinSubtree(args.OriginalSource, close)) return;
             args.Handled = true;
-            if (!IsPrimaryPress(args, _updatePill!)) return;
             if (_updatePillClickable && !_updateCheckInFlight)
             {
                 LaunchUrl(_updatePillUrl.Length > 0 ? _updatePillUrl : ReleaseNotesUrl);
@@ -2258,7 +2262,12 @@ public sealed partial class Workspace
     {
         if (_updatePill is null || _updatePillText is null || _updatePillIcon is null) return;
 
-        _updatePill.Visibility = _updatePillVisible ? Visibility.Visible : Visibility.Collapsed;
+        // Keep the pill up while it fades out; the exit storyboard collapses it when done.
+        bool keepForExit = _updatePillExitStoryboard is not null;
+        _updatePill.Visibility = _updatePillVisible || keepForExit
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        UpdatePillSpin(_updatePillVisible && _updatePillSpinning);
         if (!_updatePillVisible) return;
 
         Windows.UI.Color ink = _updatePillWarning ? Theme.Warning() : Theme.Accent();
@@ -2274,14 +2283,28 @@ public sealed partial class Workspace
     }
 
     /// <summary>Shows the pill. A clickable pill (an available update) stays until clicked.</summary>
-    private void ShowUpdatePill(string message, char glyph, bool warning, bool clickable, bool autoHide)
+    private void ShowUpdatePill(string message, char glyph, bool warning, bool clickable,
+        bool autoHide, bool spin = false)
     {
+        // A new state can arrive while the old pill is fading out (a second check started
+        // from the palette, for instance); take it back before showing it again.
+        _updatePillExitStoryboard?.Stop();
+        _updatePillExitStoryboard = null;
+        if (_updatePill is not null)
+        {
+            _updatePill.Opacity = 1;
+            if (_updatePill.RenderTransform is CompositeTransform shown) shown.TranslateY = 0;
+        }
+
         _updatePillMessage = message;
         _updatePillGlyph = glyph;
         _updatePillWarning = warning;
         _updatePillClickable = clickable;
+        _updatePillSpinning = spin;
+        bool wasVisible = _updatePillVisible;
         _updatePillVisible = true;
         RenderUpdatePill();
+        if (!wasVisible) PlayUpdatePillIn();
 
         _updatePillTimer?.Stop();
         if (!autoHide || _dispatcher is null) return;
@@ -2294,6 +2317,137 @@ public sealed partial class Workspace
             _updatePillTimer.Tick += OnUpdatePillTimerTick;
         }
         _updatePillTimer.Start();
+    }
+
+    /// <summary>The pill rises a few DIPs and fades in the first time it is shown.</summary>
+    private void PlayUpdatePillIn()
+    {
+        if (_updatePill is null || _updatePill.RenderTransform is not CompositeTransform slide) return;
+
+        _updatePillEnterStoryboard?.Stop();
+        slide.TranslateY = 8;
+        _updatePill.Opacity = 0;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var fade = new DoubleAnimation
+        {
+            From = 0,
+            To = 1,
+            Duration = new Duration(TimeSpan.FromMilliseconds(140)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(fade, _updatePill);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+        var rise = new DoubleAnimation
+        {
+            From = 8,
+            To = 0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(160)),
+            EasingFunction = ease,
+            // The transform runs on the UI thread, so the storyboard has to be told to
+            // animate it.
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(rise, slide);
+        Storyboard.SetTargetProperty(rise, "TranslateY");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(fade);
+        storyboard.Children.Add(rise);
+        _updatePillEnterStoryboard = storyboard;
+        storyboard.Begin();
+    }
+
+    /// <summary>The pill fades out and drops back before it is collapsed.</summary>
+    private void PlayUpdatePillOut()
+    {
+        if (_updatePill is null || _updatePill.Visibility != Visibility.Visible ||
+            _updatePill.RenderTransform is not CompositeTransform slide)
+        {
+            return;
+        }
+
+        _updatePillEnterStoryboard?.Stop();
+        _updatePillEnterStoryboard = null;
+        _updatePillExitStoryboard?.Stop();
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+        var fade = new DoubleAnimation
+        {
+            From = _updatePill.Opacity,
+            To = 0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(120)),
+            EasingFunction = ease,
+        };
+        Storyboard.SetTarget(fade, _updatePill);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+        var drop = new DoubleAnimation
+        {
+            From = slide.TranslateY,
+            To = 8,
+            Duration = new Duration(TimeSpan.FromMilliseconds(140)),
+            EasingFunction = ease,
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(drop, slide);
+        Storyboard.SetTargetProperty(drop, "TranslateY");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(fade);
+        storyboard.Children.Add(drop);
+        storyboard.Completed += (_, _) =>
+        {
+            if (!ReferenceEquals(_updatePillExitStoryboard, storyboard) || _updatePill is null) return;
+            _updatePillExitStoryboard = null;
+            _updatePill.Visibility = Visibility.Collapsed;
+            _updatePill.Opacity = 1;
+            slide.TranslateY = 0;
+        };
+        _updatePillExitStoryboard = storyboard;
+        storyboard.Begin();
+    }
+
+    /// <summary>Turns the pill's icon while a check is in flight.</summary>
+    private void UpdatePillSpin(bool spin)
+    {
+        if (_updatePillSpinTransform is null) return;
+
+        if (!spin)
+        {
+            _updatePillSpinStoryboard?.Stop();
+            _updatePillSpinStoryboard = null;
+            _updatePillSpinTransform.Angle = 0;
+            return;
+        }
+        if (_updatePillSpinStoryboard is not null) return;
+
+        var turn = new DoubleAnimation
+        {
+            From = 0,
+            To = 360,
+            Duration = new Duration(TimeSpan.FromSeconds(1.1)),
+            RepeatBehavior = RepeatBehavior.Forever,
+            // A render-transform animation runs on the UI thread; without this flag the
+            // storyboard silently declines to animate it.
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(turn, _updatePillSpinTransform);
+        Storyboard.SetTargetProperty(turn, "Angle");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(turn);
+        _updatePillSpinStoryboard = storyboard;
+        storyboard.Begin();
+    }
+
+    /// <summary>True when the source sits inside the boundary's subtree.</summary>
+    private static bool IsWithinSubtree(object? source, DependencyObject boundary)
+    {
+        for (DependencyObject? node = source as DependencyObject; node is not null;
+             node = VisualTreeHelper.GetParent(node))
+        {
+            if (ReferenceEquals(node, boundary)) return true;
+        }
+        return false;
     }
 
     private void OnUpdateDelayTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
@@ -2312,8 +2466,10 @@ public sealed partial class Workspace
     {
         _updatePillVisible = false;
         _updatePillClickable = false;
+        _updatePillSpinning = false;
         _updatePillTimer?.Stop();
-        RenderUpdatePill();
+        UpdatePillSpin(false);
+        PlayUpdatePillOut();
     }
 
     /// <summary>
@@ -2326,7 +2482,8 @@ public sealed partial class Workspace
         _updateCheckInFlight = true;
 
         if (userInitiated)
-            ShowUpdatePill(Strings.UpdateChecking, '\uE895', warning: false, clickable: false, autoHide: false);
+            ShowUpdatePill(Strings.UpdateChecking, '\uE895', warning: false, clickable: false,
+                autoHide: false, spin: true);
 
         try
         {

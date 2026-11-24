@@ -127,6 +127,7 @@ public static class Strings
         Pick($"Update Available: {version}", $"有可用更新：{version}");
     public static string UpdateFailed =>
         Pick("Update Check Failed, Please Try Again Later", "检查更新失败，请稍后重试");
+    public static string UpdateDismiss => Pick("Dismiss update notice", "关闭更新提示");
     public static string HelpReleaseNotes => Pick("Release Notes", "发布说明");
     public static string HelpDocumentation => Pick("Documentation", "文档");
     public static string HelpFeedback => Pick("Feedback", "反馈");

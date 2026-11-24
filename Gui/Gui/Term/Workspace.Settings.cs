@@ -25,7 +25,7 @@ public sealed partial class Workspace
     {
         public string Page = string.Empty;
         public string Label = string.Empty;
-        public Border Button = null!;
+        public ChromeButton Button = null!;
         public TextBlock Text = null!;
         public FontIcon Icon = null!;
         public Border Accent = null!;
@@ -329,7 +329,7 @@ public sealed partial class Workspace
         return nav;
     }
 
-    private Border SettingsNavItem(string page, char glyph, string label)
+    private ChromeButton SettingsNavItem(string page, char glyph, string label)
     {
         // The bar keeps its slot whether or not this row is the active one: collapsing it
         // would pull the icon and label 12 DIP to the left and make every row jump sideways
@@ -356,31 +356,22 @@ public sealed partial class Workspace
         row.Children.Add(icon);
         row.Children.Add(text);
 
-        var button = new Border
+        var button = new ChromeButton(row, double.NaN, 32, new CornerRadius(Theme.RadiusField))
         {
-            Height = 32,
-            CornerRadius = new CornerRadius(Theme.RadiusField),
-            Background = ClearBrush(),
             Padding = new Thickness(7, 0, 10, 0),
-            Child = row,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
         };
-        button.PointerEntered += (_, _) =>
+        button.SetColors(Theme.PaneIconFaint, hoverFill: Theme.ChipHover);
+        button.SetAccessibleName(label);
+        button.Click += (_, _) =>
         {
-            if (page != _settingsPage) button.Background = ChipHoverBrush();
-        };
-        button.PointerExited += (_, _) =>
-        {
-            if (page != _settingsPage) button.Background = ClearBrush();
-        };
-        button.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, button)) return;
-            // This press is swallowed here, so the layer handler cannot move focus; a field
-            // on the page being left would otherwise keep it while its page goes collapsed.
+            // A mouse press does not move focus on a chrome button, so hand it to the page
+            // owner before the page being left collapses under the field that had it.
             _settingsFocus?.Focus(FocusState.Programmatic);
             SelectSettingsPage(page);
         };
+        _chromeButtons.Add(button);
 
         _settingsNavEntries.Add(new SettingsNavEntry
         {
@@ -519,7 +510,7 @@ public sealed partial class Workspace
         foreach (SettingsNavEntry entry in _settingsNavEntries)
         {
             bool active = entry.Page == page;
-            entry.Button.Background = active ? ChipHoverBrush() : ClearBrush();
+            entry.Button.SetActive(active);
             entry.Text.Foreground = active ? TextStrongBrush() : TextBodyBrush();
             entry.Text.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
             entry.Icon.Foreground = active ? AccentBrush() : SurfaceIconFaintBrush();
@@ -1958,10 +1949,9 @@ public sealed partial class Workspace
         };
         header.PointerEntered += (_, _) => header.Background = ChipHoverBrush();
         header.PointerExited += (_, _) => header.Background = ClearBrush();
-        header.PointerPressed += (_, args) =>
+        header.PointerReleased += (_, args) =>
         {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, header)) return;
+            if (!IsPrimaryRelease(args, header)) return;
             bool open = content.Visibility != Visibility.Visible;
             content.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
             // The header is the whole card while closed; with the body open it is only its
@@ -2002,25 +1992,16 @@ public sealed partial class Workspace
         };
 
         FontIcon copyIcon = Glyph('\uE8C8', Theme.FontBody, TextFaintBrush());
-        var copy = new Border
+        var copy = new ChromeButton(copyIcon, 26, 26, new CornerRadius(Theme.RadiusControl))
         {
-            Width = 26,
-            Height = 26,
-            CornerRadius = new CornerRadius(Theme.RadiusControl),
-            Background = ClearBrush(),
-            Child = copyIcon,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
         };
+        copy.SetColors(Theme.TextFaint, hoverFill: Theme.ChipHover);
+        copy.SetAccessibleName(Strings.AboutCopyRepository);
         Tips.Set(copy, Strings.AboutCopyRepository);
-        copy.PointerEntered += (_, _) => copy.Background = ChipHoverBrush();
-        copy.PointerExited += (_, _) => copy.Background = ClearBrush();
-        copy.PointerPressed += (_, args) =>
-        {
-            args.Handled = true;
-            if (!IsPrimaryPress(args, copy)) return;
-            ClipboardAccess.TryWriteText(RepositoryUrl);
-        };
+        copy.Click += (_, _) => ClipboardAccess.TryWriteText(RepositoryUrl);
+        _chromeButtons.Add(copy);
 
         var row = new StackPanel
         {
