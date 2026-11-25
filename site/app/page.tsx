@@ -30,7 +30,7 @@ export default function Home() {
           </div>
           <div className="hero-meta">
             <span>Windows 10 1809+</span><span className="sep">·</span>
-            <span>x64</span><span className="sep">·</span>
+            <span>x64 · ARM64</span><span className="sep">·</span>
             <span>MIT</span><span className="sep">·</span>
           </div>
         </div>

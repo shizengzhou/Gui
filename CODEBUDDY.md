@@ -14,10 +14,10 @@ Gui/Gui/                          # WinUI 3 application project (Gui.csproj) —
   Assets/app.ico                  # app icon, embedded in Gui.exe and the setup
   Assets/Fonts/                   # bundled JetBrainsMono Nerd Font (4 faces)
   Assets/Themes/light|dark/       # ~890 bundled Ghostty themes, split by background brightness
-  native/<platform>/ghostty-vt.dll# prebuilt libghostty-vt (see native/build-ghostty-vt.sh)
+  native/<platform>/ghostty-vt.dll# the official prebuilt libghostty-vt (see native/get-ghostty-vt.ps1)
   app.manifest                    # OS compatibility + PerMonitorV2 DPI
   Properties/PublishProfiles/     # win-x64 / win-x86 / win-arm64 .pubxml
-native/build-ghostty-vt.sh        # builds ghostty-vt.dll for Windows via Zig
+native/get-ghostty-vt.ps1         # installs those DLLs from the libghostty-vt release files
 Gui/Gui (Package)/                # leftover MSIX packaging project — NOT in the solution any more
 ```
 
@@ -31,6 +31,8 @@ the project and running the exe is the whole story.
 Always pass an explicit `Platform` (x64 is the practical default); the solution has no AnyCPU
 configuration and the csproj `Platforms` are `x86;x64;ARM64`. The RuntimeIdentifier follows
 `Platform` (`win-x64` / `win-x86` / `win-arm64`), so the output lands in a RID subfolder.
+`x86` builds but has no native core, so it is not packageable — see
+"Native dependency: libghostty-vt".
 
 ```bash
 # Build
@@ -68,10 +70,17 @@ dotnet run --project tests/Gui.PerfTests -c Release
 ./tests/osc7501.ps1
 
 # Installers: tests, publish and Inno Setup in one step; the version is stamped into the
-# exe, the setups and their file names. One version yields two payloads: self-contained
-# (dist/Gui-<version>-x64-setup.exe) and framework-dependent (`-lite`, needs .NET 10,
-# dist/Gui-<version>-x64-lite-setup.exe); -Variant full|lite builds just one.
+# exe, the setups and their file names. One version yields two payloads per architecture:
+# self-contained (dist/Gui-<version>-<arch>-setup.exe) and framework-dependent (`-lite`,
+# which installs .NET 10 itself when the machine has none,
+# dist/Gui-<version>-<arch>-lite-setup.exe); -Variant full|lite builds just
+# one, -Platform x64,ARM64 builds both (four setups, which is what a release publishes).
 ./build-installer.ps1 1.2.3
+
+# The native core: the official prebuilt libghostty-vt Windows zips, checksummed and copied
+# into Gui/Gui/native/{x64,ARM64}, where they are checked in. Re-run after changing the
+# version, then re-run the ABI contract test before committing.
+./native/get-ghostty-vt.ps1
 ```
 
 `tests/Gui.AbiTests` compiles the real `Term/GhosttyNative.cs` and verifies every struct
@@ -530,16 +539,33 @@ dragged, 120..800), `debug-tap` and `crash-dumps`.
 
 ## Native dependency: libghostty-vt
 
-`Gui/Gui/native/<platform>/ghostty-vt.dll` is built from the upstream `libghostty-vt` source drop
-and copied next to `Gui.exe` by an item in `Gui.csproj`. Rebuild it with:
+`Gui/Gui/native/<platform>/ghostty-vt.dll` is the official prebuilt Windows binary of
+libghostty-vt — a library released separately from Ghostty, with its own `vt-<version>` tags —
+and `Gui.csproj` copies it next to `Gui.exe`. Both checked-in architectures come from one release:
 
 ```bash
-ZIG=/path/to/zig.exe PLATFORM=x64 ./native/build-ghostty-vt.sh
+# x64 and ARM64, at the version pinned as the script's own default
+./native/get-ghostty-vt.ps1
+
+# a different release; re-run the ABI contract test afterwards
+./native/get-ghostty-vt.ps1 1.0.2
 ```
 
-Zig 0.17.0 is required (the version pinned in `build.zig.zon` of the 1.4.1 source drop);
-the script runs `zig build -Demit-lib-vt -Doptimize=ReleaseFast -Dtarget=<arch>-windows`.
-Only the x64 binary is checked in; other platforms need the script with `PLATFORM=x86` / `ARM64`.
+The script downloads `ghostty-vt-<version>-{x86_64,aarch64}-windows-gnu.zip` from
+`https://release.files.ghostty.org/libghostty-vt/<version>/`, checks each against that release's
+`SHA256SUMS`, and installs `bin/ghostty-vt.dll`. Nothing else in the zip is used: the DLL needs
+no redistributable (it imports only `ntdll`, `kernel32` and the Universal C Runtime), and the
+payload rule in `installer/gui.iss` excludes `*.pdb`, so the pdb stays with the import and static
+libraries and the headers.
+
+- There is no 32-bit zip, so x86 has no native core: it still builds, but
+  `build-installer.ps1` offers only x64 and ARM64.
+- Upstream tests the x86_64 zip at release and has never run the aarch64 one, and an x64 test
+  process cannot load that either, so the ARM64 core is only checked for its PE machine type.
+  `tests/Gui.AbiTests` is what proves `Term/GhosttyNative.cs`, against the x64 DLL.
+- A new libghostty-vt release may move the ABI, which is exactly what the contract test
+  catches: run it after changing the version and expect `GhosttyNative.cs` to need the same
+  change.
 
 ## Build configuration notes
 
@@ -564,6 +590,23 @@ Only the x64 binary is checked in; other platforms need the script with `PLATFOR
 
 ## Packaging and diagnostics
 
+- The `-lite` setup resolves the .NET 10 dependency itself: `InitializeSetup` in `gui.iss`
+  (under `#ifdef Lite`) looks for a `10.*` folder in `%ProgramFiles%\dotnet` (and in
+  `DOTNET_ROOT_<arch>` / `DOTNET_ROOT` when set), which is what the app's default Minor
+  roll-forward accepts — an installed 8.x or 11.x does not. A per-user `dotnet-install` folder
+  is deliberately not counted: since .NET 7 an apphost searches one location only, so that
+  install is invisible to Gui unless DOTNET_ROOT points at it. On a miss, `PrepareToInstall`
+  downloads Microsoft's channel installer
+  (`https://aka.ms/dotnet/10.0/dotnet-runtime-win-<arch>.exe`) with Setup's own
+  `TDownloadWizardPage` — `CreateDownloadPage` + `Add` + `Download`, `ShowBaseNameInsteadOfUrl`
+  on — so the wizard shows a live progress bar and a *Stop download* button instead of hanging,
+  and `Download`'s byte count is gated before anything is executed because an unknown aka.ms
+  link answers 200 with an HTML page. The file then runs `/install /quiet /norestart` through
+  `ShellExec`, which is the only way to get that installer's elevation prompt: the runtime is a
+  per-machine install (Program Files + HKLM), which is why that one step needs admin while Gui
+  itself does not. The folder check afterwards is the contract, not the exit code. A silent run
+  does the same without asking, and a declined dialog aborts before Setup writes anything.
+  Packaging therefore needs Inno Setup 6.2 or newer, which `gui.iss` asserts with `#if VER`.
 - `Gui/Gui (Package)/Package.appxmanifest` is not consumed by the build (the app is unpackaged);
   it is kept only for the `systemai:Capability Name="systemAIModels"` declaration.
   `Gui/Gui/app.manifest` is the classic Win32 manifest.

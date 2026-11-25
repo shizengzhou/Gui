@@ -11,6 +11,10 @@ export type Download = {
   icon: IconName;
   title: Localized;
   desc: Localized;
+  // Tail of the release asset this card resolves, e.g. '-x64-lite-setup.exe'. One version
+  // publishes one file per architecture and per runtime variant, so the whole tail is the
+  // only thing that tells the two apart.
+  suffix: string;
   file: string;
   size: string;
   url: string;

@@ -70,6 +70,7 @@ const downloads: Download[] = [
       zh: '自包含，随包携带 .NET 10 运行时，机器上什么都不用装。',
       en: 'Self-contained. Ships the .NET 10 runtime, so nothing else needs to be installed.',
     },
+    suffix: '-x64-setup.exe',
     file: 'Gui-0.1.1-x64-setup.exe',
     size: '≈ 63 MB · x64',
     url: `${LATEST}/Gui-0.1.1-x64-setup.exe`,
@@ -79,12 +80,39 @@ const downloads: Download[] = [
     icon: 'bolt',
     title: { zh: 'Lite', en: 'Lite' },
     desc: {
-      zh: '框架依赖，不带 .NET 10 运行时；安装时会检查，缺失时给出下载入口。',
-      en: 'Framework-dependent. Leaves out the .NET 10 runtime; the setup checks for it and links to the download if missing.',
+      zh: '框架依赖，不带 .NET 10 运行时；机器上没有时，安装程序会先自动装上。',
+      en: 'Framework-dependent. Leaves out the .NET 10 runtime; a machine without one gets it installed first.',
     },
+    suffix: '-x64-lite-setup.exe',
     file: 'Gui-0.1.1-x64-lite-setup.exe',
     size: '≈ 31 MB · x64 · .NET 10',
     url: `${LATEST}/Gui-0.1.1-x64-lite-setup.exe`,
+  },
+  {
+    primary: false,
+    icon: 'chip',
+    title: { zh: '完整安装包 · ARM64', en: 'Full installer · ARM64' },
+    desc: {
+      zh: '给 Windows on Arm 设备的自包含安装包，同样携带 .NET 10 运行时。',
+      en: 'Self-contained package for Windows on Arm devices, with the .NET 10 runtime included.',
+    },
+    suffix: '-arm64-setup.exe',
+    file: 'Gui-0.1.1-arm64-setup.exe',
+    size: '≈ 60 MB · ARM64',
+    url: `${LATEST}/Gui-0.1.1-arm64-setup.exe`,
+  },
+  {
+    primary: false,
+    icon: 'chip',
+    title: { zh: 'Lite · ARM64', en: 'Lite · ARM64' },
+    desc: {
+      zh: 'ARM64 的框架依赖包，体积更小，需要机器已装 .NET 10 运行时。',
+      en: 'Framework-dependent ARM64 package: a smaller download for a machine that already has the .NET 10 runtime.',
+    },
+    suffix: '-arm64-lite-setup.exe',
+    file: 'Gui-0.1.1-arm64-lite-setup.exe',
+    size: '≈ 29 MB · ARM64 · .NET 10',
+    url: `${LATEST}/Gui-0.1.1-arm64-lite-setup.exe`,
   },
 ];
 
@@ -108,20 +136,25 @@ export async function getDownloads(): Promise<Download[]> {
 
     const release = (await res.json()) as GitHubRelease;
     const assets = release.assets ?? [];
-    const full = assets.find((a) => a.name.toLowerCase().endsWith('-x64-setup.exe'));
-    const lite = assets.find((a) => a.name.toLowerCase().endsWith('-lite-setup.exe'));
 
-    return downloads.map((d) => {
-      const asset = d.file.includes('-lite-') ? lite : full;
-      if (!asset) return d;
+    // A card whose asset is missing from the release is dropped instead of left pointing at
+    // a download that 404s: an architecture only shows up once the workflow publishes it.
+    const resolved: Download[] = [];
+    for (const d of downloads) {
+      // Match on the card's whole asset tail: '-lite-setup.exe' on its own also answers for
+      // the other architecture, which would put an arm64 file behind an x64 card.
+      const asset = assets.find((a) => a.name.toLowerCase().endsWith(d.suffix));
+      if (!asset) continue;
       const mib = Math.round(asset.size / 1048576);
-      return {
+      resolved.push({
         ...d,
         file: asset.name,
         size: d.size.replace(/^≈ \d+ MB/, `≈ ${mib} MB`),
         url: asset.browser_download_url,
-      };
-    });
+      });
+    }
+    // An answer that matched nothing keeps the fallback list, so the page never goes blank.
+    return resolved.length > 0 ? resolved : downloads;
   } catch {
     return downloads;
   }
