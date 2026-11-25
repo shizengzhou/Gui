@@ -67,7 +67,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Native libghostty-vt build output (see native/build-ghostty-vt.sh). -->
+    <!-- The official prebuilt libghostty-vt DLL for this platform (see native/get-ghostty-vt.ps1). -->
     <Content Include="native\$(Platform)\ghostty-vt.dll" Link="ghostty-vt.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
