@@ -125,7 +125,9 @@ public class ConfigTests : IDisposable
     [Fact]
     public void LoadFallsBackToTheDefaultRailWidth()
     {
-        // A hand-edited value outside the usable range keeps the default.
+        // A hand-edited value outside the usable range keeps the default. The top of that
+        // range is the rail's own ceiling (480), so a wider value is not silently clamped.
+        Assert.Equal(240.0, Config.Load(Write("sidebar-width-left = 500\n")).SidebarWidthLeft);
         Assert.Equal(240.0, Config.Load(Write("sidebar-width-left = 5000\n")).SidebarWidthLeft);
         Assert.Equal(240.0, Config.Load(Write("sidebar-width-right = 5000\n")).SidebarWidthRight);
 

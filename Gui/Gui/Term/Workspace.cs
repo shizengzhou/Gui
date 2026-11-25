@@ -157,6 +157,13 @@ public sealed partial class Workspace
     /// <summary>How narrow the rail can be dragged when it has its top row to itself.</summary>
     private const double SidebarWidthMin = 160;
 
+    /// <summary>
+    /// How wide the rail may get, however wide the window is. A rail is a list of tabs, so
+    /// past this it is a second pane rather than a strip, and a dragged value wider than the
+    /// config accepts would come back as the default on the next start.
+    /// </summary>
+    private const double SidebarWidthMax = 480;
+
     /// <summary>Size of the rail's own buttons (new tab, palette, the merged menu).</summary>
     private const double ToolButtonWidth = 30;
     private const double ToolButtonHeight = 28;
@@ -392,7 +399,7 @@ public sealed partial class Workspace
         _initialTab = initialTab;
         _restore = restore;
         _placement = PlacementFrom(config.TabPosition);
-        _sidebarWidth = Math.Max(MinSidebarWidth(), SidebarWidthFromConfig());
+        _sidebarWidth = ClampSidebarWidth(SidebarWidthFromConfig());
         _sidebarCollapsed = restore?.SidebarCollapsed == true;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _appliedLanguage = Strings.Current;
@@ -2028,7 +2035,7 @@ public sealed partial class Workspace
         if (_placement == TabPlacement.Right) delta = -delta;
 
         double floor = MinSidebarWidth();
-        double max = Math.Max(floor, _body.ActualWidth - ContentWidthMin);
+        double max = Math.Max(floor, Math.Min(_body.ActualWidth - ContentWidthMin, SidebarWidthMax));
         double width = Math.Clamp(_resizeStartWidth + delta, floor, max);
         if (Math.Abs(width - _sidebar.Width) < 0.5) return;
 
@@ -2068,7 +2075,7 @@ public sealed partial class Workspace
 
     private void SetSidebarWidth(double width)
     {
-        _sidebarWidth = Math.Max(MinSidebarWidth(), width);
+        _sidebarWidth = ClampSidebarWidth(width);
         if (_sidebarAnimating) StopSidebarAnimation();
         // A collapsed rail keeps a zero width so the next open slides in from the edge.
         if (_sidebar is not null)
@@ -2083,6 +2090,14 @@ public sealed partial class Workspace
     private double MinSidebarWidth() => _placement == TabPlacement.Right
         ? 2 * ToolButtonWidth + 3 * CaptionButtonWidth
         : SidebarWidthMin;
+
+    /// <summary>
+    /// A rail width inside its limits: never below the current side's floor, never above
+    /// <see cref="SidebarWidthMax"/>. A saved or dragged width goes through this so the rail
+    /// is never shown wider than the config is willing to keep.
+    /// </summary>
+    private double ClampSidebarWidth(double width) =>
+        Math.Clamp(width, MinSidebarWidth(), SidebarWidthMax);
 
     /// <summary>
     /// The header strip's own inset. The side layouts float it over the island, so it repeats

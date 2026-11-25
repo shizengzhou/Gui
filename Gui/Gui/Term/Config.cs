@@ -3021,11 +3021,14 @@ public sealed class Config
         return Math.Min(seconds, 5.0);
     }
 
-    /// <summary>Sidebar widths keep a usable range; out-of-range values keep the default.</summary>
+    /// <summary>
+    /// Sidebar widths keep a usable range; out-of-range values keep the default. The top is
+    /// the rail's own ceiling, so the file never holds a width the workspace would clamp away.
+    /// </summary>
     private static double ParseSidebarWidth(string? value, double fallback)
     {
         if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double width) ||
-            width < 120.0 || width > 800.0)
+            width < 120.0 || width > 480.0)
         {
             return fallback;
         }

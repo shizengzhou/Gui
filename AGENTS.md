@@ -228,14 +228,14 @@ empty cells are laid out. Three invariants keep the rebuild safe:
 - The pane's own border is the rail's splitter: a `ResizeGrip` strip (a `UserControl`, because
   the cursor lives behind `UIElement.ProtectedCursor`) sits in the body grid over the boundary —
   8 DIP in the gap, 2 DIP over the pane — and its drag becomes the rail's width. It clamps to
-  160 DIP and keeps 320 DIP for the panes; the drag end saves the width under the current
-  side's key (`sidebar-width-left` / `sidebar-width-right`) so the two sides stay independent.
-  The strip paints nothing at all — the border is already drawn and the resize cursor is the
-  only cue. Collapsing the rail hides the strip. The floor is 160 DIP for a left rail and
-  `2 * tool button + 3 * caption button` for a right one, which shares its top row with the
-  caption buttons. Moving the rail to the other side reads that side's own saved width and
-  re-clamps it with the new side's floor before the chrome is rebuilt (and saves it), so a
-  left rail dragged to 160 does not land on the right at 160.
+  its floor, to 480 DIP, and keeps 320 DIP for the panes; the drag end saves the width under
+  the current side's key (`sidebar-width-left` / `sidebar-width-right`) so the two sides stay
+  independent. The strip paints nothing at all — the border is already drawn and the resize
+  cursor is the only cue. Collapsing the rail hides the strip. The floor is 160 DIP for a left
+  rail and `2 * tool button + 3 * caption button` for a right one, which shares its top row
+  with the caption buttons. Moving the rail to the other side reads that side's own saved
+  width and re-clamps it with the new side's floor before the chrome is rebuilt (and saves
+  it), so a left rail dragged to 160 does not land on the right at 160.
 - XAML keeps a removed subtree alive until it has been laid out, so `AddChild` detaches a pane
   from its live parent *and* from the grids the previous pass built.
 - Close animations keep the outgoing pane's element and split grid alive; `Relayout` settles them
@@ -344,7 +344,7 @@ focused pane.
 Every Ghostty 1.4 key is recognized — `Term/ConfigSchema.cs` lists them; some are parsed without
 behavior behind them yet. On top of Ghostty's surface the app adds `tab-position`, `compact`,
 `sidebar-width-left`, `sidebar-width-right` (written by the app when each rail's edge is
-dragged, 120..800), `debug-tap` and `crash-dumps`.
+dragged, 120..480), `debug-tap` and `crash-dumps`.
 
 - Defaults follow Ghostty 1.4: `font-size = 12` points (about 16 DIPs), `faint-opacity = 0.5`,
   `background-blur = false`, `right-click-action = context-menu` (the pane shows a Copy/Paste
