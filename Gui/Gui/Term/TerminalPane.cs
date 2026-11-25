@@ -62,7 +62,18 @@ public sealed class TerminalPane
 
     private readonly ContentControl _host;
     private readonly Border _frame;
+    private readonly Grid _frameRoot;
     private readonly CanvasControl _canvas;
+
+    /// <summary>
+    /// The "background-image" layer. It spans the whole frame, so the picture runs behind
+    /// the header band and the padding as well, and the grid canvas clears itself
+    /// transparently while it is up. Created on the first image and collapsed without one,
+    /// so a pane with no picture keeps its old surface stack.
+    /// </summary>
+    private CanvasControl? _backdrop;
+    private int _backdropGeneration = -1;
+
     private readonly Border _dim;
     private readonly ScrollBar _scrollBar;
     private readonly TextBlock _pathText;
@@ -457,7 +468,8 @@ public sealed class TerminalPane
 
         _dim = new Border
         {
-            Margin = _canvas.Margin,
+            // Spans the whole frame like the background image does, so an unfocused pane
+            // dims its header band and padding with the grid instead of only the grid.
             Background = new SolidColorBrush(DimFillColor()),
             IsHitTestVisible = false,
             Opacity = 0.0,
@@ -883,28 +895,29 @@ public sealed class TerminalPane
         header.PointerCaptureLost += headerCaptureLost;
         _unsubscribes.Add(() => header.PointerCaptureLost -= headerCaptureLost);
 
-        var frameRoot = new Grid();
-        frameRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        frameRoot.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        frameRoot.Children.Add(header);
+        _frameRoot = new Grid();
+        _frameRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _frameRoot.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        _frameRoot.Children.Add(header);
         // The host owns the cursor: the canvas is a sealed Win2D control, and the pointer
         // shape for a hovered link has to be set on a class we can add ProtectedCursor to.
         _canvasHost = new CursorGrid(InputSystemCursorShape.Arrow);
         _canvasHost.Children.Add(_canvas);
         Grid.SetRow(_canvasHost, 1);
-        frameRoot.Children.Add(_canvasHost);
+        _frameRoot.Children.Add(_canvasHost);
         Grid.SetRow(_scrollBar, 1);
-        frameRoot.Children.Add(_scrollBar);
+        _frameRoot.Children.Add(_scrollBar);
         Grid.SetRow(_progressBar, 1);
-        frameRoot.Children.Add(_progressBar);
-        Grid.SetRow(_dim, 1);
-        frameRoot.Children.Add(_dim);
+        _frameRoot.Children.Add(_progressBar);
+        Grid.SetRow(_dim, 0);
+        Grid.SetRowSpan(_dim, 2);
+        _frameRoot.Children.Add(_dim);
         Grid.SetRow(_underlineLayer, 1);
-        frameRoot.Children.Add(_underlineLayer);
+        _frameRoot.Children.Add(_underlineLayer);
         Grid.SetRow(_linkPreview, 1);
-        frameRoot.Children.Add(_linkPreview);
+        _frameRoot.Children.Add(_linkPreview);
         Grid.SetRow(_searchBar, 1);
-        frameRoot.Children.Add(_searchBar);
+        _frameRoot.Children.Add(_searchBar);
 
         _frame = new Border
         {
@@ -914,7 +927,7 @@ public sealed class TerminalPane
             Background = new SolidColorBrush(SurfaceColor()),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Theme.PaneStroke()),
-            Child = frameRoot,
+            Child = _frameRoot,
         };
         _frame.PointerEntered += OnFramePointerEntered;
         _unsubscribes.Add(() => _frame.PointerEntered -= OnFramePointerEntered);
@@ -938,6 +951,7 @@ public sealed class TerminalPane
         // synchronously, and the pane still has to repaint once it is ready.
         _renderer.NeedsRedraw += Redraw;
         _renderer.ApplyConfig(config);
+        SyncBackdrop();
         // Shaders compile in the background, so the chain may arrive after ApplyConfig.
         _renderer.ShadersChanged += OnShadersChanged;
 
@@ -2337,7 +2351,6 @@ public sealed class TerminalPane
         }
 
         _canvas.Margin = new Thickness(left, top, right, bottom);
-        _dim.Margin = _canvas.Margin;
         _scrollBar.Margin = new Thickness(0, top, 0, bottom);
         return true;
     }
@@ -2368,6 +2381,9 @@ public sealed class TerminalPane
         // Output, scrolling and resizes all end here, so this is where the thumb follows the
         // viewport.
         UpdateScrollbar();
+        // A background image that finished decoding (or a config that dropped one) flips
+        // between here, because the canvas clear has to follow it.
+        SyncBackdrop();
         _canvas.Invalidate();
 
         // Debug aid: a canvas parked on a half pixel is composited at a rounding boundary, so
@@ -2648,7 +2664,50 @@ public sealed class TerminalPane
     /// transparent so the frame's surface is not painted twice.
     /// </summary>
     private Color CanvasClearColor() =>
-        SurfaceOpacity < 0.999f ? Color.FromArgb(0, 0, 0, 0) : Theme.TermSurfaceBg();
+        SurfaceOpacity < 0.999f || _renderer.HasBackgroundImage
+            ? Color.FromArgb(0, 0, 0, 0)
+            : Theme.TermSurfaceBg();
+
+    /// <summary>
+    /// Keeps the background-image layer and the canvas clear in step: the picture is painted
+    /// across the whole frame, so the grid canvas has to stay transparent while the layer is
+    /// up, or its own opaque clear would cover the image it is supposed to sit on.
+    /// </summary>
+    private void SyncBackdrop()
+    {
+        int generation = _renderer.BackgroundGeneration;
+        if (generation == _backdropGeneration) return;
+        _backdropGeneration = generation;
+
+        bool show = _renderer.HasBackgroundImage;
+        if (show && _backdrop is null)
+        {
+            var layer = new CanvasControl
+            {
+                UseSharedDevice = true,
+                // The layer only carries pixels: the header drags, the canvas selects.
+                IsHitTestVisible = false,
+            };
+            layer.Draw += OnBackdropDraw;
+            _unsubscribes.Add(() => layer.Draw -= OnBackdropDraw);
+            // Row 0 is the header band, row 1 the surface: the picture spans both.
+            Grid.SetRowSpan(layer, 2);
+            _frameRoot.Children.Insert(0, layer);
+            _backdrop = layer;
+        }
+
+        if (_backdrop is null) return;
+        _backdrop.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        _canvas.ClearColor = CanvasClearColor();
+        if (show) _backdrop.Invalidate();
+    }
+
+    private void OnBackdropDraw(CanvasControl sender, CanvasDrawEventArgs args)
+    {
+        // A throw here escapes into XAML's draw callback, which fail-fasts the process.
+        Diag.Guard("pane.background", () => _renderer.DrawBackgroundImage(args.DrawingSession,
+            (float)sender.ActualWidth, (float)sender.ActualHeight));
+    }
 
     // ---------------- theme ----------------
 

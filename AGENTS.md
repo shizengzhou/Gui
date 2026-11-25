@@ -195,6 +195,9 @@ Key invariants (they are easy to break and produce crashes or blank screens):
   function pointer itself, color options want a pointer to an `Rgb`.
 - `GhosttyRenderState` is incremental: `updateRenderState()` consumes the dirty state, and
   `CanvasControl` clears its surface before every `Draw`, so the renderer always paints a frame.
+- `background-image` is painted by the pane on a `CanvasControl` behind the *whole* frame
+  (header band and padding included), so the grid canvas has to stay transparent while that
+  layer is up — its own opaque clear would hide the picture again.
 - The row iterator must be bound with `GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR` before the first
   `row_iterator_next`, or the first call faults.
 - Sized structs (`GhosttyStyle`, `GhosttyRenderStateCursor`, `GhosttySelection`, `GhosttyGridRef`,

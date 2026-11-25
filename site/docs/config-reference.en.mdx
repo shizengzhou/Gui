@@ -465,6 +465,10 @@ not yet supported.
 
 The background image is currently per-terminal, not per-window.
 
+It covers the whole pane — the header band and the padding included — and
+the grid draws on top of it, so a cell with the default background lets
+the picture show through.
+
 The decoded image is shared by every pane in the process, so splits draw
 the same bitmap instead of duplicating it in VRAM.
 

@@ -1560,23 +1560,20 @@ public sealed unsafe class TerminalRenderer
         defaultFg = Color.FromArgb(255, themeFg.R, themeFg.G, themeFg.B);
 
         // With "background-opacity" the pane's translucent surface lives in XAML (it also
-        // covers the header and the padding), so the canvas starts fully transparent and
-        // only adds the image on top.
+        // covers the header and the padding), so the canvas starts fully transparent. A
+        // background image asks for the same: the pane paints it on a layer behind this
+        // surface, so an opaque clear here would hide it again.
         float backgroundOpacity = _config is null
             ? 1f
             : Math.Clamp(_config.BackgroundOpacity, 0f, 1f);
 
-        if (backgroundOpacity >= 0.999f) ds.Clear(defaultBg);
+        if (backgroundOpacity >= 0.999f && _backgroundImage is null) ds.Clear(defaultBg);
         else ds.Clear(Color.FromArgb(0, 0, 0, 0));
 
         // The IME overlay fills cells to hide the glyphs under the composition; match the
         // pane surface so it does not punch an opaque hole through the translucency.
         Color compositionBg = defaultBg;
         compositionBg.A = (byte)Math.Round(255 * backgroundOpacity);
-
-        // The image sits directly on the surface; cells with the default background are not
-        // filled, so the image shows through everywhere a cell is transparent.
-        DrawBackgroundImage(ds, viewportWidth, viewportHeight, backgroundOpacity);
 
         // Cursor.
         var cursor = new GhosttyNative.GhosttyRenderStateCursor
@@ -3251,6 +3248,20 @@ public sealed unsafe class TerminalRenderer
 
     // ---------------- background image ----------------
 
+    /// <summary>
+    /// Whether a decoded "background-image" is available. The pane keeps a layer behind its
+    /// surface for it, and the grid canvas only clears itself opaque while that layer has
+    /// nothing to show.
+    /// </summary>
+    public bool HasBackgroundImage => _backgroundImage is not null;
+
+    /// <summary>
+    /// Bumped whenever the bitmap the pane draws changes — including a swap from one decoded
+    /// picture to another, which leaves <see cref="HasBackgroundImage"/> true throughout. The
+    /// pane repaints its layer on a change instead of only when one appears or disappears.
+    /// </summary>
+    public int BackgroundGeneration { get; private set; }
+
     private void SetBackgroundImage(string path)
     {
         string stamp = BackgroundImageCache.Stamp(path);
@@ -3274,7 +3285,11 @@ public sealed unsafe class TerminalRenderer
                 return;
             }
             _backgroundImage = bitmap;
-            if (bitmap is not null) NeedsRedraw?.Invoke();
+            if (bitmap is not null)
+            {
+                BackgroundGeneration++;
+                NeedsRedraw?.Invoke();
+            }
         });
     }
 
@@ -3286,15 +3301,17 @@ public sealed unsafe class TerminalRenderer
         _backgroundImage = null;
         _backgroundImagePath = string.Empty;
         _backgroundImageStamp = string.Empty;
+        BackgroundGeneration++;
     }
 
     /// <summary>
     /// Paints "background-image" with its fit, position, repeat and opacity options. The
-    /// drawing session is already clipped to the surface, so "cover" simply draws larger
+    /// pane calls this on a layer that spans the whole frame — header band and padding
+    /// included — so the picture reads as one surface instead of stopping at the grid. The
+    /// drawing session is already clipped to that layer, so "cover" simply draws larger
     /// than the viewport and lets the overflow fall outside.
     /// </summary>
-    private void DrawBackgroundImage(CanvasDrawingSession ds, float width, float height,
-        float surfaceOpacity)
+    public void DrawBackgroundImage(CanvasDrawingSession ds, float width, float height)
     {
         CanvasBitmap? image = _backgroundImage;
         Config? config = _config;
@@ -3303,7 +3320,7 @@ public sealed unsafe class TerminalRenderer
         // Ghostty multiplies the image opacity by background-opacity; the pane surface
         // already contributes that alpha, so the image only adds the remainder.
         float opacity = Math.Clamp(config.BackgroundImageOpacity, 0f, 1f) *
-                        Math.Clamp(surfaceOpacity, 0f, 1f);
+                        Math.Clamp(config.BackgroundOpacity, 0f, 1f);
         var source = new Rect(0, 0, image.Size.Width, image.Size.Height);
         if (opacity <= 0f || source.Width <= 0 || source.Height <= 0) return;
 
