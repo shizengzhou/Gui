@@ -21,6 +21,12 @@ jobs:
       - name: Build
         run: dotnet build Gui.slnx -p:Platform=x64 -c Release
 
+      - name: Build for ARM64
+        # The release workflow packages this architecture from an x64 runner, so nothing ever
+        # runs it here; what CI can prove is that it compiles and that native/ARM64 holds the
+        # core the payload needs.
+        run: dotnet build Gui.slnx -p:Platform=ARM64 -c Release
+
       - name: ABI contract test
         # Verifies Term/GhosttyNative.cs against the ABI manifest the native DLL exports.
         run: dotnet run --project tests/Gui.AbiTests -c Release
