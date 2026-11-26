@@ -1104,6 +1104,28 @@ public sealed class TerminalPane
     /// with the "drag-handle" option and the tab's split count; with dragging off the header
     /// behaves like ordinary chrome again.
     /// </summary>
+    /// <summary>The header band, for the workspace's caption drag.</summary>
+    internal FrameworkElement? HeaderElement => _headerBar;
+
+    /// <summary>
+    /// The empty part of the header band in its own coordinates: after the split grab content
+    /// (the icon and the cwd) and before the action buttons. The workspace puts the native drag
+    /// bar there, so a press in that gap moves the window the way a title bar does.
+    /// </summary>
+    internal Rect HeaderDragGap()
+    {
+        if (_headerBar is null || _actions is null || _iconSlot is null || _pathText is null)
+            return Rect.Empty;
+
+        Rect icon = DragBounds(_iconSlot);
+        Rect text = DragBounds(_pathText);
+        Rect actions = DragBounds(_actions);
+        double left = Math.Max(icon.Right, text.Right) + 6.0;
+        // An unfocused pane hides its action buttons; the strip then runs to the header edge.
+        double right = actions.Width > 0 ? actions.X - 6.0 : _headerBar.ActualWidth - 6.0;
+        return new Rect(left, 0, Math.Max(0.0, right - left), _headerBar.ActualHeight);
+    }
+
     public void SetDragEnabled(bool enabled)
     {
         _dragEnabled = enabled;

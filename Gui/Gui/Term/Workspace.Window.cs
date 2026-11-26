@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI;
@@ -10,8 +11,10 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
 using Windows.Graphics;
+using Windows.UI;
 using Windows.System;
 using Windows.UI.Core;
 using Microsoft.Windows.AppNotifications;
@@ -29,76 +32,551 @@ public sealed partial class Workspace
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOACTIVATE = 0x0010;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_FRAMECHANGED = 0x0020;
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    // ---------------- window ----------------
 
-    private void OnHeaderPointerPressed(object sender, PointerRoutedEventArgs args)
+    // ---------------- window · non-client chrome ----------------
+
+    private const uint NonClientSubclass = 2;
+    private const int WM_NCLBUTTONDOWN = 0x00A1;
+    private const int WM_NCMOUSEMOVE = 0x00A0;
+    private const int WM_NCDESTROY = 0x0082;
+    private const int WM_ENTERSIZEMOVE = 0x0231;
+    private const int WM_EXITSIZEMOVE = 0x0232;
+    private const int WM_MOVE = 0x0003;
+    private const int WM_SIZE = 0x0005;
+    private const int WM_WINDOWPOSCHANGED = 0x0047;
+    private const uint TME_LEAVE = 0x00000002;
+    private const uint TME_NONCLIENT = 0x00000010;
+    private const int HtCaption = 2;
+    private const int DragThreshold = 4;
+    private const int WmSysCommand = 0x0112;
+    private const uint TpmReturnCmd = 0x0100;
+    private const uint TpmRightButton = 0x0002;
+    private const int VkLeftButton = 0x01;
+
+    /// <summary>The window's caption and button hit areas, registered with WinUI's input source.</summary>
+    private InputNonClientPointerSource? _nonClient;
+
+    /// <summary>Kept in a field: the subclass chain holds this delegate for the window's lifetime.</summary>
+    private SubclassProc? _nonClientProc;
+
+    private IntPtr[] _dragBars = Array.Empty<IntPtr>();
+    private bool _nonClientDirty;
+
+    /// <summary>True while the system runs a caption move or a frame resize loop.</summary>
+    private bool _inMoveLoop;
+
+    /// <summary>
+    /// Whether the current move loop is being timed. Off by default: set GUI_DRAG_LOG=1, or drop
+    /// an empty "gui-drag-log" file in %TEMP%, and the next drag records every window move with
+    /// its gap, so a drag that trails can be attributed to the work between moves.
+    /// </summary>
+    private bool _dragLogActive;
+    private long _dragStartTicks;
+    private long _dragLastMoveTicks;
+    private long _dragMaxGapTicks;
+    private long _dragMaxProcTicks;
+    private int _dragMoves;
+    private int _dragSizes;
+    private int _dragPosChanges;
+
+    /// <summary>
+    /// Experimental: while a caption move runs, skip WinUI's window-proc handling of the
+    /// position notifications. DWM moves the composed surface either way, and WinUI's handler
+    /// costs several milliseconds per step, which starves the move loop at high pointer rates.
+    /// <summary>Opt in with GUI_MOVE_SKIP_XAML=1 or an empty %TEMP%\gui-move-skip marker file.</summary>
+    private bool _skipXamlMove;
+    private int _moveLoopSizeW;
+    private int _moveLoopSizeH;
+
+
+    // Applied sets, compared before every call: SetRegionRects is not free and a layout pass
+    // would otherwise re-register the same rects several times a second.
+    private RectInt32[] _nonClientMinimize = Array.Empty<RectInt32>();
+    private RectInt32[] _nonClientMaximize = Array.Empty<RectInt32>();
+    private RectInt32[] _nonClientClose = Array.Empty<RectInt32>();
+
+    /// <summary>
+    /// The frame is a borderless one (Attach removes the title bar) and the chrome paints its
+    /// own header, so the caption was reimplemented here: GetCursorPos/Move for the drag and
+    /// a double-press for maximize. These regions hand that back to Win32. The header band and
+    /// the tab rail become the non-client caption, which gives the window the system's drag
+    /// loop (snapping to the screen edges, dragging a maximized window back to its size,
+    /// double-click maximize, the right-click system menu and the touch gesture), and the
+    /// three window buttons become the system's own minimize/maximize/close regions, which is
+    /// what also puts the snap-layouts flyout over the maximize button.
+    ///
+    /// The three window buttons stay ordinary XAML buttons: hover, press and click are the
+    /// template's own, only the hit test is answered by the region.
+    /// </summary>
+    private void InstallNonClientChrome()
     {
-        // Only a primary press moves the window. A right press on the strip belongs to
-        // whatever menu it shows and a middle press to nothing, so neither may capture the
-        // pointer or start the island moving; touch and pen report no button and still drag.
-        if (sender is not UIElement strip) return;
-        PointerPoint point = args.GetCurrentPoint(strip);
-        if (point.Properties.IsRightButtonPressed || point.Properties.IsMiddleButtonPressed) return;
+        if (_quickTerminal || _appWindow is null || _hwnd == IntPtr.Zero) return;
 
-        args.Handled = true;
-        // The drop-down stays where its edge put it; dragging it would leave a gap behind.
-        if (_quickTerminal) return;
-        ulong now = GetTickCount64();
-        if (now - _lastHeaderPress < GetDoubleClickTime())
+        try
         {
-            _lastHeaderPress = 0;
-            ToggleMaximize();
+            _nonClient = InputNonClientPointerSource.GetForWindowId(_appWindow.Id);
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("ws.nc.install", error);
             return;
         }
-        _lastHeaderPress = now;
-        // The side layouts lift the island over the header strip, which stays click-through
-        // there; the drag then starts on the sidebar instead.
-        strip.CapturePointer(args.Pointer);
-        BeginDrag();
+
+        // Non-client messages are sent to the top-level window, which WinUI has already
+        // subclassed; this rides along that chain instead of replacing it.
+        _nonClientProc ??= OnNonClientMessage;
+        SetWindowSubclass(_hwnd, _nonClientProc, NonClientSubclass, IntPtr.Zero);
+        EnsureDragBars(2);
+        UpdateNonClientRegions();
+    }
+
+    /// <summary>Drops the non-client chrome together with the window.</summary>
+    private void ReleaseNonClientChrome()
+    {
+        if (_nonClientProc is not null && IsWindow(_hwnd))
+            RemoveWindowSubclass(_hwnd, _nonClientProc, NonClientSubclass);
+        foreach (IntPtr bar in _dragBars) DragBar.Destroy(bar);
+        _dragBars = Array.Empty<IntPtr>();
+        _nonClient = null;
+        _nonClientMinimize = _nonClientMaximize = _nonClientClose = Array.Empty<RectInt32>();
     }
 
     /// <summary>
-    /// The island lives in the client area, so moving the window is done by hand. The
-    /// cursor is tracked in screen pixels rather than element-relative DIPs: the island
-    /// moves with the window, so a relative position would feed the window's own movement
-    /// back into the delta.
+    /// Queues a region update for the next dispatcher turn. Every region follows the chrome,
+    /// so tab, rail and page changes have to re-register them; a single layout pass can raise
+    /// several of these (the tab strip moves chips with a render transform), and one call per
+    /// turn is enough.
     /// </summary>
-    private void BeginDrag()
+    private void InvalidateNonClientRegions()
     {
-        if (_window is null) return;
-        try
+        if (_nonClient is null) return;
+        // The move loop re-registers everything when it ends; nothing to queue up here.
+        if (_inMoveLoop) return;
+        if (_nonClientDirty) return;
+        _nonClientDirty = true;
+        if (_dispatcher?.TryEnqueue(() =>
+            {
+                _nonClientDirty = false;
+                Diag.Guard("ws.nc.regions", UpdateNonClientRegions);
+            }) != true)
         {
-            GetCursorPos(out POINT cursor);
-            _dragCursor = new PointInt32(cursor.X, cursor.Y);
-            _dragOrigin = _window.AppWindow.Position;
-            _dragging = true;
-        }
-        catch
-        {
-            _dragging = false;
+            _nonClientDirty = false;
         }
     }
 
-    private void DragTo()
+    /// <summary>
+    /// Registers the regions now, for a change that has to be visible to the next press (a tab
+    /// scroll, a strip shift). Deferred while the system runs a move loop, like every other
+    /// update: the move loop must not be made to wait on layout work.
+    /// </summary>
+    private void RefreshNonClientRegions()
     {
-        if (!_dragging || _window is null) return;
-        try
+        if (_nonClient is null) return;
+        if (_inMoveLoop) return;
+        UpdateNonClientRegions();
+    }
+
+    /// <summary>
+    /// Re-registers the three window buttons, which are the only non-client area left: the drag
+    /// itself belongs to the native drag bar windows (see DragBar), because a caption region or a
+    /// press handed to Win32 as WM_NCLBUTTONDOWN/HTCAPTION is served by WinUI's window procedure,
+    /// which drags in DIP-sized steps at the pointer's frame rate and trails the cursor at a high
+    /// DPI.
+    /// </summary>
+    private void UpdateNonClientRegions()
+    {
+        if (_nonClient is null || _hwnd == IntPtr.Zero) return;
+
+        // Nothing to measure before the tree is rooted: the first layout pass registers again.
+        XamlRoot? xamlRoot = _root.XamlRoot;
+        if (xamlRoot is null) return;
+        double scale = xamlRoot.RasterizationScale;
+
+        ChromeButton[] buttons = VisibleCaptionButtons();
+        ApplyRegion(NonClientRegionKind.Minimize, Single(buttons, 0, scale), ref _nonClientMinimize);
+        ApplyRegion(NonClientRegionKind.Maximize, Single(buttons, 1, scale), ref _nonClientMaximize);
+        ApplyRegion(NonClientRegionKind.Close, Single(buttons, 2, scale), ref _nonClientClose);
+
+        UpdateDragBar(scale);
+    }
+
+    /// <summary>
+    /// Positions the native drag bar over the empty part of the caption band (see DragBar):
+    /// the strip right of the chips in the top layout, the rail's header row and the pane header's
+    /// gap in the side ones, and the page's title band while the settings page is open.
+    /// </summary>
+    private void UpdateDragBar(double scale)
+    {
+        if (_quickTerminal)
         {
-            GetCursorPos(out POINT cursor);
-            _window.AppWindow.Move(new PointInt32(
-                _dragOrigin.X + (cursor.X - _dragCursor.X),
-                _dragOrigin.Y + (cursor.Y - _dragCursor.Y)));
+            foreach (IntPtr idle in _dragBars) DragBar.Hide(idle);
+            return;
         }
-        catch
+
+        var rects = new List<RectInt32?>(_dragBars.Length + 1);
+
+        if (_settingsActive)
         {
-            _dragging = false;
+            // The page covers the header and draws its own title band: that band is the drag
+            // strip while it is open, and the window buttons keep their own area.
+            ChromeButton[] pageButtons = VisibleCaptionButtons();
+            if (Bounds(_settingsHead, scale) is { } head && pageButtons.Length == 3 &&
+                Bounds(pageButtons[0], scale) is { } first)
+            {
+                rects.Add(new RectInt32(head.X, head.Y, first.X - head.X, head.Height));
+            }
+        }
+        else if (_placement == TabPlacement.Top)
+        {
+            // The strip right of the chips, down to the pane. The bar stops before the chips and
+            // the header tools, which is what keeps their own input.
+            if (Bounds(_header, scale) is { } band && Bounds(_headerTopTools, scale) is { } tools)
+            {
+                int left = band.X;
+                foreach (Tab tab in _tabs)
+                {
+                    if (Bounds(tab.Chip, scale) is { } chip) left = Math.Max(left, chip.X + chip.Width);
+                }
+                int bottom = band.Y + band.Height;
+                if (Bounds(_surfaceHost, scale) is { } surface) bottom = Math.Max(bottom, surface.Y);
+                rects.Add(new RectInt32(left, band.Y, tools.X - left, bottom - band.Y));
+            }
+        }
+        else
+        {
+            // The rail's header row right of its buttons.
+            if (Bounds(_sidebarTools, scale) is { } row && Bounds(_sidebar, scale) is { } rail)
+            {
+                int left = row.X;
+                foreach (UIElement child in _sidebarTools!.Children)
+                {
+                    if (Bounds(child as FrameworkElement, scale) is { } button)
+                        left = Math.Max(left, button.X + button.Width);
+                }
+                rects.Add(new RectInt32(left, row.Y, rail.X + rail.Width - left, row.Height));
+            }
+
+        }
+
+        // Every visible pane's header gap drags the window, not just the focused one: the
+        // unfocused header hides its action buttons, so its gap reaches the header's edge.
+        if (!_settingsActive && _tabs.Count > 0 && _active >= 0 && _active < _tabs.Count)
+        {
+            ForEachPane(_tabs[_active], pane =>
+            {
+                if (pane.HeaderElement is not { } header) return;
+                if (Bounds(header, scale) is not { Height: > 0 } box) return;
+                if (pane.HeaderDragGap() is not { Width: > 0 } gap) return;
+
+                rects.Add(new RectInt32(
+                    box.X + (int)Math.Round(gap.X * scale),
+                    box.Y,
+                    (int)Math.Round(gap.Width * scale),
+                    (int)Math.Round(gap.Height * scale)));
+            });
+        }
+
+        EnsureDragBars(rects.Count);
+        int frameX = ResizeFrameX;
+        int frameY = ResizeFrameY;
+        for (int i = 0; i < _dragBars.Length; i++)
+        {
+            if (i < rects.Count && rects[i] is { } rect)
+                DragBar.Place(_dragBars[i], KeepFrameFree(rect, frameX, frameY));
+            else DragBar.Hide(_dragBars[i]);
         }
     }
 
-    private void EndDrag() => _dragging = false;
+    /// <summary>
+    /// Grows the drag bars to hold one strip per caption area. Each bar is a layered child
+    /// window, so a split's second pane header gets its bar only once that split exists.
+    /// </summary>
+    private void EnsureDragBars(int count)
+    {
+        if (_dragBars.Length >= count) return;
+
+        var grown = new IntPtr[count];
+        Array.Copy(_dragBars, grown, _dragBars.Length);
+        for (int i = _dragBars.Length; i < grown.Length; i++) grown[i] = DragBar.Create(_hwnd);
+        _dragBars = grown;
+    }
+
+    /// <summary>
+    /// The frame Windows keeps for resizing, in device pixels. A drag bar has to stop short of
+    /// it: the bars are layered child windows, so whatever they cover answers the hit test as a
+    /// caption, and the resize border underneath never turns the cursor into a resize arrow.
+    /// The two axes differ -- measuring the arrows on a 200 % display gives 6 px at the top and
+    /// 13 px at the sides -- so each side uses the metrics Windows uses for it.
+    /// </summary>
+    private static int ResizeFrameX =>
+        GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+
+    private static int ResizeFrameY =>
+        GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CYBORDER);
+
+    /// <summary>
+    /// Pulls a drag strip off the frame, on the sides it actually touches. The remainder stays
+    /// flush with the border: a gap would be a strip that neither resizes nor drags.
+    /// </summary>
+    private static RectInt32 KeepFrameFree(RectInt32 rect, int frameX, int frameY)
+    {
+        int left = Math.Max(rect.X, frameX);
+        int top = Math.Max(rect.Y, frameY);
+        int right = rect.X + rect.Width;
+        int bottom = rect.Y + rect.Height;
+        return new RectInt32(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+    }
+
+    private RectInt32? Bounds(FrameworkElement? element, double scale)
+    {
+        if (element is null || element.Visibility != Visibility.Visible) return null;
+        if (!(element.ActualWidth > 0) || !(element.ActualHeight > 0)) return null;
+
+        try
+        {
+            Rect box = element.TransformToVisual(null)
+                .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+            return new RectInt32(
+                (int)Math.Round(box.X * scale),
+                (int)Math.Round(box.Y * scale),
+                (int)Math.Round(box.Width * scale),
+                (int)Math.Round(box.Height * scale));
+        }
+        catch (Exception error)
+        {
+            // An element in the middle of a chrome rebuild has no transform to the root yet;
+            // it simply contributes no region for this pass.
+            Diag.Debug("ws.nc.bounds", error.Message);
+            return null;
+        }
+    }
+
+    /// <summary>One button's region, or an empty set when the index is not on screen.</summary>
+    private RectInt32[] Single(ChromeButton[] buttons, int index, double scale)
+    {
+        if (index >= buttons.Length) return Array.Empty<RectInt32>();
+        return Bounds(buttons[index], scale) is { } rect ? new[] { rect } : Array.Empty<RectInt32>();
+    }
+
+    private void ApplyRegion(NonClientRegionKind kind, List<RectInt32> rects, ref RectInt32[] applied) =>
+        ApplyRegion(kind, rects.ToArray(), ref applied);
+
+    private void ApplyRegion(NonClientRegionKind kind, RectInt32[] rects, ref RectInt32[] applied)
+    {
+        if (SameRects(rects, applied)) return;
+        applied = rects;
+        try
+        {
+            _nonClient?.SetRegionRects(kind, rects);
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("ws.nc.region", error);
+        }
+    }
+
+    private static bool SameRects(RectInt32[] left, RectInt32[] right)
+    {
+        if (left.Length != right.Length) return false;
+        for (int i = 0; i < left.Length; i++)
+        {
+            if (left[i].X != right[i].X || left[i].Y != right[i].Y ||
+                left[i].Width != right[i].Width || left[i].Height != right[i].Height)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>The three window buttons on screen: the settings page draws its own copy.</summary>
+    private ChromeButton[] VisibleCaptionButtons() =>
+        _settingsActive && _settingsCaptionButtons.Length == 3 ? _settingsCaptionButtons : _headerCaptionButtons;
+
+    private IntPtr OnNonClientMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam,
+        IntPtr id, IntPtr data)
+    {
+        bool destroying = false;
+        bool skipChain = false;
+        if (_inMoveLoop && _skipXamlMove)
+        {
+            if (message == WM_MOVE)
+            {
+                skipChain = true;
+            }
+            else if (message == WM_WINDOWPOSCHANGED)
+            {
+                // A resize has to reach WinUI or the panes would not reflow with the frame: only
+                // a pure move is safe to swallow, where DWM already moves the composed surface.
+                GetWindowRect(hwnd, out RECT now);
+                skipChain = now.Right - now.Left == _moveLoopSizeW &&
+                            now.Bottom - now.Top == _moveLoopSizeH;
+            }
+        }
+        switch (message)
+        {
+            case WM_ENTERSIZEMOVE:
+                // The system now owns the pointer until WM_EXITSIZEMOVE: registering regions or
+                // measuring elements in that window stalls the move loop, which is what a drag
+                // that feels like it lags behind the cursor looks like.
+                //
+                // The drag bars go away for the length of the drag as well: the system has the
+                // press already, and a layered child window is one more surface for DWM to
+                // composite on every step of the move — which is what makes the desktop window
+                // manager spike while a window is dragged.
+                _inMoveLoop = true;
+                foreach (IntPtr bar in _dragBars) DragBar.Hide(bar);
+                _skipXamlMove = MoveSkipEnabled();
+                if (_skipXamlMove)
+                {
+                    GetWindowRect(hwnd, out RECT loopRect);
+                    _moveLoopSizeW = loopRect.Right - loopRect.Left;
+                    _moveLoopSizeH = loopRect.Bottom - loopRect.Top;
+                }
+                _dragLogActive = DragLogRequested();
+                if (_dragLogActive) BeginDragLog(hwnd);
+                break;
+
+            case WM_EXITSIZEMOVE:
+                _inMoveLoop = false;
+                if (_dragLogActive) EndDragLog();
+                _dragLogActive = false;
+                if (_skipXamlMove)
+                {
+                    _skipXamlMove = false;
+                    ResyncWindowAfterMove(hwnd);
+                }
+                Diag.Guard("ws.nc.regions", UpdateNonClientRegions);
+                break;
+
+            case WM_MOVE:
+                if (_dragLogActive && _inMoveLoop) LogDragMove(hwnd);
+                break;
+
+            case WM_SIZE:
+                if (_dragLogActive && _inMoveLoop) _dragSizes++;
+                break;
+
+            case WM_WINDOWPOSCHANGED:
+                if (_dragLogActive && _inMoveLoop)
+                {
+                    _dragPosChanges++;
+                    // A skipped pure move never raises WM_MOVE, so time the update here instead.
+                    if (skipChain) LogDragMove(hwnd);
+                }
+                break;
+
+            case WM_NCLBUTTONDOWN:
+                // Presses on the caption never reach XAML now, so the layers XAML would have
+                // dismissed (the palette, an IME composition) are dismissed from here.
+                OnNonClientPress();
+                break;
+
+            case WM_NCDESTROY:
+                // Unhook after the chain has run: DefSubclassProc needs the registration.
+                destroying = true;
+                break;
+        }
+
+        long procStart = _dragLogActive && _inMoveLoop ? Stopwatch.GetTimestamp() : 0;
+        IntPtr result = skipChain ? IntPtr.Zero : DefSubclassProc(hwnd, message, wParam, lParam);
+        if (procStart != 0)
+        {
+            long procTicks = Stopwatch.GetTimestamp() - procStart;
+            if (procTicks > _dragMaxProcTicks) _dragMaxProcTicks = procTicks;
+            if (TicksToMs(procTicks) >= 2)
+                Diag.Log("drag", $"slow msg=0x{message:X4} proc={TicksToMs(procTicks):F1}ms");
+        }
+        if (destroying) ReleaseNonClientChrome();
+        return result;
+    }
+
+    /// <summary>Timing is opt-in: GUI_DRAG_LOG=1, or an empty %TEMP%\gui-drag-log marker file.</summary>
+    private static bool DragLogRequested()
+    {
+        if (Environment.GetEnvironmentVariable("GUI_DRAG_LOG") == "1") return true;
+        try
+        {
+            return File.Exists(Path.Combine(Path.GetTempPath(), "gui-drag-log"));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether the loop may swallow WinUI's position notifications (GUI_MOVE_SKIP_XAML=0 turns
+    /// it off). WinUI's window procedure costs 6-8 ms per position change, which starves the
+    /// move loop at a high pointer rate: pure moves are left to DWM instead, and a resize still
+    /// goes through because the panes have to reflow.
+    /// </summary>
+    private static bool MoveSkipEnabled() =>
+        Environment.GetEnvironmentVariable("GUI_MOVE_SKIP_XAML") != "0";
+
+    /// <summary>
+    /// One forced frame change after a skipped move: WinUI re-reads the window position and
+    /// re-syncs its composition, which is the single notification it was denied per step.
+    /// </summary>
+    private static void ResyncWindowAfterMove(IntPtr hwnd)
+    {
+        SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+
+    private void BeginDragLog(IntPtr hwnd)
+    {
+        _dragStartTicks = Stopwatch.GetTimestamp();
+        _dragLastMoveTicks = 0;
+        _dragMaxGapTicks = 0;
+        _dragMaxProcTicks = 0;
+        _dragMoves = 0;
+        _dragSizes = 0;
+        _dragPosChanges = 0;
+        GetWindowRect(hwnd, out RECT rect);
+        Diag.Log("drag", $"enter rect={rect.Left},{rect.Top} size={rect.Right - rect.Left}x{rect.Bottom - rect.Top}");
+    }
+
+    private void LogDragMove(IntPtr hwnd)
+    {
+        long now = Stopwatch.GetTimestamp();
+        long gap = _dragLastMoveTicks == 0 ? 0 : now - _dragLastMoveTicks;
+        _dragLastMoveTicks = now;
+        if (gap > _dragMaxGapTicks) _dragMaxGapTicks = gap;
+        _dragMoves++;
+
+        GetWindowRect(hwnd, out RECT rect);
+        GetCursorPos(out POINT cursor);
+        Diag.Log("drag", $"move gap={TicksToMs(gap):F1} rect={rect.Left},{rect.Top} cursor={cursor.X},{cursor.Y}");
+    }
+
+    private void EndDragLog()
+    {
+        long total = Stopwatch.GetTimestamp() - _dragStartTicks;
+        Diag.Log("drag",
+            $"exit dur={TicksToMs(total):F0} moves={_dragMoves} gapMax={TicksToMs(_dragMaxGapTicks):F1} " +
+            $"procMax={TicksToMs(_dragMaxProcTicks):F2} size={_dragSizes} poschanged={_dragPosChanges}");
+    }
+
+    private static double TicksToMs(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
+
+    private void OnNonClientPress()
+    {
+        // Posted: this runs inside the window procedure, before the system starts the drag or
+        // the button's own command, and collapsing a XAML layer there would nest dispatch.
+        _dispatcher?.TryEnqueue(() =>
+        {
+            if (_paletteLayer is { Visibility: Visibility.Visible }) HideCommandPalette();
+            if (!_composing) return;
+            _imeDiscard = true;
+            ShowImeComposition();
+        });
+    }
 
     private void ToggleMaximize()
     {
@@ -1258,7 +1736,19 @@ public sealed partial class Workspace
         public int Bottom;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TRACKMOUSEEVENT
+    {
+        public uint cbSize;
+        public uint dwFlags;
+        public IntPtr hwndTrack;
+        public uint dwHoverTime;
+    }
+
     private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    private delegate IntPtr SubclassProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam,
+        IntPtr id, IntPtr data);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -1272,6 +1762,16 @@ public sealed partial class Workspace
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
 
+    private const int SM_CXSIZEFRAME = 32;
+    private const int SM_CYSIZEFRAME = 33;
+    private const int SM_CYBORDER = 6;
+    private const int SM_CXPADDEDBORDER = 92;
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
+
+
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int maxCount);
 
@@ -1282,13 +1782,53 @@ public sealed partial class Workspace
     private static extern bool GetCursorPos(out POINT point);
 
     [DllImport("user32.dll")]
-    private static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+    private static extern short GetKeyState(int key);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr DefWindowProc(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReleaseCapture();
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetSystemMenu(IntPtr hwnd, bool revert);
+
+    [DllImport("user32.dll")]
+    private static extern int TrackPopupMenuEx(IntPtr menu, uint flags, int x, int y, IntPtr hwnd, IntPtr reserved);
 
     [DllImport("user32.dll")]
     private static extern uint GetDoubleClickTime();
 
     [DllImport("kernel32.dll")]
     private static extern ulong GetTickCount64();
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(IntPtr hwnd, ref POINT point);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT info);
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowSubclass(IntPtr hwnd, SubclassProc proc, uint id, IntPtr data);
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveWindowSubclass(IntPtr hwnd, SubclassProc proc, uint id);
+
+    [DllImport("comctl32.dll")]
+    private static extern IntPtr DefSubclassProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);

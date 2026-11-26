@@ -234,15 +234,13 @@ public sealed partial class Workspace
     private Grid _contentStack = null!;
     private FontIcon? _maximizeIcon;
     private ChromeButton? _closeCaption;
-    private ChromeButton? _maximizeCaption;
-    private TextBlock? _minimizeTip;
-    private TextBlock? _maximizeTip;
-    private TextBlock? _closeTip;
+
+
+
+
 
     // The settings page carries its own copy of the three window buttons.
     private FontIcon? _settingsMaximizeIcon;
-    private ChromeButton? _settingsMaximizeCaption;
-    private TextBlock? _settingsMaximizeTip;
     private Grid _surfaceHost = null!;
     private StackPanel? _topTabHost;
     private StackPanel? _tabColumn;
@@ -365,10 +363,14 @@ public sealed partial class Workspace
     /// </summary>
     private readonly bool _quickTerminal;
 
-    private bool _dragging;
-    private PointInt32 _dragCursor;
-    private PointInt32 _dragOrigin;
-    private ulong _lastHeaderPress;
+    // The non-client chrome needs the chrome elements it turns into regions: the pieces it
+    // hands back to XAML, and the three window buttons as the system's own regions.
+    private StackPanel? _headerTopTools;
+    private StackPanel? _sidebarTools;
+    private Border? _settingsNav;
+    private Border? _settingsHead;
+    private ChromeButton[] _headerCaptionButtons = Array.Empty<ChromeButton>();
+    private ChromeButton[] _settingsCaptionButtons = Array.Empty<ChromeButton>();
 
     private Tab? _dragTab;
     private bool _dragArmed;
@@ -420,8 +422,13 @@ public sealed partial class Workspace
     {
         _root = root;
         _window = window;
-        // Any layout pass can move the focused pane, so the next tick re-measures.
-        _root.LayoutUpdated += (_, _) => _imeAnchorDirty = true;
+        // Any layout pass can move the focused pane, so the next tick re-measures. It can also
+        // move the chrome the caption regions follow, so they are re-registered from here too.
+        _root.LayoutUpdated += (_, _) =>
+        {
+            _imeAnchorDirty = true;
+            InvalidateNonClientRegions();
+        };
 
         // Borderless-over-its-frame window: the title bar is drawn by this class, so the
         // client area covers the whole window while the frame keeps its shadow, rounding
@@ -450,6 +457,7 @@ public sealed partial class Workspace
             // The beep for Alt chords comes from WinUI's input-site windows; retried by the
             // IME timer because they may not exist yet.
             InputSite.Install(_hwnd);
+            InstallNonClientChrome();
             ApplyWindowTheme();
             _appWindow.Closing += OnAppWindowClosing;
             _appWindow.Changed += (_, args) =>
@@ -719,6 +727,7 @@ public sealed partial class Workspace
             ForEachPane(tab, pane => pane.ApplyLanguage());
 
         UpdateHeaders();
+        UpdateCaptionTips();
     }
 
     /// <summary>
@@ -1157,31 +1166,29 @@ public sealed partial class Workspace
     /// chrome reads consistently. Returns the label so the maximize button can follow the
     /// window state.
     /// </summary>
-    private static TextBlock CaptionTip(ChromeButton button, string text)
-    {
-        TextBlock title = Tips.Set(button, text).Title;
-        button.SetAccessibleName(text);
-        return title;
-    }
-
     /// <summary>
-    /// Labels the three window buttons; the middle one says "maximize" or "restore"
-    /// depending on the window. Re-run when the window state or the UI language changes.
+    /// Names the three window buttons, the way a real title bar's buttons are named: they are
+    /// non-client, so no hover label is drawn, and the middle one says "restore" while the
+    /// window is maximized. Re-run when the window state or the UI language changes.
     /// </summary>
+    private bool Maximized =>
+        _window is not null &&
+        _window.AppWindow.Presenter is OverlappedPresenter presenter &&
+        presenter.State == OverlappedPresenterState.Maximized;
+
     private void UpdateCaptionTips()
     {
-        if (_minimizeTip is not null) _minimizeTip.Text = Strings.Minimize;
-        if (_closeTip is not null) _closeTip.Text = Strings.CloseWindow;
-        if (_maximizeTip is null && _settingsMaximizeTip is null) return;
+        string maximize = Maximized ? Strings.Restore : Strings.Maximize;
+        NameCaptionButtons(_headerCaptionButtons, maximize);
+        NameCaptionButtons(_settingsCaptionButtons, maximize);
+    }
 
-        bool maximized = _window is not null &&
-                         _window.AppWindow.Presenter is OverlappedPresenter presenter &&
-                         presenter.State == OverlappedPresenterState.Maximized;
-        string title = maximized ? Strings.Restore : Strings.Maximize;
-        if (_maximizeTip is not null) _maximizeTip.Text = title;
-        _maximizeCaption?.SetAccessibleName(title);
-        if (_settingsMaximizeTip is not null) _settingsMaximizeTip.Text = title;
-        _settingsMaximizeCaption?.SetAccessibleName(title);
+    private static void NameCaptionButtons(ChromeButton[] buttons, string maximize)
+    {
+        if (buttons.Length != 3) return;
+        buttons[0].SetAccessibleName(Strings.Minimize);
+        buttons[1].SetAccessibleName(maximize);
+        buttons[2].SetAccessibleName(Strings.CloseWindow);
     }
 
     private void UpdateCloseCorner()
@@ -1634,21 +1641,6 @@ public sealed partial class Workspace
             BorderThickness = new Thickness(0),
         };
         Canvas.SetZIndex(_header, 1);
-        _header.PointerPressed += OnHeaderPointerPressed;
-        _header.PointerMoved += (_, args) =>
-        {
-            if (!_dragging) return;
-            args.Handled = true;
-            DragTo();
-        };
-        _header.PointerReleased += (_, args) =>
-        {
-            if (!_dragging) return;
-            args.Handled = true;
-            _header.ReleasePointerCapture(args.Pointer);
-            EndDrag();
-        };
-        _header.PointerCaptureLost += (_, _) => EndDrag();
 
         _headerInner = new Grid();
         AddStarColumn(_headerInner);   // tab strip
@@ -1705,6 +1697,14 @@ public sealed partial class Workspace
             // with scrolling disabled, so a plain subscription would never fire.
             scroller.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnStripWheel), true);
 
+            // The chips move without a layout pass (the transform above) and the rail scrolls
+            // its own scroller, so both re-register the caption regions by hand — at once, not
+            // queued: a press that lands in the frame between a scroll and the region update
+            // would go to the wrong side of the caption, which reads as a dead drag.
+            _stripTransform.RegisterPropertyChangedCallback(TranslateTransform.XProperty,
+                (_, _) => Diag.Guard("ws.nc.scroll", RefreshNonClientRegions));
+            scroller.ViewChanged += (_, _) => Diag.Guard("ws.nc.scroll", RefreshNonClientRegions);
+
             _chipHost = _topTabHost;
             _tabScroller = scroller;
             Grid.SetColumn(scroller, 0);
@@ -1719,6 +1719,8 @@ public sealed partial class Workspace
                 VerticalAlignment = VerticalAlignment.Bottom,
                 Margin = new Thickness(4, 0, 4, 4),
             };
+            // The caption region covers the header; this panel is where XAML gets its input back.
+            _headerTopTools = topTools;
 
             ChromeButton add = ToolButton('\uE710', Theme.ChromeIconFaint, Theme.ChromeChipHover);
             add.Width = 28;
@@ -1801,16 +1803,11 @@ public sealed partial class Workspace
         // The close button is the one caption that goes white on its own hover fill.
         close.SetColors(Theme.ChromeIconBody, () => Colors.White, hoverFill: Theme.CloseHover);
         _maximizeIcon = maximize.Content as FontIcon;
-        _maximizeCaption = maximize;
         _closeCaption = close;
         UpdateCloseCorner();
 
-        // The three window buttons carry the same one-line hover label the pane actions use.
-        _minimizeTip = CaptionTip(minimize, Strings.Minimize);
-        _maximizeTip = CaptionTip(maximize, string.Empty);
-        _closeTip = CaptionTip(close, Strings.CloseWindow);
-        UpdateCaptionTips();
-
+        // Win32 now owns the clicks (the buttons are non-client regions), so these handlers are
+        // the keyboard and automation path: Tab reaches a ChromeButton and Enter presses it.
         minimize.Click += (_, _) => MinimizeWindow();
         maximize.Click += (_, _) => ToggleMaximize();
         close.Click += (_, _) =>
@@ -1821,6 +1818,9 @@ public sealed partial class Workspace
             if (_dispatcher is null) RequestClose();
             else _dispatcher.TryEnqueue(RequestClose);
         };
+
+        _headerCaptionButtons = new[] { minimize, maximize, close };
+        UpdateCaptionTips();
 
         captions.Children.Add(minimize);
         captions.Children.Add(maximize);
@@ -1858,33 +1858,18 @@ public sealed partial class Workspace
             // No horizontal margin on either side: the rail's padding is the gap to the
             // window edge and to the island, so both sides read as 6.
             Margin = SidebarMargin(),
+            // Transparent but hit-testable: the rail's header row is a drag strip and has to see
+            // its press. Nothing is painted here, and the tab rows are real buttons.
             Background = ClearBrush(),
             BorderThickness = new Thickness(0),
             Padding = SidebarPadding(),
         };
 
-        // The header strip is click-through in the side layouts (the island rises into it),
-        // so the rail's own empty area drags the window instead.
-        _sidebar.PointerPressed += OnHeaderPointerPressed;
-        _sidebar.PointerMoved += (_, args) =>
-        {
-            if (!_dragging) return;
-            args.Handled = true;
-            DragTo();
-        };
-        _sidebar.PointerReleased += (_, args) =>
-        {
-            if (!_dragging) return;
-            args.Handled = true;
-            _sidebar.ReleasePointerCapture(args.Pointer);
-            EndDrag();
-        };
-        _sidebar.PointerCaptureLost += (_, _) => EndDrag();
-
         var layout = new Grid();
         AddAutoRow(layout);
         AddStarRow(layout);
         _sidebar.Child = layout;
+
 
         var tools = new StackPanel
         {
@@ -1892,7 +1877,13 @@ public sealed partial class Workspace
             Spacing = 2,
             Height = 32,
             VerticalAlignment = VerticalAlignment.Center,
+            // The row is the rail's title strip: it fills the rail so its empty part can take the
+            // drag, and its background is what those presses land on.
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = ClearBrush(),
         };
+        _sidebarTools = tools;
+
 
         // The sidebar toggle is always a button of its own: collapsing the rail should never
         // require opening a menu.
@@ -1952,6 +1943,10 @@ public sealed partial class Workspace
             VerticalScrollMode = ScrollMode.Enabled,
         };
         _tabScroller = scroller;
+        // Scrolling moves the rows without a layout pass, so the caption regions (the rail
+        // minus its rows) are re-registered from the scroll itself, and at once: a press in the
+        // frame between the scroll and the update would land on the wrong side of the caption.
+        scroller.ViewChanged += (_, _) => Diag.Guard("ws.nc.scroll", RefreshNonClientRegions);
         // The rail is laid out after the tabs exist, so a pending "scroll to the active tab"
         // (a new tab, or a switch into the side layout) has to run again once it has a size.
         scroller.SizeChanged += (_, _) =>

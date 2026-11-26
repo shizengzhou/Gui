@@ -127,8 +127,18 @@ internal sealed class ChromeButton : Button
         if (_active) _fill.Color = _hoverFill.Color;
         _iconBrush.Color = _icon();
         _hoverIconBrush.Color = _hoverIcon?.Invoke() ?? _iconBrush.Color;
+        // A button whose hover is driven from outside keeps the fill it was showing.
+        ApplyFill();
         PaintIcon((_active || _hovered) && _hoverIcon is not null ? _hoverIconBrush : _iconBrush);
     }
+
+    /// <summary>
+    /// Writes the resting fill. The template's Normal state paints the button with the very
+    /// brush handed to it as the ButtonBackground resource, so its Color — not the Button's
+    /// Background property — is what a hover has to change.
+    /// </summary>
+    private void ApplyFill() =>
+        _fill.Color = _hovered || _active ? _hoverFill.Color : _fillColor?.Invoke() ?? Colors.Transparent;
 
     private void PaintIcon(Brush brush)
     {

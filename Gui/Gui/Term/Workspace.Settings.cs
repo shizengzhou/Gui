@@ -225,49 +225,6 @@ public sealed partial class Workspace
         _dispatcher?.TryEnqueue(() => _settingsFocus?.Focus(FocusState.Programmatic));
     }
 
-    /// <summary>
-    /// True when a press landed on page chrome rather than on an interactive control: every
-    /// element on the route from the hit element up to the boundary is a panel or a border.
-    /// A press that a control owns either was marked handled or shows up here as a control.
-    /// </summary>
-    private static bool IsInertPress(object? source, DependencyObject boundary)
-    {
-        for (DependencyObject? node = source as DependencyObject; node is not null;
-             node = VisualTreeHelper.GetParent(node))
-        {
-            if (node is Control) return false;
-            if (ReferenceEquals(node, boundary)) return true;
-        }
-        return true;
-    }
-
-    /// <summary>
-    /// The settings layer covers the normal drag strip, so its inert chrome owns the same
-    /// drag. Buttons keep their own presses; blank space and the page title move the window.
-    /// </summary>
-    private void WireSettingsDrag(Border strip)
-    {
-        strip.PointerPressed += (_, args) =>
-        {
-            if (!IsInertPress(args.OriginalSource, strip)) return;
-            OnHeaderPointerPressed(strip, args);
-        };
-        strip.PointerMoved += (_, args) =>
-        {
-            if (!_dragging) return;
-            args.Handled = true;
-            DragTo();
-        };
-        strip.PointerReleased += (_, args) =>
-        {
-            if (!_dragging) return;
-            args.Handled = true;
-            strip.ReleasePointerCapture(args.Pointer);
-            EndDrag();
-        };
-        strip.PointerCaptureLost += (_, _) => EndDrag();
-    }
-
     private Border BuildSettingsNav()
     {
         var nav = new Border
@@ -352,7 +309,7 @@ public sealed partial class Workspace
         Grid.SetRow(foot, 1);
         layout.Children.Add(foot);
         nav.Child = layout;
-        WireSettingsDrag(nav);
+        _settingsNav = nav;
 
         return nav;
     }
@@ -459,13 +416,13 @@ public sealed partial class Workspace
         // Follow the card's rounded top-right corner, like the header's close button does.
         close.CornerRadius = new CornerRadius(0, CompactDensity ? 0 : Theme.RadiusSurface, 0, 0);
 
+        _settingsCaptionButtons = new[] { minimize, maximize, close };
         _settingsMaximizeIcon = maximize.Content as FontIcon;
-        _settingsMaximizeCaption = maximize;
-        _settingsMaximizeTip = CaptionTip(maximize, string.Empty);
-        CaptionTip(minimize, Strings.Minimize);
-        CaptionTip(close, Strings.CloseWindow);
         UpdateMaximizeIcon();
+        UpdateCaptionTips();
 
+        // Win32 owns the pointer for these too (they are the same three non-client regions);
+        // the handlers are the keyboard path.
         minimize.Click += (_, _) => MinimizeWindow();
         maximize.Click += (_, _) => ToggleMaximize();
         close.Click += (_, _) =>
@@ -481,7 +438,8 @@ public sealed partial class Workspace
         headGrid.Children.Add(captions);
 
         head.Child = headGrid;
-        WireSettingsDrag(head);
+        // The page's title band and nav column are the caption while it is open.
+        _settingsHead = head;
         Grid.SetRow(head, 0);
         main.Children.Add(head);
 
@@ -581,6 +539,22 @@ public sealed partial class Workspace
         ActivateSettingsTab();
     }
 
+    /// <summary>
+    /// True when a press landed on page chrome rather than on an interactive control: every
+    /// element on the route from the hit element up to the boundary is a panel or a border.
+    /// A press that a control owns either was marked handled or shows up here as a control.
+    /// </summary>
+    private static bool IsInertPress(object? source, DependencyObject boundary)
+    {
+        for (DependencyObject? node = source as DependencyObject; node is not null;
+             node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is Control) return false;
+            if (ReferenceEquals(node, boundary)) return true;
+        }
+        return true;
+    }
+
     private void HideSettings()
     {
         CancelKeybindCapture(restore: false);
@@ -594,6 +568,9 @@ public sealed partial class Workspace
         _settingsActive = true;
         _settingsLayer.Visibility = Visibility.Visible;
         UpdateHeaders();
+        // The page takes over the caption: its nav column and title band drag the window and
+        // its controls stay clickable.
+        InvalidateNonClientRegions();
         FocusSettingsOwner();
     }
 
@@ -601,6 +578,7 @@ public sealed partial class Workspace
     {
         _settingsActive = false;
         if (_settingsLayer is not null) _settingsLayer.Visibility = Visibility.Collapsed;
+        InvalidateNonClientRegions();
     }
 
     private bool OnSettingsKey(KeyRoutedEventArgs args)

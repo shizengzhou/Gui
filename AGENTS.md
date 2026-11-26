@@ -212,12 +212,29 @@ Key invariants (they are easy to break and produce crashes or blank screens):
 
 The window has no system title bar: `Workspace.Attach` calls
 `OverlappedPresenter.SetBorderAndTitleBar(true, false)` and draws the 38 DIP header itself in the
-top layout. The header is plain client area and the window drag region — it records `GetCursorPos`
-in screen pixels and calls `AppWindow.Move` from `PointerMoved`; a double press toggles maximize.
-The side placements have no title bar at all: the island starts at the window's own 6 DIP inset
-and the header element shrinks to a 32 DIP strip at y=7 that carries only the caption buttons, so
-they sit in the pane header's band and share the centre line with the pane's action buttons. The
-tab rail carries the drag there.
+top layout. The side placements have no title bar at all: the island starts at the window's own
+6 DIP inset and the header element shrinks to a 32 DIP strip at y=7 that carries only the caption
+buttons, so they sit in the pane header's band and share the centre line with the pane's action
+buttons.
+
+The caption is Win32's, and (except for the three window buttons) it is not a region or a XAML
+handler either. `Term/DragBar.cs` registers a window class and creates a layered child window per
+drag strip — the same trick Windows Terminal's `NonClientIslandWindow` uses: the window covers the
+empty part of the band, answers WM_NCHITTEST with HTCAPTION itself and forwards the non-client
+button messages to the top-level window, so the system's own move loop runs the drag (snapping,
+drag-to-restore, double-click maximize, the system menu, and the pointer followed exactly — a
+caption region or a press forwarded from XAML is served by WinUI, whose drag steps in DIPs at the
+pointer's frame rate and trails the cursor at a high DPI). `Workspace.UpdateDragBar` places two
+bars while the chrome moves: the strip right of the chips in the top layout, the rail's header row
+right of its buttons, and the gap in the pane header between the split grab and the pane's action
+buttons, and the settings title band while the page is open. Each bar stops short of the chips and
+the buttons, so those keep their own input, and the bars are re-placed from every layout pass, tab
+scroll and page switch. The
+three window buttons stay `Close`/`Maximize`/`Minimize` regions: they keep their painted hover and
+give the Windows 11 snap-layouts flyout. While the system runs a move loop the bars are hidden
+(`WM_ENTERSIZEMOVE`; `WM_EXITSIZEMOVE` puts them back): a layered child window is one more surface for DWM to
+composite on every step of the move, which is what makes the desktop window manager spike while a
+window is dragged.
 
 A tab owns a binary split tree; each split becomes a nested two-cell `Grid` (6 DIP spacing) so no
 empty cells are laid out. Three invariants keep the rebuild safe:
