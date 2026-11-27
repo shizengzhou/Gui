@@ -39,7 +39,7 @@ public sealed partial class Workspace
     private Button? _settingsFocus;
     private Grid? _settingsPages;
     private TextBlock? _settingsTitle;
-    private string _settingsPage = "appearance";
+    private string _settingsPage = "general";
 
     /// <summary>True while the settings page covers the window body.</summary>
     private bool _settingsActive;
