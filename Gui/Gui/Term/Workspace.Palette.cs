@@ -1640,8 +1640,25 @@ public sealed partial class Workspace
     {
         MenuFlyout menu = BuildMainMenu();
         button.SetActive(true);
-        menu.Closed += (_, _) => button.SetActive(false);
+        _mainMenu = menu;
+        menu.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_mainMenu, menu)) _mainMenu = null;
+            button.SetActive(false);
+        };
         menu.ShowAt(button);
+    }
+
+    /// <summary>
+    /// Closes the hamburger menu from a caption press. The flyout's light dismiss never sees
+    /// that press at all: the drag bars are layered child windows, so the click goes to a
+    /// window procedure instead of the XAML input root.
+    /// </summary>
+    private void CloseMainMenu()
+    {
+        MenuFlyout? menu = _mainMenu;
+        _mainMenu = null;
+        menu?.Hide();
     }
 
     /// <summary>

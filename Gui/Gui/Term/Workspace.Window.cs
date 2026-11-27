@@ -614,6 +614,7 @@ public sealed partial class Workspace
         _dispatcher?.TryEnqueue(() =>
         {
             if (_paletteLayer is { Visibility: Visibility.Visible }) HideCommandPalette();
+            CloseMainMenu();
             if (!_composing) return;
             _imeDiscard = true;
             ShowImeComposition();

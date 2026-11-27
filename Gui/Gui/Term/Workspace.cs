@@ -233,6 +233,9 @@ public sealed partial class Workspace
     private Border _contentCard = null!;
     private Grid _contentStack = null!;
     private FontIcon? _maximizeIcon;
+
+    /// <summary>The hamburger menu while it is open.</summary>
+    private MenuFlyout? _mainMenu;
     private ChromeButton? _closeCaption;
 
 
