@@ -33,7 +33,6 @@ public sealed partial class Workspace
     private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_NOZORDER = 0x0004;
-    private const uint SWP_FRAMECHANGED = 0x0020;
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -48,6 +47,7 @@ public sealed partial class Workspace
     private const int WM_EXITSIZEMOVE = 0x0232;
     private const int WM_MOVE = 0x0003;
     private const int WM_SIZE = 0x0005;
+    private const int WM_ACTIVATE = 0x0006;
     private const int WM_WINDOWPOSCHANGED = 0x0047;
     private const uint TME_LEAVE = 0x00000002;
     private const uint TME_NONCLIENT = 0x00000010;
@@ -492,6 +492,9 @@ public sealed partial class Workspace
                 {
                     _skipXamlMove = false;
                     ResyncWindowAfterMove(hwnd);
+                    // A frame change no longer runs, but the three button regions are cheap to
+                    // re-register and a lost one would cost the snap-layout flyout and tooltip.
+                    _nonClientMinimize = _nonClientMaximize = _nonClientClose = Array.Empty<RectInt32>();
                 }
                 Diag.Guard("ws.nc.regions", UpdateNonClientRegions);
                 break;
@@ -510,6 +513,17 @@ public sealed partial class Workspace
                     _dragPosChanges++;
                     // A skipped pure move never raises WM_MOVE, so time the update here instead.
                     if (skipChain) LogDragMove(hwnd);
+                }
+                break;
+
+            case WM_ACTIVATE:
+                // WinUI rebuilds its non-client pointer source when the window is reactivated;
+                // ApplyRegion's cache would then keep the three buttons lost, which costs their
+                // hover tooltip and the snap-layout flyout. Re-register them once per activation.
+                if (((int)wParam & 0xFFFF) != 0)
+                {
+                    _nonClientMinimize = _nonClientMaximize = _nonClientClose = Array.Empty<RectInt32>();
+                    Diag.Guard("ws.nc.activate", RefreshNonClientRegions);
                 }
                 break;
 
@@ -562,13 +576,44 @@ public sealed partial class Workspace
         Environment.GetEnvironmentVariable("GUI_MOVE_SKIP_XAML") != "0";
 
     /// <summary>
-    /// One forced frame change after a skipped move: WinUI re-reads the window position and
-    /// re-syncs its composition, which is the single notification it was denied per step.
+    /// One position notification after a skipped move: WinUI re-reads where the window is
+    /// without a frame change, which would drop the non-client regions of the window buttons.
     /// </summary>
-    private static void ResyncWindowAfterMove(IntPtr hwnd)
+    private void ResyncWindowAfterMove(IntPtr hwnd)
     {
-        SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        GetWindowRect(hwnd, out RECT rect);
+        var position = new WINDOWPOS
+        {
+            hwnd = hwnd,
+            hwndInsertAfter = IntPtr.Zero,
+            x = rect.Left,
+            y = rect.Top,
+            cx = rect.Right - rect.Left,
+            cy = rect.Bottom - rect.Top,
+            flags = 0,
+        };
+        IntPtr buffer = Marshal.AllocHGlobal(Marshal.SizeOf<WINDOWPOS>());
+        try
+        {
+            Marshal.StructureToPtr(position, buffer, false);
+            DefSubclassProc(hwnd, WM_WINDOWPOSCHANGED, IntPtr.Zero, buffer);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINDOWPOS
+    {
+        public IntPtr hwnd;
+        public IntPtr hwndInsertAfter;
+        public int x;
+        public int y;
+        public int cx;
+        public int cy;
+        public uint flags;
     }
 
     private void BeginDragLog(IntPtr hwnd)
