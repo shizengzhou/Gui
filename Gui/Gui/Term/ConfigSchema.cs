@@ -237,6 +237,7 @@ public static class ConfigSchema
     public static readonly ConfigOption[] Application =
     {
         new("tab-position", ConfigKind.Enum, ConfigPlatform.All, "tab strip position: top, left, right"),
+        new("pane-header", ConfigKind.Enum, ConfigPlatform.All, "pane header: show, hidden"),
         new("compact", ConfigKind.Bool, ConfigPlatform.All, "panes run edge to edge"),
         new("sidebar-width-left", ConfigKind.Float, ConfigPlatform.All, "left rail width in DIPs"),
         new("sidebar-width-right", ConfigKind.Float, ConfigPlatform.All, "right rail width in DIPs"),

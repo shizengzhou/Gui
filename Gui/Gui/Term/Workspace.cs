@@ -692,6 +692,7 @@ public sealed partial class Workspace
                 pane.ApplyClipboardSettings();
                 pane.ApplyProgramQueries();
                 pane.ApplyKeybinds();
+                pane.ApplyPaneHeader();
             });
 
         // The chrome is rebuilt here, so a failure must not take the app down with it:

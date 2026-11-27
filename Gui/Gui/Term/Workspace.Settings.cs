@@ -679,10 +679,16 @@ public sealed partial class Workspace
                 _ => "top",
             })));
 
+        FrameworkElement paneHeader = SettingsSegmented(
+            new[] { Strings.SettingsPaneHeaderShow, Strings.SettingsPaneHeaderHidden },
+            _config.PaneHeader == "hidden" ? 1 : 0,
+            index => ApplyPaneHeaderChoice(index == 1 ? "hidden" : "show"));
+
         page.Children.Add(SettingsGroup(null, SettingsCard(
             SettingsRow(Strings.SettingsLanguage, null, language),
             SettingsRow(Strings.SettingsWindowAppearance, null, windowTheme),
             SettingsRow(Strings.SettingsTabPosition, null, placement),
+            SettingsRow(Strings.SettingsPaneHeader, Strings.SettingsPaneHeaderDescription, paneHeader),
             SettingsRow(Strings.SettingsCompact, Strings.SettingsCompactDescription,
                 SettingsSwitch(_config.Compact, ApplyCompactChoice)))));
 
@@ -2103,6 +2109,18 @@ public sealed partial class Workspace
             BuildSettings();
             _settingsFocus?.Focus(FocusState.Programmatic);
         });
+    }
+
+    private void ApplyPaneHeaderChoice(string value)
+    {
+        _config.PaneHeader = value;
+        Config.SaveValue("pane-header", value);
+
+        // Split panes keep their own config copy, so the choice is pushed into each one;
+        // like the tab rail and density it is a layout setting every window shares.
+        foreach (Tab tab in _tabs)
+            ForEachPane(tab, pane => pane.SetPaneHeader(value));
+        if (!_applyingConfig) App.ReloadOtherWindows(this);
     }
 
     private void ApplyBackgroundOpacityChoice(double opacity)

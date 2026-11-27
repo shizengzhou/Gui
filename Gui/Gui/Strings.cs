@@ -161,6 +161,14 @@ public static class Strings
         "Drop the pane gaps and rounded corners so the terminal fills the window edges.",
         "去掉窗格间距与圆角，终端内容贴满窗口边缘。");
 
+    public static string SettingsPaneHeader => Pick("Pane header", "窗格头部");
+    public static string SettingsPaneHeaderShow => Pick("Show", "显示");
+    public static string SettingsPaneHeaderHidden => Pick("Hidden", "隐藏");
+
+    public static string SettingsPaneHeaderDescription => Pick(
+        "The shell icon, working directory and pane actions above each terminal.",
+        "每个终端上方的 Shell 图标、工作目录与窗格操作按钮。");
+
     public static string SettingsThemes => Pick("Themes", "主题");
     public static string SettingsSearchThemes => Pick("Search themes", "搜索主题");
     public static string SettingsLightTheme => Pick("Light theme", "浅色主题");

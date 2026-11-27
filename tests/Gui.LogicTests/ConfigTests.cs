@@ -214,6 +214,22 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void LoadReadsThePaneHeaderSwitch()
+    {
+        // The pane header is shown unless the file asks for "hidden"; anything else keeps
+        // the header, like the enum fallbacks in Ghostty's own options.
+        Assert.Equal("show", Config.Load(Write(string.Empty)).PaneHeader);
+        Assert.Equal("show", Config.Load(Write("pane-header = show\n")).PaneHeader);
+        Assert.Equal("hidden", Config.Load(Write("pane-header = hidden\n")).PaneHeader);
+        Assert.Equal("hidden", Config.Load(Write("pane-header = Hidden\n")).PaneHeader);
+        Assert.Equal("show", Config.Load(Write("pane-header = collapsed\n")).PaneHeader);
+
+        var target = new Config();
+        target.CopyFrom(Config.Load(Write("pane-header = hidden\n")));
+        Assert.Equal("hidden", target.PaneHeader);
+    }
+
+    [Fact]
     public void LoadKeepsOnlyTheImplementedScrollbarModes()
     {
         Assert.Equal("system", Config.Load(Write(string.Empty)).Scrollbar);

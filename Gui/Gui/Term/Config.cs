@@ -151,6 +151,7 @@ public sealed class Config
     public bool WindowInheritWorkingDirectory = true; // new windows do the same
     public bool SplitInheritWorkingDirectory = true; // new splits do the same
     public string DragHandle = "auto";             // drag-handle: "auto" (default), "always", "never"
+    public string PaneHeader = "show";             // pane-header: "show" (default) or "hidden"
     public bool InheritFontSize = true;            // new tabs keep the focused pane's font size
     public bool Compact;                           // true: panes run edge to edge
     public double SidebarWidthLeft = 240.0;        // DIPs; restored width of a left rail
@@ -553,6 +554,7 @@ public sealed class Config
         WindowInheritWorkingDirectory = other.WindowInheritWorkingDirectory;
         SplitInheritWorkingDirectory = other.SplitInheritWorkingDirectory;
         DragHandle = other.DragHandle;
+        PaneHeader = other.PaneHeader;
         InheritFontSize = other.InheritFontSize;
         Compact = other.Compact;
         SidebarWidthLeft = other.SidebarWidthLeft;
@@ -1447,6 +1449,9 @@ public sealed class Config
             "never" => "never",
             _ => "auto",
         };
+        PaneHeader = (Last("pane-header") ?? string.Empty).Trim().ToLowerInvariant() == "hidden"
+            ? "hidden"
+            : "show";
         Compact = GetBool("compact", true);
         SidebarWidthLeft = ParseSidebarWidth(Last("sidebar-width-left"), SidebarWidthLeft);
         SidebarWidthRight = ParseSidebarWidth(Last("sidebar-width-right"), SidebarWidthRight);

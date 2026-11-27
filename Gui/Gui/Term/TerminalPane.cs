@@ -433,6 +433,7 @@ public sealed class TerminalPane
         _config.CopyFrom(config);
         _config.Command = command;
         _config.WorkingDirectory = workingDirectory;
+        ApplyPaneHeader();
         UpdateProgressBar();
         UpdateBlinkAnimation();
     }
@@ -871,6 +872,7 @@ public sealed class TerminalPane
         // tracks the text instead of spanning the whole band, and the rest of the header
         // keeps the plain arrow.
         _headerBar = header;
+        ApplyPaneHeader();
         header.Background = TransparentBrush();
         header.PointerPressed += OnHeaderDragPressed;
         _unsubscribes.Add(() => header.PointerPressed -= OnHeaderDragPressed);
@@ -1106,6 +1108,25 @@ public sealed class TerminalPane
     /// </summary>
     /// <summary>The header band, for the workspace's caption drag.</summary>
     internal FrameworkElement? HeaderElement => _headerBar;
+
+    /// <summary>
+    /// "pane-header": hiding the band collapses it, so the grid fills the frame from the
+    /// top edge and the header actions travel with it.
+    /// </summary>
+    public void ApplyPaneHeader()
+    {
+        if (_headerBar is null) return;
+        _headerBar.Visibility = _config.PaneHeader == "hidden"
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    /// <summary>Applies a live "pane-header" change to this pane's own config copy.</summary>
+    public void SetPaneHeader(string value)
+    {
+        _config.PaneHeader = value;
+        ApplyPaneHeader();
+    }
 
     /// <summary>
     /// The empty part of the header band in its own coordinates: after the split grab content
@@ -2903,7 +2924,8 @@ public sealed class TerminalPane
         // Both are measured here instead of hard-coding the old 1 + 34 + 2 stack, which
         // baked the default padding into the constant and double-counted it.
         double inset = _frame.BorderThickness.Top;
-        double head = _headerBar?.Height ?? 32.0;
+        // A hidden header contributes no band to the cell space.
+        double head = _headerBar is { Visibility: Visibility.Visible } bar ? bar.Height : 0.0;
         x = cellX * (double)_renderer.CellAdvanceX + inset + PadLeft;
         y = cellY * (double)metrics.Height + inset + head + PadTop;
         return true;
