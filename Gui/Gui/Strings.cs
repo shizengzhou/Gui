@@ -228,6 +228,11 @@ public static class Strings
     public static string SettingsScrollbarSystem => Pick("System", "跟随系统");
     public static string SettingsScrollbarNever => Pick("Hidden", "隐藏");
 
+    public static string SettingsShaders => Pick("Shaders", "着色器");
+    public static string SettingsCustomShader => Pick("Custom shader", "自定义着色器");
+    public static string SettingsAddShader => Pick("Add shader", "添加着色器");
+    public static string SettingsShaderAnimation => Pick("Shader animation", "着色器动画");
+
     public static string SettingsNotifyCommand => Pick("Notify", "命令通知");
     public static string SettingsNotifyAction => Pick("Notify on command finish action", "命令结束时通知动作");
     public static string SettingsNotifyOnFinish => Pick("Notify on command finish", "命令结束时通知");

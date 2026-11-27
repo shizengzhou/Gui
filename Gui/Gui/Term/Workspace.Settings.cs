@@ -1004,6 +1004,28 @@ public sealed partial class Workspace
                     _config.Scrollbar == "never" ? 1 : 0,
                     index => ApplyScrollbarChoice(index == 1 ? "never" : "system"))))));
 
+        // "custom-shader" is repeatable, so the chain is one row per shader plus an add row;
+        // the animation switch is the same one Ghostty puts beside it.
+        var shaderRows = new List<FrameworkElement>();
+        IReadOnlyList<string> shaderPaths = _config.CustomShaders;
+        for (int i = 0; i < shaderPaths.Count; i++)
+        {
+            int index = i;
+            shaderRows.Add(SettingsRow(Strings.SettingsCustomShader, null,
+                SettingsPathChoice(shaderPaths[i], PickShaderAsync,
+                    picked => ApplyCustomShader(index, picked))));
+        }
+        shaderRows.Add(SettingsRow(Strings.SettingsAddShader, null,
+            SettingsTextButton(Strings.SettingsBrowse, async () =>
+            {
+                string? picked = await PickShaderAsync();
+                if (!string.IsNullOrEmpty(picked)) ApplyCustomShader(-1, picked!);
+            })));
+        shaderRows.Add(SettingsRow(Strings.SettingsShaderAnimation, null,
+            SettingsSwitch(_config.CustomShaderAnimation != "false", ApplyShaderAnimationChoice)));
+
+        page.Children.Add(SettingsGroup(Strings.SettingsShaders, SettingsCard(shaderRows.ToArray())));
+
         return page;
     }
 
@@ -2158,6 +2180,65 @@ public sealed partial class Workspace
     {
         _config.BackgroundImageRepeat = repeat;
         Config.SaveValue("background-image-repeat", repeat ? "true" : "false");
+        RefreshPaneVisuals();
+    }
+
+    // ---------------- custom shaders ----------------
+
+    private async System.Threading.Tasks.Task<string?> PickShaderAsync()
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker
+            {
+                SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary,
+            };
+            // Shadertoy-style GLSL, the syntax Ghostty's own "custom-shader" takes.
+            picker.FileTypeFilter.Add(".glsl");
+            if (_hwnd != IntPtr.Zero) WinRT.Interop.InitializeWithWindow.Initialize(picker, _hwnd);
+
+            Windows.Storage.StorageFile? file = await picker.PickSingleFileAsync();
+            return file?.Path;
+        }
+        catch (Exception error)
+        {
+            Diag.LogException("Workspace.PickShader", error);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// One edit to the shader chain: replace the entry at <paramref name="index"/> (or drop it
+    /// when the path is empty), or append when the index is negative.
+    /// </summary>
+    private void ApplyCustomShader(int index, string picked)
+    {
+        var paths = new List<string>(_config.CustomShaders);
+        if (index >= 0 && index < paths.Count)
+        {
+            if (picked.Length == 0) paths.RemoveAt(index);
+            else paths[index] = picked;
+        }
+        else if (picked.Length > 0)
+        {
+            paths.Add(picked);
+        }
+
+        Config.SaveList("custom-shader", paths);
+        _config.ReplaceValues("custom-shader", paths);
+        // Re-resolve the way a reload would, so a dropped entry or a file that has since gone
+        // missing leaves the chain before the panes pick it up.
+        _config.CustomShaders = Config.Load().CustomShaders;
+        RefreshPaneVisuals();
+
+        // Adding or removing an entry changes the rows themselves.
+        DeferSettingsChange(BuildSettings);
+    }
+
+    private void ApplyShaderAnimationChoice(bool animate)
+    {
+        _config.CustomShaderAnimation = animate ? "true" : "false";
+        Config.SaveValue("custom-shader-animation", _config.CustomShaderAnimation);
         RefreshPaneVisuals();
     }
 
