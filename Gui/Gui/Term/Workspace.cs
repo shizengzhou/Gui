@@ -88,6 +88,10 @@ public sealed partial class Workspace
         public Border ChipDivider = null!;
         public ContentControl ChipFocus = null!;
         public TextBlock ChipTipText = null!;
+        /// <summary>The tooltip's own anchor, so the top strip can take it back.</summary>
+        public PlacementMode ChipTipDefaultPlacement;
+        public Rect? ChipTipDefaultRect;
+        public double ChipTipDefaultOffset;
         public string ChipTipContent = string.Empty;
         public bool Hovered;
 
@@ -2251,7 +2255,36 @@ public sealed partial class Workspace
         tab.Chip.Padding = top ? new Thickness(11, 0, 11, 0) : new Thickness(8, 0, 8, 0);
         tab.Chip.Margin = top ? new Thickness(0, 0, 2, 0) : new Thickness(0);
         tab.Chip.MaxWidth = top ? 220 : double.PositiveInfinity;
+
+        // The label follows the strip: a rail pins it to the chip's right edge, the top strip
+        // keeps whatever placement the platform chose for it.
+        ApplyChipTipPlacement(tab, top);
     }
+
+    /// <summary>
+    /// Anchors a chip's hover label. Platform tooltips hang off the pointer, and in a rail
+    /// that puts the label over the pane and drags it along with the mouse; a rail pins it to
+    /// the chip's right edge instead. PlacementRect is the tooltip's element anchor — it is
+    /// relative to the chip and doubles as the area the label may not cover. The top strip
+    /// keeps the platform's own anchor.
+    /// </summary>
+    private static void ApplyChipTipPlacement(Tab tab, bool top)
+    {
+        if (ToolTipService.GetToolTip(tab.Chip) is not ToolTip chipTip) return;
+        if (top)
+        {
+            chipTip.Placement = tab.ChipTipDefaultPlacement;
+            chipTip.PlacementRect = tab.ChipTipDefaultRect;
+            chipTip.HorizontalOffset = tab.ChipTipDefaultOffset;
+            return;
+        }
+        chipTip.Placement = PlacementMode.Right;
+        chipTip.PlacementRect = new Rect(0, 0, tab.Chip.ActualWidth, tab.Chip.ActualHeight);
+        chipTip.HorizontalOffset = ChipTipRailOffset;
+    }
+
+    /// <summary>A rail label sits this far off the chip's right edge.</summary>
+    private const double ChipTipRailOffset = 4;
 
     /// <summary>
     /// The tab's own context menu: the three close modes Ghostty exposes (this / other /
@@ -3039,6 +3072,8 @@ public sealed partial class Workspace
         tab.Chip.SizeChanged += (_, _) =>
         {
             if (_ensureActiveVisible && EnsureActiveVisible()) _ensureActiveVisible = false;
+            // A rail's label is anchored to the chip's rect, so it has to follow the chip.
+            ApplyChipTipPlacement(tab, _placement == TabPlacement.Top);
         };
 
         // Hover tooltip: a single wrapped, centered TextBlock whose inlines are the title
@@ -3049,7 +3084,14 @@ public sealed partial class Workspace
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
         };
-        ToolTipService.SetToolTip(tab.Chip, new ToolTip { Content = tab.ChipTipText });
+        var chipTip = new ToolTip { Content = tab.ChipTipText };
+        // Remember the platform's own anchor, so a move back to the top strip lands on the
+        // old behaviour; a rail pins the label to the chip's right edge (see the helper).
+        tab.ChipTipDefaultPlacement = chipTip.Placement;
+        tab.ChipTipDefaultRect = chipTip.PlacementRect;
+        tab.ChipTipDefaultOffset = chipTip.HorizontalOffset;
+        ToolTipService.SetToolTip(tab.Chip, chipTip);
+        ApplyChipTipPlacement(tab, _placement == TabPlacement.Top);
 
         // A Border cannot take focus, so the chip sits inside a focusable ContentControl;
         // only the active chip joins the tab order (roving index).
