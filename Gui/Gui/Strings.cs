@@ -226,7 +226,7 @@ public static class Strings
     public static string SettingsScrolling => Pick("Scrolling", "滚动");
     public static string SettingsScrollbar => Pick("Scrollbar", "滚动条");
     public static string SettingsScrollbarSystem => Pick("System", "跟随系统");
-    public static string SettingsScrollbarNever => Pick("Never", "从不");
+    public static string SettingsScrollbarNever => Pick("Hidden", "隐藏");
 
     public static string SettingsNotifyCommand => Pick("Notify", "命令通知");
     public static string SettingsNotifyAction => Pick("Notify on command finish action", "命令结束时通知动作");
