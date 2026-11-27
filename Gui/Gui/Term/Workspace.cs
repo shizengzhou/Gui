@@ -2055,6 +2055,11 @@ public sealed partial class Workspace
         if (!_resizingSidebar) return;
         _resizingSidebar = false;
         SaveSidebarWidth();
+        // The rail's relayout makes WinUI rebuild its non-client pointer source, which drops the
+        // window buttons' regions; the cached rects would then keep them lost, costing their
+        // hover and snap flyout. Register them again once the drag has settled.
+        ClearAppliedRegions();
+        RefreshNonClientRegions();
     }
 
     /// <summary>The saved width for the side the rail is currently on.</summary>

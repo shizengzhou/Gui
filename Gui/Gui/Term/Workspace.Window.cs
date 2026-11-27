@@ -163,6 +163,9 @@ public sealed partial class Workspace
         if (_inMoveLoop) return;
         if (_nonClientDirty) return;
         _nonClientDirty = true;
+        // The chrome rebuild that prompted this can make WinUI rebuild its non-client pointer
+        // source; without dropping the applied rects the queued update would be a no-op.
+        ClearAppliedRegions();
         if (_dispatcher?.TryEnqueue(() =>
             {
                 _nonClientDirty = false;
@@ -502,7 +505,7 @@ public sealed partial class Workspace
                     ResyncWindowAfterMove(hwnd);
                     // A frame change no longer runs, but the three button regions are cheap to
                     // re-register and a lost one would cost the snap-layout flyout and tooltip.
-                    _nonClientMinimize = _nonClientMaximize = _nonClientClose = Array.Empty<RectInt32>();
+                    ClearAppliedRegions();
                 }
                 Diag.Guard("ws.nc.regions", UpdateNonClientRegions);
                 break;
@@ -530,7 +533,7 @@ public sealed partial class Workspace
                 // hover tooltip and the snap-layout flyout. Re-register them once per activation.
                 if (((int)wParam & 0xFFFF) != 0)
                 {
-                    _nonClientMinimize = _nonClientMaximize = _nonClientClose = Array.Empty<RectInt32>();
+                    ClearAppliedRegions();
                     Diag.Guard("ws.nc.activate", RefreshNonClientRegions);
                 }
                 break;
@@ -573,6 +576,13 @@ public sealed partial class Workspace
             return false;
         }
     }
+
+    /// <summary>
+    /// Drops the applied-rect cache so the next registration reaches WinUI again, after an event
+    /// (a reactivation, a skipped move, a rail resize) that rebuilt its non-client pointer source.
+    /// </summary>
+    private void ClearAppliedRegions() =>
+        _nonClientMinimize = _nonClientMaximize = _nonClientClose = Array.Empty<RectInt32>();
 
     /// <summary>
     /// Whether the loop may swallow WinUI's position notifications (GUI_MOVE_SKIP_XAML=0 turns
