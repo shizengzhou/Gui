@@ -172,6 +172,11 @@ public sealed partial class Workspace
     private const double ToolButtonWidth = 30;
     private const double ToolButtonHeight = 28;
 
+    /// <summary>The inset and spacing the rail's tool row lays its buttons out with.</summary>
+    private const double RailToolSpacing = 2;
+    private const double RailToolLeading = 14;
+    private const double RailToolLeadingRight = 6;
+
     /// <summary>Size of the caption buttons drawn at the window's right edge.</summary>
     private const double CaptionButtonWidth = 46;
     /// <summary>The top layout's title bar: 6px above the tabs plus their 32px.</summary>
@@ -1923,9 +1928,9 @@ public sealed partial class Workspace
 
         void UpdateRailTools()
         {
-            double leading = leftSide ? 14 : 6;
+            double leading = leftSide ? RailToolLeading : RailToolLeadingRight;
             double captions = leftSide ? 0 : 3 * CaptionButtonWidth;
-            double needed = 3 * ToolButtonWidth + 2 * tools.Spacing + leading + captions;
+            double needed = 3 * ToolButtonWidth + 2 * RailToolSpacing + leading + captions;
             bool fits = (_sidebar?.ActualWidth ?? 0.0) >= needed;
 
             add.Visibility = fits ? Visibility.Visible : Visibility.Collapsed;
@@ -2086,11 +2091,12 @@ public sealed partial class Workspace
 
     /// <summary>
     /// Narrowest the rail may be dragged. A right-hand rail shares its top row with the three
-    /// caption buttons, so it has to keep the room of two of its own buttons in front of them;
-    /// a left-hand rail has that row to itself.
+    /// caption buttons, so it has to keep the room of its own two buttons (the toggle and the
+    /// merged menu, which is what the row folds into at that width) in front of them; a
+    /// left-hand rail has that row to itself.
     /// </summary>
     private double MinSidebarWidth() => _placement == TabPlacement.Right
-        ? 2 * ToolButtonWidth + 3 * CaptionButtonWidth
+        ? RailToolLeadingRight + 2 * ToolButtonWidth + RailToolSpacing + 3 * CaptionButtonWidth
         : SidebarWidthMin;
 
     /// <summary>

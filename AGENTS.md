@@ -322,7 +322,8 @@ the drag maths subtracts the gap track so the line stays under the pointer.
 The rail's top row shows the sidebar toggle, new tab and search as three buttons while they
 fit; only when they do not fit do the latter two become one `MenuFlyout` overflow button
 (edge-aligned below it), with the toggle still outside the menu. A right-hand rail shares that
-row with the caption buttons, so it switches at ~238 DIP and can be dragged down to 198 DIP;
+row with the caption buttons, so it switches at ~238 DIP and can be dragged down to 206 DIP
+(its 6 DIP leading, the toggle and the folded menu, and the three caption buttons);
 a left-hand rail always has room for all three.
 
 `Ctrl+Shift+N` (or the palette's New window row) opens another `MainWindow`. `App` keeps every
