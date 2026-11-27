@@ -263,7 +263,15 @@ public sealed partial class Workspace
                     if (Bounds(child as FrameworkElement, scale) is { } button)
                         left = Math.Max(left, button.X + button.Width);
                 }
-                rects.Add(new RectInt32(left, row.Y, rail.X + rail.Width - left, row.Height));
+                int right = rail.X + rail.Width;
+                // A right-hand rail shares this row with the three window buttons; the system
+                // paints their hover over their non-client regions, so a drag bar laid over them
+                // takes the pointer away and leaves them without their hover and snap flyout.
+                ChromeButton[] buttons = VisibleCaptionButtons();
+                if (buttons.Length == 3 && Bounds(buttons[0], scale) is { } firstButton)
+                    right = Math.Min(right, firstButton.X);
+                if (right > left)
+                    rects.Add(new RectInt32(left, row.Y, right - left, row.Height));
             }
 
         }
