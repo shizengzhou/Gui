@@ -65,6 +65,10 @@ public sealed partial class Workspace
     private SubclassProc? _nonClientProc;
 
     private IntPtr[] _dragBars = Array.Empty<IntPtr>();
+
+    /// <summary>The strips the bars were last placed on, in client pixels.</summary>
+    private readonly List<RectInt32> _captionRects = new();
+
     private bool _nonClientDirty;
 
     /// <summary>True while the system runs a caption move or a frame resize loop.</summary>
@@ -214,6 +218,7 @@ public sealed partial class Workspace
     {
         if (_quickTerminal)
         {
+            _captionRects.Clear();
             foreach (IntPtr idle in _dragBars) DragBar.Hide(idle);
             return;
         }
@@ -284,13 +289,49 @@ public sealed partial class Workspace
         EnsureDragBars(rects.Count);
         int frameX = ResizeFrameX;
         int frameY = ResizeFrameY;
+        _captionRects.Clear();
         for (int i = 0; i < _dragBars.Length; i++)
         {
             if (i < rects.Count && rects[i] is { } rect)
-                DragBar.Place(_dragBars[i], KeepFrameFree(rect, frameX, frameY));
-            else DragBar.Hide(_dragBars[i]);
+            {
+                RectInt32 strip = KeepFrameFree(rect, frameX, frameY);
+                _captionRects.Add(strip);
+                DragBar.Place(_dragBars[i], strip);
+            }
+            else
+            {
+                DragBar.Hide(_dragBars[i]);
+            }
         }
     }
+
+    /// <summary>
+    /// Takes the bars down for the move loop, but keeps the one under the pointer: the system
+    /// evaluates the cursor as the loop ends, and with no bar there that hit test lands on the
+    /// XAML content, whose hover state is stale - the pointer left the sidebar splitter for a
+    /// bar, which never gave XAML a pointer-exit, so the splitter's resize arrow flashes over
+    /// the caption strip for a frame. The other bars still go, one composited surface less per
+    /// move.
+    /// </summary>
+    private void HideIdleDragBars()
+    {
+        int keep = -1;
+        if (_hwnd != IntPtr.Zero && GetCursorPos(out POINT point) && ScreenToClient(_hwnd, ref point))
+        {
+            for (int i = 0; i < _dragBars.Length && i < _captionRects.Count; i++)
+            {
+                if (Covers(_captionRects[i], point)) { keep = i; break; }
+            }
+        }
+        for (int i = 0; i < _dragBars.Length; i++)
+        {
+            if (i != keep) DragBar.Hide(_dragBars[i]);
+        }
+    }
+
+    private static bool Covers(RectInt32 rect, POINT point) =>
+        point.X >= rect.X && point.X < rect.X + rect.Width &&
+        point.Y >= rect.Y && point.Y < rect.Y + rect.Height;
 
     /// <summary>
     /// Grows the drag bars to hold one strip per caption area. Each bar is a layered child
@@ -428,9 +469,10 @@ public sealed partial class Workspace
                 // The drag bars go away for the length of the drag as well: the system has the
                 // press already, and a layered child window is one more surface for DWM to
                 // composite on every step of the move — which is what makes the desktop window
-                // manager spike while a window is dragged.
+                // manager spike while a window is dragged. The one under the pointer stays up,
+                // see HideIdleDragBars.
                 _inMoveLoop = true;
-                foreach (IntPtr bar in _dragBars) DragBar.Hide(bar);
+                HideIdleDragBars();
                 _skipXamlMove = MoveSkipEnabled();
                 if (_skipXamlMove)
                 {
